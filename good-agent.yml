@@ -1,0 +1,7 @@
+version: 1
+
+limits:
+  - paths:
+      - "**/*.ts"
+      - "**/*.tsx"
+    max_lines: 500
