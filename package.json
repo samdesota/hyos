@@ -1,0 +1,13 @@
+{
+  "name": "hyos",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @hyos/components",
+    "build": "npm run build --workspace @hyos/components",
+    "typecheck": "npm run typecheck --workspace @hyos/components"
+  }
+}
