@@ -4,6 +4,26 @@ HyDB is the real-time database context for Hyos personal applications. Its langu
 
 ## Language
 
+**Table**:
+A schema-defined set of records in which each primary key identifies at most one current record.
+_Avoid_: Collection, document collection
+
+**Collection**:
+An internal multiset of dataflow records represented by weighted changes over logical time.
+_Avoid_: Table, record set
+
+**Schema IR**:
+A stable, serializable description of tables, fields, types, constraints, references, and declared indexes from which runtime validation and TypeScript types are derived.
+_Avoid_: TypeScript type, schema callback
+
+**Index**:
+A schema-declared, named access path maintained for a table, including those required to enforce unique constraints.
+_Avoid_: Arrangement, query cache
+
+**Arrangement**:
+A query-engine-maintained, potentially shared index over a Collection and its weighted history.
+_Avoid_: Index, materialized query
+
 **Command**:
 A named, versioned application operation submitted as write intent and evaluated optimistically by a client before authoritative server acceptance.
 _Avoid_: RPC, mutation, transaction
@@ -15,6 +35,26 @@ _Avoid_: Command, RPC
 **Materialized Query**:
 A query whose current result is retained and updated incrementally as database changes arrive.
 _Avoid_: Data graph, live query
+
+**Selection IR**:
+A stable, serializable, hierarchical query document describing parameters, nested relationship selections, cardinality, aliases, and returned shape.
+_Avoid_: Query callback, relational plan
+
+**Relational IR**:
+A normalized directed acyclic graph of relational operators compiled from Selection IR.
+_Avoid_: Selection document, physical plan
+
+**Result Shape IR**:
+A description of how relational results and their hidden identities assemble into returned nested values.
+_Avoid_: Selection IR, JSON patch
+
+**Selection Fragment**:
+A reusable, source-bound, typed template that maps one record into a shaped result and is expanded into Selection IR during query construction.
+_Avoid_: Query fragment, runtime fragment
+
+**Physical Dataflow Plan**:
+An engine-specific executable graph containing operator placement, arrangements, shared traces, and materialization choices.
+_Avoid_: Logical query, query definition
 
 **Conflict Strategy**:
 A selectable policy that resolves concurrent or offline command effects when synchronizing with authoritative state.
