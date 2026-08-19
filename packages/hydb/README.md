@@ -2,7 +2,8 @@
 
 HyDB is the realtime database planned for the Hyos application platform. It combines typed schemas and queries, shared optimistic transactors, authoritative backend commits, live materialized results, and deterministic client reconciliation.
 
-This package currently contains the architecture and staged build tickets for the project.
+This package contains the architecture, staged build tickets, and the first
+working HyDB foundations.
 
 ## Design documents
 
@@ -15,4 +16,13 @@ This package currently contains the architecture and staged build tickets for th
 
 ## Current status
 
-HyDB is in architectural design. Ticket details and acceptance criteria will be refined immediately before each implementation step.
+Ticket 01 is complete. The package now provides typed schema definitions,
+database schema discovery and validation, canonical manifests and SHA-256
+identities, canonical row and primary-key codecs, and shared commit and error
+contracts. Ticket 02, the in-memory authoritative database, is next.
+
+Run the package checks with:
+
+```sh
+npm test --workspace @hyos/hydb
+```
