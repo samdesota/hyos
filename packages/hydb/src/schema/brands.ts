@@ -1,6 +1,0 @@
-export const columnBrand = Symbol.for('hydb.schema.column')
-export const tableBrand = Symbol.for('hydb.schema.table')
-export const enumBrand = Symbol.for('hydb.schema.enum')
-export const indexBrand = Symbol.for('hydb.schema.index')
-export const relationBrand = Symbol.for('hydb.schema.relation')
-export const expressionBrand = Symbol.for('hydb.schema.expression')
