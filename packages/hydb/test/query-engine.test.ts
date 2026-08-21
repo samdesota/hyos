@@ -1,25 +1,328 @@
 import assert from "node:assert/strict";
+import { setImmediate as waitForImmediate } from "node:timers/promises";
 import test from "node:test";
 
 import {
   hydb,
   id,
+  index,
   integer,
   memoryStorage,
   storageMutation,
   text,
+  type StorageDatabase,
+  type StorageSnapshot,
 } from "../src/index.js";
 
 const taskStatus = hydb.enum("task_status", ["todo", "doing", "done"]);
 
-const tasks = hydb.table("tasks", {
-  id: id().primaryKey(),
-  title: text().notNull(),
-  status: taskStatus().notNull(),
-  priority: integer().notNull(),
-});
+const tasks = hydb.table(
+  "tasks",
+  {
+    id: id().primaryKey(),
+    title: text().notNull(),
+    status: taskStatus().notNull(),
+    priority: integer().notNull(),
+  },
+  (columns) => [
+    index("tasks_status_priority_idx").on(columns.status, columns.priority),
+  ],
+);
 
 const schema = hydb.schema({ tasks });
+
+function recordStorageOperations(
+  storage: StorageDatabase,
+  operations: string[],
+): StorageDatabase {
+  return {
+    async snapshot(selector) {
+      operations.push("snapshot");
+      const snapshot = await storage.snapshot(selector);
+      const recorded: StorageSnapshot = {
+        commit: snapshot.commit,
+        branch: snapshot.branch,
+        sequence: snapshot.sequence,
+        version: snapshot.version,
+        async get(table, key) {
+          operations.push("get");
+          return snapshot.get(table, key);
+        },
+        scan(request) {
+          operations.push(
+            request.type === "index" ? `index:${request.index}` : "table-scan",
+          );
+          return snapshot.scan(request);
+        },
+        close() {
+          return snapshot.close();
+        },
+      };
+      return recorded;
+    },
+    head(branch) {
+      return storage.head(branch);
+    },
+    createBranch(request) {
+      return storage.createBranch(request);
+    },
+    commit(request) {
+      return storage.commit(request);
+    },
+    changes(options) {
+      return storage.changes(options);
+    },
+    close() {
+      return storage.close();
+    },
+  };
+}
+
+test("database startup hydrates no tables and subscriptions load only referenced tables", async () => {
+  const visible = hydb.table("subscription_visible", {
+    id: id().primaryKey(),
+    title: text().notNull(),
+  });
+  const unrelated = hydb.table("subscription_unrelated", {
+    id: id().primaryKey(),
+    title: text().notNull(),
+  });
+  const localSchema = hydb.schema({ visible, unrelated });
+  const underlying = await memoryStorage({ schema: localSchema });
+  await underlying.commit({
+    expectedVersion: 0,
+    mutations: [
+      storageMutation.insert(visible, { id: "visible", title: "Loaded" }),
+      storageMutation.insert(unrelated, {
+        id: "unrelated",
+        title: "Not loaded",
+      }),
+    ],
+  });
+  const operations: string[] = [];
+  const db = await hydb.database({
+    schema: localSchema,
+    storage: recordStorageOperations(underlying, operations),
+  });
+  const initial = new Promise<void>((resolve) => {
+    db.subscribe(hydb.query(visible).many(), (result) => {
+      assert.deepEqual(result, [{ id: "visible", title: "Loaded" }]);
+      resolve();
+    });
+  });
+
+  await initial;
+  assert.deepEqual(operations, ["snapshot", "snapshot", "table-scan"]);
+  await db.close();
+});
+
+test("subscriptions replay commits that arrive during snapshot bootstrap exactly once", async () => {
+  const counters = hydb.table("bootstrap_race_counters", {
+    id: id().primaryKey(),
+    value: integer().notNull(),
+  });
+  const localSchema = hydb.schema({ counters });
+  const underlying = await memoryStorage({ schema: localSchema });
+  await underlying.commit({
+    expectedVersion: 0,
+    mutations: [storageMutation.insert(counters, { id: "counter", value: 1 })],
+  });
+  let announceScan!: () => void;
+  const scanStarted = new Promise<void>((resolve) => {
+    announceScan = resolve;
+  });
+  let resumeScan!: () => void;
+  const scanResumed = new Promise<void>((resolve) => {
+    resumeScan = resolve;
+  });
+  const storage: StorageDatabase = {
+    async snapshot(selector) {
+      const snapshot = await underlying.snapshot(selector);
+      return {
+        commit: snapshot.commit,
+        branch: snapshot.branch,
+        sequence: snapshot.sequence,
+        version: snapshot.version,
+        get: (table, key) => snapshot.get(table, key),
+        async *scan(request) {
+          announceScan();
+          await scanResumed;
+          yield* snapshot.scan(request);
+        },
+        close: () => snapshot.close(),
+      };
+    },
+    head: (branch) => underlying.head(branch),
+    createBranch: (request) => underlying.createBranch(request),
+    commit: (request) => underlying.commit(request),
+    changes: (options) => underlying.changes(options),
+    close: () => underlying.close(),
+  };
+  const db = await hydb.database({ schema: localSchema, storage });
+  const values: number[] = [];
+  let announceSettled!: () => void;
+  const settled = new Promise<void>((resolve) => {
+    announceSettled = resolve;
+  });
+  db.subscribe(
+    hydb
+      .query(counters)
+      .select((counter) => ({ value: counter.value }))
+      .require(),
+    (result) => {
+      values.push(result.value);
+      if (values.length === 2) announceSettled();
+    },
+  );
+
+  await scanStarted;
+  await underlying.commit({
+    expectedVersion: 1,
+    mutations: [
+      storageMutation.update(counters, ["counter"], {
+        id: "counter",
+        value: 2,
+      }),
+    ],
+  });
+  await waitForImmediate();
+  resumeScan();
+  await settled;
+
+  assert.deepEqual(values, [1, 2]);
+  await db.close();
+});
+
+test("fetch executes a primary-key plan against a current storage snapshot", async () => {
+  const underlying = await memoryStorage({ schema });
+  await underlying.commit({
+    expectedVersion: 0,
+    mutations: [
+      storageMutation.insert(tasks, {
+        id: "task-1",
+        title: "Use the planner",
+        status: "doing",
+        priority: 10,
+      }),
+    ],
+  });
+  const operations: string[] = [];
+  const db = await hydb.database({
+    schema,
+    storage: recordStorageOperations(underlying, operations),
+  });
+  operations.length = 0;
+
+  const result = await db.fetch(
+    hydb
+      .query(tasks)
+      .where((task) => task.id.eq("task-1"))
+      .require(),
+  );
+
+  assert.deepEqual(result, {
+    id: "task-1",
+    title: "Use the planner",
+    status: "doing",
+    priority: 10,
+  });
+  assert.deepEqual(operations, ["snapshot", "get"]);
+  await db.close();
+});
+
+test("fetch executes an ordering-only secondary-index plan", async () => {
+  const underlying = await memoryStorage({ schema });
+  await underlying.commit({
+    expectedVersion: 0,
+    mutations: [
+      storageMutation.insert(tasks, {
+        id: "task-1",
+        title: "Doing",
+        status: "doing",
+        priority: 1,
+      }),
+      storageMutation.insert(tasks, {
+        id: "task-2",
+        title: "Done",
+        status: "done",
+        priority: 2,
+      }),
+      storageMutation.insert(tasks, {
+        id: "task-3",
+        title: "Also doing",
+        status: "doing",
+        priority: 3,
+      }),
+    ],
+  });
+  const operations: string[] = [];
+  const db = await hydb.database({
+    schema,
+    storage: recordStorageOperations(underlying, operations),
+  });
+  operations.length = 0;
+
+  const result = await db.fetch(
+    hydb
+      .query(tasks)
+      .orderBy((task) => task.status.asc())
+      .select((task) => ({ id: task.id, status: task.status }))
+      .many(),
+  );
+
+  assert.deepEqual(result, [
+    { id: "task-1", status: "doing" },
+    { id: "task-3", status: "doing" },
+    { id: "task-2", status: "done" },
+  ]);
+  assert.deepEqual(operations, ["snapshot", "index:tasks_status_priority_idx"]);
+
+  operations.length = 0;
+  assert.deepEqual(
+    await db.fetch(
+      hydb
+        .query(tasks)
+        .where((task) => task.status.eq("doing"))
+        .orderBy((task) => task.priority.desc())
+        .select((task) => ({ id: task.id, priority: task.priority }))
+        .many(),
+    ),
+    [
+      { id: "task-3", priority: 3 },
+      { id: "task-1", priority: 1 },
+    ],
+  );
+  assert.deepEqual(operations, ["snapshot", "index:tasks_status_priority_idx"]);
+  await db.close();
+});
+
+test("one still detects multiple rows when its scan is bounded", async () => {
+  const storage = await memoryStorage({ schema });
+  await storage.commit({
+    expectedVersion: 0,
+    mutations: [
+      storageMutation.insert(tasks, {
+        id: "task-1",
+        title: "First",
+        status: "todo",
+        priority: 1,
+      }),
+      storageMutation.insert(tasks, {
+        id: "task-2",
+        title: "Second",
+        status: "todo",
+        priority: 2,
+      }),
+    ],
+  });
+  const db = await hydb.database({ schema, storage });
+
+  await assert.rejects(
+    db.fetch(hydb.query(tasks).one()),
+    /Expected at most one query row/,
+  );
+  await db.close();
+});
 
 test("fetch filters, orders, limits, and projects rows from storage", async () => {
   const storage = await memoryStorage({ schema });

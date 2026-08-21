@@ -1,31 +1,15 @@
-import {
-  evaluateQuery,
-  type InferQueryResult,
-  type Query,
-  type QueryDataSource,
-} from "./query.js";
-import { DifferentialQuery } from "./dataflow.js";
+import { type InferQueryResult, type Query } from "./query.js";
+import { executeQueryPlan } from "./executor.js";
+import { planQuery } from "./planner.js";
+import { SubscriptionRuntime } from "./subscription.js";
 import {
   invokeCommand,
   type Command,
   type InferCommandInput,
   type InferCommandResult,
 } from "./command.js";
-import {
-  getColumnDefinition,
-  getSchemaDefinition,
-  getTableDefinition,
-  type AnySchema,
-  type AnyTable,
-} from "./schema.js";
-import {
-  encodeStorageKey,
-  type CommitBatch,
-  type StorageDatabase,
-  type StorageKey,
-} from "./storage.js";
-
-type StoredRow = Readonly<Record<string, unknown>>;
+import { type AnySchema } from "./schema.js";
+import { type CommitBatch, type StorageDatabase } from "./storage.js";
 
 export interface Database {
   fetch<QueryValue extends Query<any>>(
@@ -45,78 +29,55 @@ export interface Database {
   close(): Promise<void>;
 }
 
-class QueryDatabase implements Database, QueryDataSource {
+class QueryDatabase implements Database {
   readonly #abortController = new AbortController();
-  readonly #subscriptions = new Set<DifferentialQuery<Query<any>>>();
-  readonly #arrangements = new Map<
-    string,
-    Map<string, Map<string, Set<string>>>
+  readonly #subscriptions = new Set<SubscriptionRuntime<any>>();
+  readonly #sequenceWaiters = new Map<
+    number,
+    Array<{ resolve: () => void; reject: (error: unknown) => void }>
   >();
   #changeLoop?: Promise<void>;
-  #version: number;
+  #sequence: number;
+  #changeFailure?: unknown;
   #commandQueue: Promise<void> = Promise.resolve();
 
   constructor(
+    private readonly schema: AnySchema,
     private readonly storage: StorageDatabase,
-    private readonly tables: ReadonlyMap<string, Map<string, StoredRow>>,
-    version: number,
+    sequence: number,
   ) {
-    this.#version = version;
-  }
-
-  rows(table: string): readonly StoredRow[] {
-    const rows = this.tables.get(table);
-    if (rows === undefined) throw new TypeError(`Unknown table: ${table}`);
-    return [...rows.values()];
-  }
-
-  lookup(
-    table: string,
-    column: string,
-    value: unknown,
-  ): readonly StoredRow[] | undefined {
-    if (value === undefined) return [];
-    const rows = this.tables.get(table);
-    if (rows === undefined) return undefined;
-
-    let tableArrangements = this.#arrangements.get(table);
-    if (tableArrangements === undefined) {
-      tableArrangements = new Map();
-      this.#arrangements.set(table, tableArrangements);
-    }
-
-    let arrangement = tableArrangements.get(column);
-    if (arrangement === undefined) {
-      arrangement = new Map();
-      for (const [primaryKey, row] of rows) {
-        const key = encodeArrangementKey(row[column]);
-        if (key === undefined) continue;
-        const bucket = arrangement.get(key) ?? new Set<string>();
-        bucket.add(primaryKey);
-        arrangement.set(key, bucket);
-      }
-      tableArrangements.set(column, arrangement);
-    }
-
-    const key = encodeArrangementKey(value);
-    if (key === undefined) return [];
-    return [...(arrangement.get(key) ?? [])]
-      .map((primaryKey) => rows.get(primaryKey))
-      .filter((row): row is StoredRow => row !== undefined);
+    this.#sequence = sequence;
   }
 
   async fetch<QueryValue extends Query<any>>(
     query: QueryValue,
   ): Promise<InferQueryResult<QueryValue>> {
-    return evaluateQuery(query, this);
+    const snapshot = await this.storage.snapshot();
+    try {
+      return (await executeQueryPlan(
+        planQuery(this.schema, query),
+        snapshot,
+      )) as InferQueryResult<QueryValue>;
+    } finally {
+      await snapshot.close();
+    }
   }
 
   subscribe<QueryValue extends Query<any>>(
     query: QueryValue,
     listener: (result: InferQueryResult<QueryValue>) => void,
   ): () => void {
-    const subscription = new DifferentialQuery(query, this.tables, listener);
+    const subscription = new SubscriptionRuntime(
+      this.schema,
+      this.storage,
+      query,
+      listener,
+    );
     this.#subscriptions.add(subscription);
+    void subscription.ready.catch(() => {
+      this.#subscriptions.delete(subscription);
+      subscription.dispose();
+    });
     return () => {
       this.#subscriptions.delete(subscription);
       subscription.dispose();
@@ -128,19 +89,24 @@ class QueryDatabase implements Database, QueryDataSource {
     input: InferCommandInput<CommandValue>,
   ): Promise<InferCommandResult<CommandValue>> {
     const execution = this.#commandQueue.then(async () => {
-      const expectedVersion = this.#version;
-      const { result, mutations } = await invokeCommand(
-        command,
-        input,
-        this.tables,
-      );
-      if (mutations.length === 0) return result;
-      const commit = await this.storage.commit({
-        expectedVersion,
-        mutations,
-      });
-      this.applyCommit(commit);
-      return result;
+      const snapshot = await this.storage.snapshot();
+      try {
+        const { result, mutations } = await invokeCommand(
+          command,
+          input,
+          this.schema,
+          snapshot,
+        );
+        if (mutations.length === 0) return result;
+        const commit = await this.storage.commit({
+          expectedHead: snapshot.commit,
+          mutations,
+        });
+        await this.waitForSequence(commit.sequence);
+        return result;
+      } finally {
+        await snapshot.close();
+      }
     });
     this.#commandQueue = execution.then(
       () => undefined,
@@ -155,84 +121,66 @@ class QueryDatabase implements Database, QueryDataSource {
 
   async close(): Promise<void> {
     this.#abortController.abort();
+    this.rejectSequenceWaiters(new Error("Database is closed"));
     try {
       await this.#changeLoop;
     } finally {
       for (const subscription of this.#subscriptions) subscription.dispose();
+      await Promise.allSettled(
+        [...this.#subscriptions].map((subscription) => subscription.ready),
+      );
       this.#subscriptions.clear();
       await this.storage.close();
     }
   }
 
   private async consumeChanges(after: number): Promise<void> {
-    for await (const commit of this.storage.changes({
-      after,
-      signal: this.#abortController.signal,
-    })) {
-      this.applyCommit(commit);
+    try {
+      for await (const commit of this.storage.changes({
+        after,
+        signal: this.#abortController.signal,
+      })) {
+        this.applyCommit(commit);
+      }
+    } catch (error) {
+      if (this.#abortController.signal.aborted) return;
+      this.#changeFailure = error;
+      this.rejectSequenceWaiters(error);
+      throw error;
     }
   }
 
   private applyCommit(commit: CommitBatch): void {
-    if (commit.version <= this.#version) return;
-    for (const change of commit.changes) {
-      const name = getTableDefinition(change.table).name;
-      const rows = this.tables.get(name);
-      if (rows === undefined) throw new TypeError(`Unknown table: ${name}`);
-      const key = encodeStorageKey(change.key);
-      this.updateArrangements(name, key, change.before, change.after);
-      if (change.after === undefined) rows.delete(key);
-      else rows.set(key, change.after);
-    }
-
+    if (commit.sequence <= this.#sequence) return;
     for (const subscription of [...this.#subscriptions]) {
-      subscription.apply(commit);
+      subscription.accept(commit);
     }
-    this.#version = commit.version;
-  }
-
-  private updateArrangements(
-    table: string,
-    primaryKey: string,
-    before: StoredRow | undefined,
-    after: StoredRow | undefined,
-  ): void {
-    const arrangements = this.#arrangements.get(table);
-    if (arrangements === undefined) return;
-
-    for (const [column, arrangement] of arrangements) {
-      if (before !== undefined) {
-        const key = encodeArrangementKey(before[column]);
-        const bucket = key === undefined ? undefined : arrangement.get(key);
-        if (key !== undefined && bucket !== undefined) {
-          bucket.delete(primaryKey);
-          if (bucket.size === 0) arrangement.delete(key);
-        }
-      }
-      if (after !== undefined) {
-        const key = encodeArrangementKey(after[column]);
-        if (key !== undefined) {
-          const bucket = arrangement.get(key) ?? new Set<string>();
-          bucket.add(primaryKey);
-          arrangement.set(key, bucket);
-        }
-      }
+    this.#sequence = commit.sequence;
+    for (const [sequence, waiters] of this.#sequenceWaiters) {
+      if (sequence > this.#sequence) continue;
+      this.#sequenceWaiters.delete(sequence);
+      for (const waiter of waiters) waiter.resolve();
     }
   }
-}
 
-function encodeArrangementKey(value: unknown): string | undefined {
-  try {
-    return encodeStorageKey([value]);
-  } catch {
-    return undefined;
+  private waitForSequence(sequence: number): Promise<void> {
+    if (sequence <= this.#sequence) return Promise.resolve();
+    if (this.#changeFailure !== undefined) {
+      return Promise.reject(this.#changeFailure);
+    }
+    return new Promise<void>((resolve, reject) => {
+      const waiters = this.#sequenceWaiters.get(sequence) ?? [];
+      waiters.push({ resolve, reject });
+      this.#sequenceWaiters.set(sequence, waiters);
+    });
   }
-}
 
-function keyForRow(table: AnyTable, row: StoredRow): StorageKey {
-  return Object.entries(getTableDefinition(table).columns)
-    .filter(([, column]) => getColumnDefinition(column).primaryKey)
-    .map(([name]) => row[name]);
+  private rejectSequenceWaiters(error: unknown): void {
+    for (const waiters of this.#sequenceWaiters.values()) {
+      for (const waiter of waiters) waiter.reject(error);
+    }
+    this.#sequenceWaiters.clear();
+  }
 }
 
 export async function database(options: {
@@ -240,29 +188,14 @@ export async function database(options: {
   storage: StorageDatabase;
 }): Promise<Database> {
   const snapshot = await options.storage.snapshot();
-  const tables = new Map<string, Map<string, StoredRow>>();
-
-  try {
-    for (const table of Object.values(
-      getSchemaDefinition(options.schema).tables,
-    )) {
-      const rows = new Map<string, StoredRow>();
-      for await (const batch of snapshot.scan({ type: "table", table })) {
-        for (const row of batch) {
-          rows.set(encodeStorageKey(keyForRow(table, row)), row);
-        }
-      }
-      tables.set(getTableDefinition(table).name, rows);
-    }
-  } finally {
-    await snapshot.close();
-  }
+  const sequence = snapshot.sequence;
+  await snapshot.close();
 
   const queryDatabase = new QueryDatabase(
+    options.schema,
     options.storage,
-    tables,
-    snapshot.version,
+    sequence,
   );
-  queryDatabase.start(snapshot.version);
+  queryDatabase.start(sequence);
   return queryDatabase;
 }

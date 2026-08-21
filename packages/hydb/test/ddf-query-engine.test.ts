@@ -416,8 +416,22 @@ test("unsubscribed graphs stop publishing while other subscribers continue", asy
     .require();
   const first: number[] = [];
   const second: number[] = [];
-  const unsubscribe = db.subscribe(query, (result) => first.push(result.value));
-  db.subscribe(query, (result) => second.push(result.value));
+  let initialSubscriptions!: () => void;
+  const initialized = new Promise<void>((resolve) => {
+    initialSubscriptions = resolve;
+  });
+  const observeInitialization = () => {
+    if (first.length === 1 && second.length === 1) initialSubscriptions();
+  };
+  const unsubscribe = db.subscribe(query, (result) => {
+    first.push(result.value);
+    observeInitialization();
+  });
+  db.subscribe(query, (result) => {
+    second.push(result.value);
+    observeInitialization();
+  });
+  await initialized;
   unsubscribe();
 
   await storage.commit({

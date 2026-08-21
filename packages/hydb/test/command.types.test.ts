@@ -28,17 +28,17 @@ const tasks = hydb.table("typed_command_tasks", {
 const createTask = hydb.command({
   input: z.object({ id: z.string(), title: z.string() }),
   handler: async (tx, input) => {
-    const inserted = tx.insert(tasks, input);
-    const fetched = tx.get(tasks, [input.id]);
-    tx.update(tasks, [input.id], { priority: 10, note: "Selected" });
-    tx.delete(tasks, [input.id]);
+    const inserted = await tx.insert(tasks, input);
+    const fetched = await tx.get(tasks, [input.id]);
+    await tx.update(tasks, [input.id], { priority: 10, note: "Selected" });
+    await tx.delete(tasks, [input.id]);
 
     // @ts-expect-error primary keys cannot be updated
-    tx.update(tasks, [input.id], { id: "replacement" });
+    await tx.update(tasks, [input.id], { id: "replacement" });
     // @ts-expect-error title is required on inserts
-    tx.insert(tasks, { id: "missing-title" });
+    await tx.insert(tasks, { id: "missing-title" });
     // @ts-expect-error priority must be numeric
-    tx.update(tasks, [input.id], { priority: "high" });
+    await tx.update(tasks, [input.id], { priority: "high" });
 
     return { inserted, fetched };
   },

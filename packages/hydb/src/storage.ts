@@ -219,6 +219,15 @@ function compareStorageKeys(left: StorageKey, right: StorageKey): number {
   return left.length - right.length;
 }
 
+function storageKeyHasPrefix(key: StorageKey, prefix: StorageKey): boolean {
+  return (
+    key.length >= prefix.length &&
+    prefix.every(
+      (value, index) => compareStorageValues(key[index], value) === 0,
+    )
+  );
+}
+
 function storageKeyInRange(key: StorageKey, range: StorageRange): boolean {
   if (range.gt !== undefined && compareStorageKeys(key, range.gt) <= 0)
     return false;
@@ -372,7 +381,7 @@ class MemorySnapshot implements StorageSnapshot {
       })
       .filter(({ key }) => {
         if (request.type === "index" && request.key !== undefined) {
-          return compareStorageKeys(key, request.key) === 0;
+          return storageKeyHasPrefix(key, request.key);
         }
         return (
           request.range === undefined || storageKeyInRange(key, request.range)

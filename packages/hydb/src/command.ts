@@ -1,6 +1,8 @@
 import {
   getColumnDefinition,
+  getSchemaDefinition,
   getTableDefinition,
+  type AnySchema,
   type AnyTable,
   type InferInsert,
   type InferRow,
@@ -11,33 +13,36 @@ import {
   storageMutation,
   type StorageKey,
   type StorageMutation,
+  type StorageSnapshot,
 } from "./storage.js";
 import type { input as ZodInput, output as ZodOutput, ZodType } from "zod";
 
 const commandDefinition = Symbol("hydb.command");
+const missingRow = Symbol("hydb.missing-row");
 const deletedRow = Symbol("hydb.deleted-row");
 
 type StoredRow = Readonly<Record<string, unknown>>;
-type TableRows = ReadonlyMap<string, ReadonlyMap<string, StoredRow>>;
-
 export interface Transaction {
   get<TableValue extends AnyTable>(
     table: TableValue,
     key: StorageKey,
-  ): InferRow<TableValue> | undefined;
+  ): Promise<InferRow<TableValue> | undefined>;
 
   insert<TableValue extends AnyTable>(
     table: TableValue,
     values: InferInsert<TableValue>,
-  ): InferRow<TableValue>;
+  ): Promise<InferRow<TableValue>>;
 
   update<TableValue extends AnyTable>(
     table: TableValue,
     key: StorageKey,
     changes: InferUpdate<TableValue>,
-  ): InferRow<TableValue>;
+  ): Promise<InferRow<TableValue>>;
 
-  delete<TableValue extends AnyTable>(table: TableValue, key: StorageKey): void;
+  delete<TableValue extends AnyTable>(
+    table: TableValue,
+    key: StorageKey,
+  ): Promise<void>;
 }
 
 export type Command<Input, Result, ParsedInput = Input> = Readonly<{
@@ -84,37 +89,55 @@ class CommandTransaction implements Transaction {
     Map<string, StoredRow | typeof deletedRow>
   >();
   readonly #mutations: StorageMutation[] = [];
-  readonly #tables: TableRows;
+  readonly #reads = new Map<
+    string,
+    Map<string, StoredRow | typeof missingRow>
+  >();
   #active = true;
 
-  constructor(tables: TableRows) {
-    this.#tables = new Map(
-      [...tables].map(([name, rows]) => [name, new Map(rows)]),
-    );
-  }
+  constructor(
+    private readonly schema: AnySchema,
+    private readonly snapshot: StorageSnapshot,
+  ) {}
 
-  get<TableValue extends AnyTable>(
+  async get<TableValue extends AnyTable>(
     table: TableValue,
     key: StorageKey,
-  ): InferRow<TableValue> | undefined {
+  ): Promise<InferRow<TableValue> | undefined> {
     this.assertActive();
+    this.assertTable(table);
     const encodedKey = encodeStorageKey(key);
-    const overlay = this.#overlays.get(tableName(table))?.get(encodedKey);
+    const name = tableName(table);
+    const writes = this.#overlays.get(name);
+    const overlay = writes?.get(encodedKey);
     if (overlay === deletedRow) return undefined;
-    const row = overlay ?? this.tableRows(table).get(encodedKey);
-    return row === undefined
-      ? undefined
-      : (structuredClone(row) as InferRow<TableValue>);
+    if (overlay !== undefined) {
+      return structuredClone(overlay) as InferRow<TableValue>;
+    }
+
+    let tableReads = this.#reads.get(name);
+    if (tableReads === undefined) {
+      tableReads = new Map();
+      this.#reads.set(name, tableReads);
+    }
+    let row = tableReads.get(encodedKey);
+    if (row === undefined) {
+      row = (await this.snapshot.get(table, key)) ?? missingRow;
+      tableReads.set(encodedKey, row);
+    }
+    if (row === missingRow) return undefined;
+    return structuredClone(row) as InferRow<TableValue>;
   }
 
-  insert<TableValue extends AnyTable>(
+  async insert<TableValue extends AnyTable>(
     table: TableValue,
     values: InferInsert<TableValue>,
-  ): InferRow<TableValue> {
+  ): Promise<InferRow<TableValue>> {
     this.assertActive();
+    this.assertTable(table);
     const row = materializeInsert(table, values);
     const key = keyForRow(table, row);
-    if (this.get(table, key) !== undefined) {
+    if ((await this.get(table, key)) !== undefined) {
       throw new TypeError(
         `Duplicate primary key for table ${tableName(table)}`,
       );
@@ -124,13 +147,14 @@ class CommandTransaction implements Transaction {
     return structuredClone(row);
   }
 
-  update<TableValue extends AnyTable>(
+  async update<TableValue extends AnyTable>(
     table: TableValue,
     key: StorageKey,
     changes: InferUpdate<TableValue>,
-  ): InferRow<TableValue> {
+  ): Promise<InferRow<TableValue>> {
     this.assertActive();
-    const current = this.get(table, key);
+    this.assertTable(table);
+    const current = await this.get(table, key);
     if (current === undefined) {
       throw new TypeError(`Missing row for table ${tableName(table)}`);
     }
@@ -148,12 +172,13 @@ class CommandTransaction implements Transaction {
     return structuredClone(row) as InferRow<TableValue>;
   }
 
-  delete<TableValue extends AnyTable>(
+  async delete<TableValue extends AnyTable>(
     table: TableValue,
     key: StorageKey,
-  ): void {
+  ): Promise<void> {
     this.assertActive();
-    if (this.get(table, key) === undefined) {
+    this.assertTable(table);
+    if ((await this.get(table, key)) === undefined) {
       throw new TypeError(`Missing row for table ${tableName(table)}`);
     }
     this.overlay(table).set(encodeStorageKey(key), deletedRow);
@@ -170,15 +195,8 @@ class CommandTransaction implements Transaction {
     this.#active = false;
   }
 
-  private tableRows(table: AnyTable): ReadonlyMap<string, StoredRow> {
-    const rows = this.#tables.get(tableName(table));
-    if (rows === undefined)
-      throw new TypeError(`Unknown table: ${tableName(table)}`);
-    return rows;
-  }
-
   private overlay(table: AnyTable): Map<string, StoredRow | typeof deletedRow> {
-    this.tableRows(table);
+    this.assertTable(table);
     const name = tableName(table);
     let overlay = this.#overlays.get(name);
     if (overlay === undefined) {
@@ -194,6 +212,14 @@ class CommandTransaction implements Transaction {
 
   private assertActive(): void {
     if (!this.#active) throw new Error("Transaction is no longer active");
+  }
+
+  private assertTable(table: AnyTable): void {
+    const definition = getSchemaDefinition(this.schema);
+    const known = Object.values(definition.tables).some(
+      (candidate) => candidate === table,
+    );
+    if (!known) throw new TypeError(`Unknown table: ${tableName(table)}`);
   }
 }
 
@@ -250,12 +276,13 @@ function assertUpdateColumns(
 export async function invokeCommand<Input, Result, ParsedInput>(
   value: Command<Input, Result, ParsedInput>,
   input: Input,
-  tables: TableRows,
+  schema: AnySchema,
+  snapshot: StorageSnapshot,
 ): Promise<
   Readonly<{ result: Result; mutations: readonly StorageMutation[] }>
 > {
   const parsedInput = await value[commandDefinition].input.parseAsync(input);
-  const transaction = new CommandTransaction(tables);
+  const transaction = new CommandTransaction(schema, snapshot);
   try {
     const result = await value[commandDefinition].handler(
       transaction,

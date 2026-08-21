@@ -683,7 +683,11 @@ class QueryCompiler {
     group: rootGroup,
   });
 
-  constructor(private readonly tables: TableRows) {}
+  private tables: TableRows | undefined;
+
+  constructor(tables: TableRows) {
+    this.tables = tables;
+  }
 
   compile(node: QueryNode): Stream<MaterializedRecord> {
     return this.compileNode(node);
@@ -692,6 +696,10 @@ class QueryCompiler {
   bootstrap(): void {
     for (const input of this.#inputs.values()) input.bootstrap();
     this.#rootGroups.bootstrap();
+  }
+
+  releaseInitialRows(): void {
+    this.tables = undefined;
   }
 
   apply(commit: CommitBatch): void {
@@ -710,7 +718,7 @@ class QueryCompiler {
   private input(table: string): InputOperator {
     let input = this.#inputs.get(table);
     if (input !== undefined) return input;
-    const rows = this.tables.get(table);
+    const rows = this.tables?.get(table);
     if (rows === undefined) throw new TypeError(`Unknown table: ${table}`);
     input = new InputOperator(table, rows);
     this.#inputs.set(table, input);
@@ -839,6 +847,7 @@ export class DifferentialQuery<QueryValue extends Query<any>> {
   ) {
     this.#compiler = new QueryCompiler(tables);
     const result = this.#compiler.compile(getQueryPlan(query));
+    this.#compiler.releaseInitialRows();
     this.#output = new OutputOperator(result, listener);
     this.#compiler.bootstrap();
     this.#output.publishInitial();

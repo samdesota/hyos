@@ -45,6 +45,7 @@ export type PhysicalAccess =
     }>;
 
 export type PhysicalQueryPlan = Readonly<{
+  source: QuerySource;
   access: PhysicalAccess;
   filters: readonly ExpressionNode[];
   order: QueryPlan["order"];
@@ -235,13 +236,16 @@ function isQueryPlan(value: ExpressionNode | QueryPlan): value is QueryPlan {
 function planNode(schema: AnySchema, logical: QueryPlan): PhysicalQueryPlan {
   const table = tableFor(schema, logical.source.table);
   const cardinality = logical.cardinality ?? "many";
-  const shortCircuits =
-    cardinality === "one" ||
-    cardinality === "require" ||
-    cardinality === "exists";
-  const scanLimit = shortCircuits
-    ? Math.min(logical.limit ?? 1, 1)
-    : logical.limit;
+  const cardinalityLimit =
+    cardinality === "exists"
+      ? 1
+      : cardinality === "one" || cardinality === "require"
+        ? 2
+        : undefined;
+  const scanLimit =
+    cardinalityLimit === undefined
+      ? logical.limit
+      : Math.min(logical.limit ?? cardinalityLimit, cardinalityLimit);
   const filters = logical.filters.flatMap(flattenConjunction);
   const equalities = filters
     .map((filter) => equalityFor(filter, logical.source))
@@ -321,6 +325,7 @@ function planNode(schema: AnySchema, logical: QueryPlan): PhysicalQueryPlan {
   }
 
   return Object.freeze({
+    source: logical.source,
     access,
     filters: Object.freeze(filters.filter((filter) => !used.has(filter))),
     order: orderCovered ? Object.freeze([]) : logical.order,

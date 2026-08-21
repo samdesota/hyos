@@ -1,8 +1,8 @@
 # HyDB TODO
 
 - [x] Build the storage-aware query planner.
-- [ ] Execute physical query plans over asynchronous storage cursors.
-- [ ] Remove global table hydration from the database runtime.
+- [x] Execute physical query plans over asynchronous storage cursors.
+- [x] Remove global table hydration from the database runtime.
 - [ ] Bootstrap subscriptions from targeted snapshots and durable change streams.
 - [ ] Add a shared, byte-budgeted memory manager.
 - [ ] Implement spillable sort and join operators.

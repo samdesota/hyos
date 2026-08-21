@@ -12,8 +12,170 @@ import {
   StorageConflictError,
   storageMutation,
   text,
+  type StorageDatabase,
+  type StorageSnapshot,
   type Transaction,
 } from "../src/index.js";
+
+function recordStorageOperations(
+  storage: StorageDatabase,
+  operations: string[],
+): StorageDatabase {
+  return {
+    async snapshot(selector) {
+      operations.push("snapshot");
+      const snapshot = await storage.snapshot(selector);
+      const recorded: StorageSnapshot = {
+        commit: snapshot.commit,
+        branch: snapshot.branch,
+        sequence: snapshot.sequence,
+        version: snapshot.version,
+        async get(table, key) {
+          operations.push("get");
+          return snapshot.get(table, key);
+        },
+        scan(request) {
+          operations.push("scan");
+          return snapshot.scan(request);
+        },
+        close() {
+          return snapshot.close();
+        },
+      };
+      return recorded;
+    },
+    head(branch) {
+      return storage.head(branch);
+    },
+    createBranch(request) {
+      return storage.createBranch(request);
+    },
+    commit(request) {
+      return storage.commit(request);
+    },
+    changes(options) {
+      return storage.changes(options);
+    },
+    close() {
+      return storage.close();
+    },
+  };
+}
+
+test("commands read through a storage snapshot and preserve read-your-writes", async () => {
+  const counters = hydb.table("snapshot_command_counters", {
+    id: id().primaryKey(),
+    value: integer().notNull(),
+  });
+  const schema = hydb.schema({ counters });
+  const underlying = await memoryStorage({ schema });
+  await underlying.commit({
+    expectedVersion: 0,
+    mutations: [storageMutation.insert(counters, { id: "counter", value: 1 })],
+  });
+  const operations: string[] = [];
+  const db = await hydb.database({
+    schema,
+    storage: recordStorageOperations(underlying, operations),
+  });
+  operations.length = 0;
+
+  const increment = hydb.command({
+    input: z.undefined(),
+    handler: async (tx) => {
+      const before = await tx.get(counters, ["counter"]);
+      const updated = await tx.update(counters, ["counter"], {
+        value: (before?.value ?? 0) + 1,
+      });
+      const after = await tx.get(counters, ["counter"]);
+      return { updated, after };
+    },
+  });
+
+  assert.deepEqual(await db.execute(increment, undefined), {
+    updated: { id: "counter", value: 2 },
+    after: { id: "counter", value: 2 },
+  });
+  assert.deepEqual(operations, ["snapshot", "get"]);
+  await db.close();
+});
+
+test("command commits settle through the ordered durable change stream", async () => {
+  const counters = hydb.table("ordered_command_counters", {
+    id: id().primaryKey(),
+    value: integer().notNull(),
+  });
+  const schema = hydb.schema({ counters });
+  const underlying = await memoryStorage({ schema });
+  await underlying.commit({
+    expectedVersion: 0,
+    mutations: [storageMutation.insert(counters, { id: "counter", value: 0 })],
+  });
+  let releaseChanges!: () => void;
+  const changesReleased = new Promise<void>((resolve) => {
+    releaseChanges = resolve;
+  });
+  let announceCommandCommit!: () => void;
+  const commandCommitted = new Promise<void>((resolve) => {
+    announceCommandCommit = resolve;
+  });
+  const storage: StorageDatabase = {
+    snapshot: (selector) => underlying.snapshot(selector),
+    head: (branch) => underlying.head(branch),
+    createBranch: (request) => underlying.createBranch(request),
+    async commit(request) {
+      const commit = await underlying.commit(request);
+      announceCommandCommit();
+      return commit;
+    },
+    async *changes(options) {
+      await changesReleased;
+      yield* underlying.changes(options);
+    },
+    close: () => underlying.close(),
+  };
+  const db = await hydb.database({ schema, storage });
+  const values: number[] = [];
+  let announceInitial!: () => void;
+  const initialized = new Promise<void>((resolve) => {
+    announceInitial = resolve;
+  });
+  db.subscribe(
+    hydb
+      .query(counters)
+      .select((counter) => ({ value: counter.value }))
+      .require(),
+    (result) => {
+      values.push(result.value);
+      if (values.length === 1) announceInitial();
+    },
+  );
+  await initialized;
+  await underlying.commit({
+    expectedVersion: 1,
+    mutations: [
+      storageMutation.update(counters, ["counter"], {
+        id: "counter",
+        value: 1,
+      }),
+    ],
+  });
+  const setTwo = hydb.command({
+    input: z.undefined(),
+    handler: async (tx) => {
+      await tx.update(counters, ["counter"], { value: 2 });
+    },
+  });
+
+  const execution = db.execute(setTwo, undefined);
+  await commandCommitted;
+  releaseChanges();
+  await execution;
+  await waitForImmediate();
+
+  assert.deepEqual(values, [0, 1, 2]);
+  await db.close();
+});
 
 test("a command atomically publishes its transaction and returns its result", async () => {
   const projects = hydb.table("command_projects", {
@@ -51,9 +213,9 @@ test("a command atomically publishes its transaction and returns its result", as
       name: z.string().trim().min(1),
       firstTask: z.string().trim().min(1),
     }),
-    handler: (tx, input) => {
-      tx.insert(projects, { id: input.projectId, name: input.name });
-      tx.insert(tasks, {
+    handler: async (tx, input) => {
+      await tx.insert(projects, { id: input.projectId, name: input.name });
+      await tx.insert(tasks, {
         id: `${input.projectId}-first-task`,
         projectId: input.projectId,
         title: input.firstTask,
@@ -96,9 +258,9 @@ test("invalid command input is rejected before the handler runs", async () => {
       id: z.string().uuid(),
       title: z.string().trim().min(3),
     }),
-    handler: (tx, input) => {
+    handler: async (tx, input) => {
       handlerCalls += 1;
-      tx.insert(tasks, input);
+      await tx.insert(tasks, input);
     },
   });
 
@@ -140,11 +302,11 @@ test("a conflicting command keeps its snapshot and is never rerun", async () => 
     input: z.undefined(),
     handler: async (tx) => {
       handlerCalls += 1;
-      observedValues.push(tx.get(counters, ["counter"])?.value ?? -1);
+      observedValues.push((await tx.get(counters, ["counter"]))?.value ?? -1);
       started();
       await paused;
-      observedValues.push(tx.get(counters, ["counter"])?.value ?? -1);
-      tx.update(counters, ["counter"], { value: 1 });
+      observedValues.push((await tx.get(counters, ["counter"]))?.value ?? -1);
+      await tx.update(counters, ["counter"], { value: 1 });
     },
   });
 
@@ -191,17 +353,17 @@ test("commands apply defaults, expose read-your-writes, and discard failed work"
 
   const prepareTask = hydb.command({
     input: z.object({ title: z.string() }),
-    handler: (tx, input) => {
-      tx.insert(tasks, { id: "kept", title: input.title });
-      assert.deepEqual(tx.get(tasks, ["kept"]), {
+    handler: async (tx, input) => {
+      await tx.insert(tasks, { id: "kept", title: input.title });
+      assert.deepEqual(await tx.get(tasks, ["kept"]), {
         id: "kept",
         title: input.title,
         status: "todo",
         note: null,
       });
-      const updated = tx.update(tasks, ["kept"], { title: "Updated" });
-      tx.insert(tasks, { id: "discarded", title: "Temporary" });
-      tx.delete(tasks, ["discarded"]);
+      const updated = await tx.update(tasks, ["kept"], { title: "Updated" });
+      await tx.insert(tasks, { id: "discarded", title: "Temporary" });
+      await tx.delete(tasks, ["discarded"]);
       return updated;
     },
   });
@@ -219,8 +381,8 @@ test("commands apply defaults, expose read-your-writes, and discard failed work"
 
   const failAfterWriting = hydb.command({
     input: z.undefined(),
-    handler: (tx) => {
-      tx.update(tasks, ["kept"], { status: "done" });
+    handler: async (tx) => {
+      await tx.update(tasks, ["kept"], { status: "done" });
       throw new Error("command failed");
     },
   });
@@ -249,9 +411,9 @@ test("transactions reject invalid writes and cannot escape their command", async
 
   const duplicate = hydb.command({
     input: z.undefined(),
-    handler: (tx) => {
-      tx.insert(tasks, { id: "duplicate", title: "First" });
-      tx.insert(tasks, { id: "duplicate", title: "Second" });
+    handler: async (tx) => {
+      await tx.insert(tasks, { id: "duplicate", title: "First" });
+      await tx.insert(tasks, { id: "duplicate", title: "Second" });
     },
   });
   await assert.rejects(
@@ -261,8 +423,8 @@ test("transactions reject invalid writes and cannot escape their command", async
 
   const missingInsertColumn = hydb.command({
     input: z.undefined(),
-    handler: (tx) => {
-      tx.insert(tasks, { id: "missing" } as never);
+    handler: async (tx) => {
+      await tx.insert(tasks, { id: "missing" } as never);
     },
   });
   await assert.rejects(
@@ -272,10 +434,10 @@ test("transactions reject invalid writes and cannot escape their command", async
 
   const missingRows = hydb.command({
     input: z.enum(["update", "delete"]),
-    handler: (tx, operation) => {
+    handler: async (tx, operation) => {
       if (operation === "update") {
-        tx.update(tasks, ["missing"], { title: "No row" });
-      } else tx.delete(tasks, ["missing"]);
+        await tx.update(tasks, ["missing"], { title: "No row" });
+      } else await tx.delete(tasks, ["missing"]);
     },
   });
   await assert.rejects(db.execute(missingRows, "update"), /Missing row/);
@@ -283,9 +445,9 @@ test("transactions reject invalid writes and cannot escape their command", async
 
   const invalidUpdate = hydb.command({
     input: z.record(z.string(), z.unknown()),
-    handler: (tx, changes) => {
-      tx.insert(tasks, { id: "task", title: "Valid" });
-      tx.update(tasks, ["task"], changes as never);
+    handler: async (tx, changes) => {
+      await tx.insert(tasks, { id: "task", title: "Valid" });
+      await tx.update(tasks, ["task"], changes as never);
     },
   });
   await assert.rejects(
@@ -299,8 +461,8 @@ test("transactions reject invalid writes and cannot escape their command", async
 
   const unknownTable = hydb.command({
     input: z.undefined(),
-    handler: (tx) => {
-      tx.get(outsideSchema, ["missing"]);
+    handler: async (tx) => {
+      await tx.get(outsideSchema, ["missing"]);
     },
   });
   await assert.rejects(db.execute(unknownTable, undefined), /Unknown table/);
@@ -313,7 +475,7 @@ test("transactions reject invalid writes and cannot escape their command", async
     },
   });
   await db.execute(capture, undefined);
-  assert.throws(() => escaped.get(tasks, ["task"]), /no longer active/);
+  await assert.rejects(escaped.get(tasks, ["task"]), /no longer active/);
 
   assert.deepEqual(await db.fetch(hydb.query(tasks).many()), []);
   await db.close();
