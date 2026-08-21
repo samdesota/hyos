@@ -1,10 +1,10 @@
 import {
   evaluateQuery,
-  getQueryTables,
   type InferQueryResult,
   type Query,
   type QueryDataSource,
 } from "./query.js";
+import { DifferentialQuery } from "./dataflow.js";
 import {
   getColumnDefinition,
   getSchemaDefinition,
@@ -36,12 +36,7 @@ export interface Database {
 
 class QueryDatabase implements Database, QueryDataSource {
   readonly #abortController = new AbortController();
-  readonly #subscriptions = new Set<{
-    query: Query<any>;
-    tables: ReadonlySet<string>;
-    listener: (result: any) => void;
-    result: any;
-  }>();
+  readonly #subscriptions = new Set<DifferentialQuery<Query<any>>>();
   readonly #arrangements = new Map<
     string,
     Map<string, Map<string, Set<string>>>
@@ -104,17 +99,11 @@ class QueryDatabase implements Database, QueryDataSource {
     query: QueryValue,
     listener: (result: InferQueryResult<QueryValue>) => void,
   ): () => void {
-    const result = evaluateQuery(query, this);
-    const subscription = {
-      query,
-      tables: getQueryTables(query),
-      listener,
-      result,
-    };
+    const subscription = new DifferentialQuery(query, this.tables, listener);
     this.#subscriptions.add(subscription);
-    listener(result);
     return () => {
       this.#subscriptions.delete(subscription);
+      subscription.dispose();
     };
   }
 
@@ -127,6 +116,8 @@ class QueryDatabase implements Database, QueryDataSource {
     try {
       await this.#changeLoop;
     } finally {
+      for (const subscription of this.#subscriptions) subscription.dispose();
+      this.#subscriptions.clear();
       await this.storage.close();
     }
   }
@@ -141,7 +132,6 @@ class QueryDatabase implements Database, QueryDataSource {
   }
 
   private applyCommit(commit: CommitBatch): void {
-    const changedTables = new Set<string>();
     for (const change of commit.changes) {
       const name = getTableDefinition(change.table).name;
       const rows = this.tables.get(name);
@@ -150,17 +140,10 @@ class QueryDatabase implements Database, QueryDataSource {
       this.updateArrangements(name, key, change.before, change.after);
       if (change.after === undefined) rows.delete(key);
       else rows.set(key, change.after);
-      changedTables.add(name);
     }
 
     for (const subscription of [...this.#subscriptions]) {
-      if (![...subscription.tables].some((table) => changedTables.has(table))) {
-        continue;
-      }
-      const result = evaluateQuery(subscription.query, this);
-      if (deepEqual(result, subscription.result)) continue;
-      subscription.result = result;
-      subscription.listener(result);
+      subscription.apply(commit);
     }
   }
 
@@ -200,35 +183,6 @@ function encodeArrangementKey(value: unknown): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-function deepEqual(left: unknown, right: unknown): boolean {
-  if (Object.is(left, right)) return true;
-  if (left instanceof Date && right instanceof Date) {
-    return left.getTime() === right.getTime();
-  }
-  if (Array.isArray(left) && Array.isArray(right)) {
-    return (
-      left.length === right.length &&
-      left.every((value, index) => deepEqual(value, right[index]))
-    );
-  }
-  if (
-    typeof left === "object" &&
-    left !== null &&
-    typeof right === "object" &&
-    right !== null
-  ) {
-    const leftEntries = Object.entries(left);
-    const rightEntries = Object.entries(right);
-    return (
-      leftEntries.length === rightEntries.length &&
-      leftEntries.every(([key, value]) =>
-        deepEqual(value, (right as Record<string, unknown>)[key]),
-      )
-    );
-  }
-  return false;
 }
 
 function keyForRow(table: AnyTable, row: StoredRow): StorageKey {

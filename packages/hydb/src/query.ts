@@ -3,49 +3,51 @@ import { getTableDefinition, type AnyTable, type InferRow } from "./schema.js";
 const expressionDefinition = Symbol("hydb.expression");
 const queryDefinition = Symbol("hydb.query");
 
-type QuerySource = Readonly<{
+export type QuerySource = Readonly<{
   table: string;
 }>;
 
-type FieldNode = Readonly<{
+export type FieldNode = Readonly<{
   type: "field";
   source: QuerySource;
   column: string;
 }>;
 
-type LiteralNode = Readonly<{
+export type LiteralNode = Readonly<{
   type: "literal";
   value: unknown;
 }>;
 
-type ComparisonNode = Readonly<{
+export type ComparisonNode = Readonly<{
   type: "comparison";
   operator: "eq" | "ne";
   left: ExpressionNode;
   right: ExpressionNode;
 }>;
 
-type LogicalNode = Readonly<{
+export type LogicalNode = Readonly<{
   type: "logical";
   operator: "and" | "or";
   left: ExpressionNode;
   right: ExpressionNode;
 }>;
 
-type NotNode = Readonly<{
+export type NotNode = Readonly<{
   type: "not";
   value: ExpressionNode;
 }>;
 
-type ExpressionNode =
+export type ExpressionNode =
   FieldNode | LiteralNode | ComparisonNode | LogicalNode | NotNode;
 
-type OrderNode = Readonly<{
+export type OrderNode = Readonly<{
   expression: ExpressionNode;
   direction: "asc" | "desc";
 }>;
 
-type SelectionNode = Readonly<Record<string, ExpressionNode | QueryNode>>;
+export type SelectionNode = Readonly<
+  Record<string, ExpressionNode | QueryNode>
+>;
 
 export type QueryPlan = Readonly<{
   source: QuerySource;
@@ -56,7 +58,7 @@ export type QueryPlan = Readonly<{
   cardinality?: "many" | "one" | "require" | "exists" | "count";
 }>;
 
-type QueryNode = QueryPlan;
+export type QueryNode = QueryPlan;
 
 export type Expression<Data> = Readonly<{
   [expressionDefinition]: {
@@ -366,7 +368,7 @@ function valuesEqual(left: unknown, right: unknown): boolean {
   return Object.is(left, right);
 }
 
-function evaluateExpression(
+export function evaluateExpressionNode(
   node: ExpressionNode,
   context: EvaluationContext,
 ): unknown {
@@ -377,23 +379,23 @@ function evaluateExpression(
       return node.value;
     case "comparison": {
       const equal = valuesEqual(
-        evaluateExpression(node.left, context),
-        evaluateExpression(node.right, context),
+        evaluateExpressionNode(node.left, context),
+        evaluateExpressionNode(node.right, context),
       );
       return node.operator === "eq" ? equal : !equal;
     }
     case "logical": {
-      const left = Boolean(evaluateExpression(node.left, context));
+      const left = Boolean(evaluateExpressionNode(node.left, context));
       return node.operator === "and"
-        ? left && Boolean(evaluateExpression(node.right, context))
-        : left || Boolean(evaluateExpression(node.right, context));
+        ? left && Boolean(evaluateExpressionNode(node.right, context))
+        : left || Boolean(evaluateExpressionNode(node.right, context));
     }
     case "not":
-      return !Boolean(evaluateExpression(node.value, context));
+      return !Boolean(evaluateExpressionNode(node.value, context));
   }
 }
 
-function compareValues(left: unknown, right: unknown): number {
+export function compareQueryValues(left: unknown, right: unknown): number {
   if (valuesEqual(left, right)) return 0;
   if (left === null || left === undefined) return -1;
   if (right === null || right === undefined) return 1;
@@ -409,11 +411,16 @@ function compareValues(left: unknown, right: unknown): number {
   throw new TypeError("Values cannot be ordered");
 }
 
-function isQueryNode(node: ExpressionNode | QueryNode): node is QueryNode {
+export function isQueryNode(
+  node: ExpressionNode | QueryNode,
+): node is QueryNode {
   return "filters" in node;
 }
 
-function referencesSource(node: ExpressionNode, source: QuerySource): boolean {
+export function expressionReferencesSource(
+  node: ExpressionNode,
+  source: QuerySource,
+): boolean {
   switch (node.type) {
     case "field":
       return node.source === source;
@@ -422,11 +429,11 @@ function referencesSource(node: ExpressionNode, source: QuerySource): boolean {
     case "comparison":
     case "logical":
       return (
-        referencesSource(node.left, source) ||
-        referencesSource(node.right, source)
+        expressionReferencesSource(node.left, source) ||
+        expressionReferencesSource(node.right, source)
       );
     case "not":
-      return referencesSource(node.value, source);
+      return expressionReferencesSource(node.value, source);
   }
 }
 
@@ -443,12 +450,12 @@ function lookupRows(
     if (
       filter.left.type === "field" &&
       filter.left.source === node.source &&
-      !referencesSource(filter.right, node.source)
+      !expressionReferencesSource(filter.right, node.source)
     ) {
       const rows = source.lookup(
         node.source.table,
         filter.left.column,
-        evaluateExpression(filter.right, parentContext),
+        evaluateExpressionNode(filter.right, parentContext),
       );
       if (rows !== undefined) return rows;
     }
@@ -456,12 +463,12 @@ function lookupRows(
     if (
       filter.right.type === "field" &&
       filter.right.source === node.source &&
-      !referencesSource(filter.left, node.source)
+      !expressionReferencesSource(filter.left, node.source)
     ) {
       const rows = source.lookup(
         node.source.table,
         filter.right.column,
-        evaluateExpression(filter.left, parentContext),
+        evaluateExpressionNode(filter.left, parentContext),
       );
       if (rows !== undefined) return rows;
     }
@@ -483,16 +490,16 @@ function evaluateNode(
 
   for (const filter of node.filters) {
     matches = matches.filter((match) =>
-      Boolean(evaluateExpression(filter, match.context)),
+      Boolean(evaluateExpressionNode(filter, match.context)),
     );
   }
 
   if (node.order.length > 0) {
     matches.sort((left, right) => {
       for (const order of node.order) {
-        const comparison = compareValues(
-          evaluateExpression(order.expression, left.context),
-          evaluateExpression(order.expression, right.context),
+        const comparison = compareQueryValues(
+          evaluateExpressionNode(order.expression, left.context),
+          evaluateExpressionNode(order.expression, right.context),
         );
         if (comparison !== 0) {
           return order.direction === "asc" ? comparison : -comparison;
@@ -514,7 +521,7 @@ function evaluateNode(
         name,
         isQueryNode(value)
           ? evaluateNode(value, source, context)
-          : structuredClone(evaluateExpression(value, context)),
+          : structuredClone(evaluateExpressionNode(value, context)),
       ]),
     );
   });
