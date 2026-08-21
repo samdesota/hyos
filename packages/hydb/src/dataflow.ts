@@ -11,13 +11,16 @@ import {
   type QuerySource,
 } from "./query.js";
 import { getTableDefinition } from "./schema.js";
-import {
-  encodeStorageKey,
-  type CommitBatch,
-  type CommittedChange,
-} from "./storage.js";
+import { encodeStorageKey, type CommittedChange } from "./storage.js";
+import type { MemoryHandle, MemoryManager } from "./memory.js";
 
 type Row = Readonly<Record<string, unknown>>;
+
+export type QueryDemand = Readonly<{
+  source: QuerySource;
+  context: ReadonlyMap<QuerySource, Row>;
+  diff: 1 | -1;
+}>;
 
 type Change<Value> = Readonly<{
   id: string;
@@ -27,6 +30,28 @@ type Change<Value> = Readonly<{
 
 type ChangeBatch<Value> = readonly Change<Value>[];
 type ChangeHandler<Value> = (changes: ChangeBatch<Value>) => void;
+
+class DataflowMemory {
+  readonly #handle?: MemoryHandle;
+  readonly #sizes = new Map<object, number>();
+  #bytes = 0;
+
+  constructor(memory?: MemoryManager) {
+    this.#handle = memory?.track({ owner: "dataflow", priority: 40 });
+  }
+
+  set(token: object, bytes: number): void {
+    this.#bytes += bytes - (this.#sizes.get(token) ?? 0);
+    this.#sizes.set(token, bytes);
+    this.#handle?.resize(this.#bytes);
+  }
+
+  release(): void {
+    this.#sizes.clear();
+    this.#bytes = 0;
+    this.#handle?.release();
+  }
+}
 
 class Stream<Value> {
   readonly #handlers = new Set<ChangeHandler<Value>>();
@@ -174,16 +199,45 @@ class InputOperator {
   constructor(
     readonly table: string,
     initialRows: ReadonlyMap<string, Row>,
+    private readonly memory?: DataflowMemory,
   ) {
     for (const [id, row] of initialRows) {
       this.#rows.set(id, { row, ordinal: this.#nextOrdinal++ });
     }
+    this.account();
   }
 
   bootstrap(): void {
     this.output.emit(
       [...this.#rows].map(([id, value]) => ({ id, value, diff: 1 })),
     );
+  }
+
+  seed(rows: ReadonlyMap<string, Row>): void {
+    const output: Change<RowRecord>[] = [];
+    for (const [id, row] of rows) {
+      const before = this.#rows.get(id);
+      const after = {
+        row,
+        ordinal: before?.ordinal ?? this.#nextOrdinal++,
+      };
+      this.#rows.set(id, after);
+      output.push(...replacement(id, before, after));
+    }
+    this.output.emit(output);
+    this.account();
+  }
+
+  remove(ids: readonly string[]): void {
+    const output: Change<RowRecord>[] = [];
+    for (const id of ids) {
+      const value = this.#rows.get(id);
+      if (value === undefined) continue;
+      this.#rows.delete(id);
+      output.push({ id, value, diff: -1 });
+    }
+    this.output.emit(output);
+    this.account();
   }
 
   apply(changes: readonly CommittedChange[]): void {
@@ -205,6 +259,11 @@ class InputOperator {
       }
     }
     this.output.emit(output);
+    this.account();
+  }
+
+  private account(): void {
+    this.memory?.set(this, this.#rows.size * 128);
   }
 }
 
@@ -255,6 +314,7 @@ class ArrangeOperator<Value> {
   constructor(
     input: Stream<Value>,
     private readonly keyOf: (value: Value) => string,
+    private readonly memory?: DataflowMemory,
   ) {
     input.subscribe((changes) => {
       for (const change of changes) {
@@ -271,6 +331,7 @@ class ArrangeOperator<Value> {
           this.#buckets.set(key, bucket);
         }
       }
+      this.account();
       this.output.emit(changes);
     });
   }
@@ -284,6 +345,10 @@ class ArrangeOperator<Value> {
       if (value !== undefined) values.push([id, value]);
     }
     return values;
+  }
+
+  private account(): void {
+    this.memory?.set(this, this.#records.size * 112 + this.#buckets.size * 48);
   }
 }
 
@@ -334,6 +399,7 @@ class OrderTopKOperator {
   constructor(
     input: Stream<MatchRecord>,
     private readonly node: QueryNode,
+    private readonly memory?: DataflowMemory,
   ) {
     input.subscribe((changes) => this.apply(changes));
   }
@@ -354,6 +420,7 @@ class OrderTopKOperator {
       [...groups].map((group) => [group, this.selected(group)]),
     );
     applyChanges(this.#records, changes);
+    this.memory?.set(this, this.#records.size * 112);
 
     const output: Change<MatchRecord>[] = [];
     for (const group of groups) {
@@ -399,6 +466,7 @@ class NestOperator {
     left: Stream<ProjectedRecord>,
     right: Stream<MaterializedRecord>,
     private readonly property: string,
+    private readonly memory?: DataflowMemory,
   ) {
     left.subscribe((changes) => this.applyLeft(changes));
     right.subscribe((changes) => this.applyRight(changes));
@@ -423,6 +491,7 @@ class NestOperator {
     const ids = new Set(changes.map((change) => change.id));
     const before = new Map([...ids].map((id) => [id, this.combined(id)]));
     applyChanges(this.#left, changes);
+    this.account();
     this.emitReplacements(ids, before);
   }
 
@@ -430,6 +499,7 @@ class NestOperator {
     const ids = new Set(changes.map((change) => change.id));
     const before = new Map([...ids].map((id) => [id, this.combined(id)]));
     applyChanges(this.#right, changes);
+    this.account();
     this.emitReplacements(ids, before);
   }
 
@@ -443,6 +513,10 @@ class NestOperator {
     }
     this.output.emit(output);
   }
+
+  private account(): void {
+    this.memory?.set(this, (this.#left.size + this.#right.size) * 112);
+  }
 }
 
 class ReduceOperator {
@@ -454,6 +528,7 @@ class ReduceOperator {
     input: Stream<MatchRecord>,
     groups: Stream<GroupRecord>,
     private readonly kind: "count" | "exists",
+    private readonly memory?: DataflowMemory,
   ) {
     input.subscribe((changes) => this.applyInput(changes));
     groups.subscribe((changes) => this.applyGroups(changes));
@@ -486,6 +561,7 @@ class ReduceOperator {
       if (count === 0) this.#counts.delete(group);
       else this.#counts.set(group, count);
     }
+    this.account();
     this.emitGroups(groups, before);
   }
 
@@ -495,6 +571,7 @@ class ReduceOperator {
       [...groups].map((group) => [group, this.materialize(group)]),
     );
     applyChanges(this.#groups, changes);
+    this.account();
     this.emitGroups(groups, before);
   }
 
@@ -510,6 +587,10 @@ class ReduceOperator {
     }
     this.output.emit(output);
   }
+
+  private account(): void {
+    this.memory?.set(this, this.#counts.size * 48 + this.#groups.size * 64);
+  }
 }
 
 class CardinalityOperator {
@@ -521,6 +602,7 @@ class CardinalityOperator {
     items: Stream<ProjectedRecord>,
     groups: Stream<GroupRecord>,
     private readonly node: QueryNode,
+    private readonly memory?: DataflowMemory,
   ) {
     items.subscribe((changes) => this.applyItems(changes));
     groups.subscribe((changes) => this.applyGroups(changes));
@@ -580,6 +662,7 @@ class CardinalityOperator {
       [...groups].map((group) => [group, this.materialize(group)]),
     );
     applyChanges(this.#items, changes);
+    this.account();
     this.emitGroups(groups, before);
   }
 
@@ -589,6 +672,7 @@ class CardinalityOperator {
       [...groups].map((group) => [group, this.materialize(group)]),
     );
     applyChanges(this.#groups, changes);
+    this.account();
     this.emitGroups(groups, before);
   }
 
@@ -604,6 +688,10 @@ class CardinalityOperator {
     }
     this.output.emit(output);
   }
+
+  private account(): void {
+    this.memory?.set(this, this.#items.size * 112 + this.#groups.size * 64);
+  }
 }
 
 class OutputOperator<Result> {
@@ -614,9 +702,13 @@ class OutputOperator<Result> {
   constructor(
     input: Stream<MaterializedRecord>,
     listener: (result: Result) => void,
+    private readonly memory?: DataflowMemory,
   ) {
     this.#listener = listener;
-    input.subscribe((changes) => applyChanges(this.#values, changes));
+    input.subscribe((changes) => {
+      applyChanges(this.#values, changes);
+      this.memory?.set(this, this.#values.size * 112);
+    });
   }
 
   begin(): void {
@@ -675,18 +767,24 @@ function correlation(
   return undefined;
 }
 
-type TableRows = ReadonlyMap<string, ReadonlyMap<string, Row>>;
+type SourceRows = ReadonlyMap<QuerySource, ReadonlyMap<string, Row>>;
 
 class QueryCompiler {
-  readonly #inputs = new Map<string, InputOperator>();
+  readonly #inputs = new Map<QuerySource, InputOperator>();
   readonly #rootGroups = new ConstantInputOperator<GroupRecord>(rootGroup, {
     group: rootGroup,
   });
+  readonly memory: DataflowMemory;
 
-  private tables: TableRows | undefined;
+  private sources: SourceRows | undefined;
 
-  constructor(tables: TableRows) {
-    this.tables = tables;
+  constructor(
+    sources: SourceRows,
+    private readonly onDemand?: (demands: readonly QueryDemand[]) => void,
+    memoryManager?: MemoryManager,
+  ) {
+    this.sources = sources;
+    this.memory = new DataflowMemory(memoryManager);
   }
 
   compile(node: QueryNode): Stream<MaterializedRecord> {
@@ -699,29 +797,30 @@ class QueryCompiler {
   }
 
   releaseInitialRows(): void {
-    this.tables = undefined;
+    this.sources = undefined;
   }
 
-  apply(commit: CommitBatch): void {
-    const changesByTable = new Map<string, CommittedChange[]>();
-    for (const change of commit.changes) {
-      const table = getTableDefinition(change.table).name;
-      const changes = changesByTable.get(table) ?? [];
-      changes.push(change);
-      changesByTable.set(table, changes);
-    }
-    for (const [table, changes] of changesByTable) {
-      this.#inputs.get(table)?.apply(changes);
-    }
+  apply(source: QuerySource, changes: readonly CommittedChange[]): void {
+    this.#inputs.get(source)?.apply(changes);
   }
 
-  private input(table: string): InputOperator {
-    let input = this.#inputs.get(table);
+  seed(source: QuerySource, rows: ReadonlyMap<string, Row>): void {
+    this.#inputs.get(source)?.seed(rows);
+  }
+
+  remove(source: QuerySource, ids: readonly string[]): void {
+    this.#inputs.get(source)?.remove(ids);
+  }
+
+  private input(source: QuerySource): InputOperator {
+    let input = this.#inputs.get(source);
     if (input !== undefined) return input;
-    const rows = this.tables?.get(table);
-    if (rows === undefined) throw new TypeError(`Unknown table: ${table}`);
-    input = new InputOperator(table, rows);
-    this.#inputs.set(table, input);
+    const rows = this.sources?.get(source);
+    if (rows === undefined) {
+      throw new TypeError(`Unknown query source: ${source.table}`);
+    }
+    input = new InputOperator(source.table, rows, this.memory);
+    this.#inputs.set(source, input);
     return input;
   }
 
@@ -729,7 +828,7 @@ class QueryCompiler {
     node: QueryNode,
     parents?: Stream<MatchRecord>,
   ): Stream<MaterializedRecord> {
-    const source = this.input(node.source.table).output;
+    const source = this.input(node.source).output;
     let matches: Stream<MatchRecord>;
     let groups: Stream<GroupRecord>;
 
@@ -746,6 +845,15 @@ class QueryCompiler {
       }).output;
       groups = this.#rootGroups.output;
     } else {
+      parents.subscribe((changes) => {
+        this.onDemand?.(
+          changes.map((change) => ({
+            source: node.source,
+            context: change.value.context,
+            diff: change.diff,
+          })),
+        );
+      });
       const key = correlation(node);
       const parentKey = (parent: MatchRecord) =>
         key === undefined
@@ -757,8 +865,8 @@ class QueryCompiler {
         context.set(node.source, child.row);
         return arrangementKey(evaluateExpressionNode(key.child, context));
       };
-      const left = new ArrangeOperator(parents, parentKey);
-      const right = new ArrangeOperator(source, childKey);
+      const left = new ArrangeOperator(parents, parentKey, this.memory);
+      const right = new ArrangeOperator(source, childKey, this.memory);
       matches = new JoinOperator<MatchRecord, RowRecord, MatchRecord>(
         left,
         right,
@@ -788,10 +896,11 @@ class QueryCompiler {
         Boolean(evaluateExpressionNode(filter, match.context)),
       ),
     ).output;
-    matches = new OrderTopKOperator(matches, node).output;
+    matches = new OrderTopKOperator(matches, node, this.memory).output;
 
     if (node.cardinality === "count" || node.cardinality === "exists") {
-      return new ReduceOperator(matches, groups, node.cardinality).output;
+      return new ReduceOperator(matches, groups, node.cardinality, this.memory)
+        .output;
     }
 
     let projected: Stream<ProjectedRecord> = new MapOperator(
@@ -828,11 +937,12 @@ class QueryCompiler {
       for (const [name, selection] of Object.entries(node.selection)) {
         if (!isQueryNode(selection)) continue;
         const nested = this.compileNode(selection, matches);
-        projected = new NestOperator(projected, nested, name).output;
+        projected = new NestOperator(projected, nested, name, this.memory)
+          .output;
       }
     }
 
-    return new CardinalityOperator(projected, groups, node).output;
+    return new CardinalityOperator(projected, groups, node, this.memory).output;
   }
 }
 
@@ -842,24 +952,47 @@ export class DifferentialQuery<QueryValue extends Query<any>> {
 
   constructor(
     query: QueryValue,
-    tables: TableRows,
+    sources: SourceRows,
     listener: (result: InferQueryResult<QueryValue>) => void,
+    onDemand?: (demands: readonly QueryDemand[]) => void,
+    memoryManager?: MemoryManager,
   ) {
-    this.#compiler = new QueryCompiler(tables);
+    this.#compiler = new QueryCompiler(sources, onDemand, memoryManager);
     const result = this.#compiler.compile(getQueryPlan(query));
     this.#compiler.releaseInitialRows();
-    this.#output = new OutputOperator(result, listener);
+    this.#output = new OutputOperator(result, listener, this.#compiler.memory);
+  }
+
+  bootstrap(): void {
     this.#compiler.bootstrap();
+  }
+
+  publishInitial(): void {
     this.#output.publishInitial();
   }
 
-  apply(commit: CommitBatch): void {
+  begin(): void {
     this.#output.begin();
-    this.#compiler.apply(commit);
+  }
+
+  apply(source: QuerySource, changes: readonly CommittedChange[]): void {
+    this.#compiler.apply(source, changes);
+  }
+
+  seed(source: QuerySource, rows: ReadonlyMap<string, Row>): void {
+    this.#compiler.seed(source, rows);
+  }
+
+  remove(source: QuerySource, ids: readonly string[]): void {
+    this.#compiler.remove(source, ids);
+  }
+
+  flush(): void {
     this.#output.flush();
   }
 
   dispose(): void {
     this.#output.dispose();
+    this.#compiler.memory.release();
   }
 }

@@ -1,3 +1,5 @@
+import type { MemoryHandle, MemoryManager } from "../memory.js";
+
 export type PageCacheStats = Readonly<{
   hits: number;
   misses: number;
@@ -15,16 +17,23 @@ export class ByteLruCache<Key, Value> {
   #hits = 0;
   #misses = 0;
   #evictions = 0;
+  readonly #memory?: MemoryHandle;
 
   constructor(
     maxBytes: number,
     private readonly load: (key: Key) => Promise<Value>,
     private readonly weight: (value: Value) => number,
+    options: { memory?: MemoryManager; owner?: string; priority?: number } = {},
   ) {
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
       throw new TypeError("Cache maxBytes must be a non-negative safe integer");
     }
     this.#maxBytes = maxBytes;
+    this.#memory = options.memory?.track({
+      owner: options.owner ?? "page-cache",
+      priority: options.priority ?? 0,
+      reclaim: (bytes) => this.reclaimInternal(bytes),
+    });
   }
 
   #maxBytes: number;
@@ -55,6 +64,7 @@ export class ByteLruCache<Key, Value> {
         this.#entries.set(key, { value, bytes });
         this.#residentBytes += bytes;
         this.evictToLimit();
+        this.#memory?.resize(this.#residentBytes);
       }
       return value;
     });
@@ -69,6 +79,12 @@ export class ByteLruCache<Key, Value> {
   clear(): void {
     this.#entries.clear();
     this.#residentBytes = 0;
+    this.#memory?.resize(0);
+  }
+
+  dispose(): void {
+    this.clear();
+    this.#memory?.release();
   }
 
   setMaxBytes(maxBytes: number): void {
@@ -77,9 +93,16 @@ export class ByteLruCache<Key, Value> {
     }
     this.#maxBytes = maxBytes;
     this.evictToLimit();
+    this.#memory?.resize(this.#residentBytes);
   }
 
   reclaim(bytes: number): number {
+    const reclaimed = this.reclaimInternal(bytes);
+    this.#memory?.resize(this.#residentBytes);
+    return reclaimed;
+  }
+
+  private reclaimInternal(bytes: number): number {
     const before = this.#residentBytes;
     const target = Math.max(0, before - Math.max(0, bytes));
     while (this.#residentBytes > target) {

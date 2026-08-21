@@ -1,5 +1,6 @@
 import { ByteLruCache, type PageCacheStats } from "./page-cache.js";
 import { AppendOnlyPageStore, type RecordId } from "./page-store.js";
+import type { MemoryManager } from "../memory.js";
 
 export type TreeRoot = RecordId | null;
 
@@ -79,7 +80,11 @@ export class ImmutableBPlusTree {
 
   constructor(
     private readonly store: AppendOnlyPageStore,
-    options: { cacheBytes?: number; maxEntries?: number } = {},
+    options: {
+      cacheBytes?: number;
+      maxEntries?: number;
+      memory?: MemoryManager;
+    } = {},
   ) {
     this.maxEntries = options.maxEntries ?? 64;
     if (this.maxEntries < 4)
@@ -91,6 +96,7 @@ export class ImmutableBPlusTree {
       // Decoded strings, arrays, and object headers occupy more heap than
       // their serialized bytes. Keep accounting deliberately conservative.
       (page) => Buffer.byteLength(JSON.stringify(page)) * 2 + 128,
+      { memory: options.memory, owner: "bplus-tree-pages", priority: 0 },
     );
   }
 
@@ -106,6 +112,10 @@ export class ImmutableBPlusTree {
 
   setCacheLimit(bytes: number): void {
     this.#cache.setMaxBytes(bytes);
+  }
+
+  dispose(): void {
+    this.#cache.dispose();
   }
 
   async get(root: TreeRoot, key: Uint8Array): Promise<Uint8Array | undefined> {

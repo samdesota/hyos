@@ -16,6 +16,11 @@ import {
   type StorageSnapshot,
 } from "./storage.js";
 import type { input as ZodInput, output as ZodOutput, ZodType } from "zod";
+import {
+  estimateMemoryBytes,
+  type MemoryHandle,
+  type MemoryManager,
+} from "./memory.js";
 
 const commandDefinition = Symbol("hydb.command");
 const missingRow = Symbol("hydb.missing-row");
@@ -94,11 +99,17 @@ class CommandTransaction implements Transaction {
     Map<string, StoredRow | typeof missingRow>
   >();
   #active = true;
+  readonly #memory?: MemoryHandle;
+  readonly #memoryEntries = new Map<string, number>();
+  #memoryBytes = 0;
 
   constructor(
     private readonly schema: AnySchema,
     private readonly snapshot: StorageSnapshot,
-  ) {}
+    memory?: MemoryManager,
+  ) {
+    this.#memory = memory?.track({ owner: "transactions", priority: 50 });
+  }
 
   async get<TableValue extends AnyTable>(
     table: TableValue,
@@ -124,6 +135,7 @@ class CommandTransaction implements Transaction {
     if (row === undefined) {
       row = (await this.snapshot.get(table, key)) ?? missingRow;
       tableReads.set(encodedKey, row);
+      this.account(`read:${name}:${encodedKey}`, row);
     }
     if (row === missingRow) return undefined;
     return structuredClone(row) as InferRow<TableValue>;
@@ -144,6 +156,7 @@ class CommandTransaction implements Transaction {
     }
     this.setOverlay(table, key, row);
     this.#mutations.push(storageMutation.insert(table, row));
+    this.accountMutation();
     return structuredClone(row);
   }
 
@@ -169,6 +182,7 @@ class CommandTransaction implements Transaction {
     this.#mutations.push(
       storageMutation.update(table, key, row as InferRow<TableValue>),
     );
+    this.accountMutation();
     return structuredClone(row) as InferRow<TableValue>;
   }
 
@@ -181,8 +195,11 @@ class CommandTransaction implements Transaction {
     if ((await this.get(table, key)) === undefined) {
       throw new TypeError(`Missing row for table ${tableName(table)}`);
     }
-    this.overlay(table).set(encodeStorageKey(key), deletedRow);
+    const encodedKey = encodeStorageKey(key);
+    this.overlay(table).set(encodedKey, deletedRow);
+    this.account(`write:${tableName(table)}:${encodedKey}`, deletedRow);
     this.#mutations.push(storageMutation.delete(table, key));
+    this.accountMutation();
   }
 
   finish(): readonly StorageMutation[] {
@@ -193,6 +210,13 @@ class CommandTransaction implements Transaction {
 
   abort(): void {
     this.#active = false;
+    this.releaseMemory();
+  }
+
+  releaseMemory(): void {
+    this.#memoryEntries.clear();
+    this.#memoryBytes = 0;
+    this.#memory?.release();
   }
 
   private overlay(table: AnyTable): Map<string, StoredRow | typeof deletedRow> {
@@ -207,7 +231,21 @@ class CommandTransaction implements Transaction {
   }
 
   private setOverlay(table: AnyTable, key: StorageKey, row: StoredRow): void {
-    this.overlay(table).set(encodeStorageKey(key), row);
+    const encodedKey = encodeStorageKey(key);
+    this.overlay(table).set(encodedKey, row);
+    this.account(`write:${tableName(table)}:${encodedKey}`, row);
+  }
+
+  private account(key: string, value: unknown): void {
+    const bytes = 64 + estimateMemoryBytes(key) + estimateMemoryBytes(value);
+    this.#memoryBytes += bytes - (this.#memoryEntries.get(key) ?? 0);
+    this.#memoryEntries.set(key, bytes);
+    this.#memory?.resize(this.#memoryBytes);
+  }
+
+  private accountMutation(): void {
+    const index = this.#mutations.length - 1;
+    this.account(`mutation:${index}`, this.#mutations[index]);
   }
 
   private assertActive(): void {
@@ -278,17 +316,26 @@ export async function invokeCommand<Input, Result, ParsedInput>(
   input: Input,
   schema: AnySchema,
   snapshot: StorageSnapshot,
+  memory?: MemoryManager,
 ): Promise<
-  Readonly<{ result: Result; mutations: readonly StorageMutation[] }>
+  Readonly<{
+    result: Result;
+    mutations: readonly StorageMutation[];
+    releaseMemory: () => void;
+  }>
 > {
   const parsedInput = await value[commandDefinition].input.parseAsync(input);
-  const transaction = new CommandTransaction(schema, snapshot);
+  const transaction = new CommandTransaction(schema, snapshot, memory);
   try {
     const result = await value[commandDefinition].handler(
       transaction,
       parsedInput,
     );
-    return Object.freeze({ result, mutations: transaction.finish() });
+    return Object.freeze({
+      result,
+      mutations: transaction.finish(),
+      releaseMemory: () => transaction.releaseMemory(),
+    });
   } catch (error) {
     transaction.abort();
     throw error;

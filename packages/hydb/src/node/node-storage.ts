@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import type { MemoryManager } from "../memory.js";
 
 import {
   getColumnDefinition,
@@ -329,6 +330,7 @@ export class NodeStorageDatabase implements StorageDatabase {
     schema: AnySchema;
     cacheBytes?: number;
     maxEntries?: number;
+    memory?: MemoryManager;
   }): Promise<NodeStorageDatabase> {
     await mkdir(options.directory, { recursive: true });
     const metadata = schemaMetadata(options.schema);
@@ -345,6 +347,7 @@ export class NodeStorageDatabase implements StorageDatabase {
       await database.load();
       return database;
     } catch (error) {
+      database.tree.dispose();
       await store.close();
       throw error;
     }
@@ -471,6 +474,7 @@ export class NodeStorageDatabase implements StorageDatabase {
     this.#closed = true;
     for (const subscriber of this.#subscribers) subscriber.wake?.();
     await this.#writeQueue;
+    this.tree.dispose();
     await this.store.close();
   }
 
@@ -735,6 +739,7 @@ export async function openNodeStorage(options: {
   schema: AnySchema;
   cacheBytes?: number;
   maxEntries?: number;
+  memory?: MemoryManager;
 }): Promise<NodeStorageDatabase> {
   return NodeStorageDatabase.open(options);
 }

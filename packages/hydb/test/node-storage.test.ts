@@ -8,6 +8,7 @@ import {
   hydb,
   id,
   index,
+  MemoryManager,
   storageMutation,
   text,
   uniqueIndex,
@@ -393,6 +394,53 @@ test("the byte cache rejects invalid budgets and never retains oversized or fail
   await assert.rejects(failing.get("page"), /load failed/);
   assert.equal(attempts, 2);
   failing.clear();
+});
+
+test("node storage pages yield to higher-priority shared memory", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hydb-shared-memory-"));
+  const memory = new MemoryManager({ maxBytes: 4096 });
+  try {
+    const storage = await openNodeStorage({
+      directory,
+      schema,
+      memory,
+      cacheBytes: 1024 * 1024,
+      maxEntries: 4,
+    });
+    const initial = await storage.snapshot();
+    const commit = await storage.commit({
+      expectedHead: initial.commit,
+      mutations: [
+        storageMutation.insert(tasks, {
+          id: "task-memory",
+          projectId: "project-memory",
+          title: "Reclaimable page",
+        }),
+      ],
+    });
+    await initial.close();
+    const snapshot = await storage.snapshot({ commit: commit.commit });
+    assert.equal(
+      (await snapshot.get(tasks, ["task-memory"]))?.title,
+      "Reclaimable page",
+    );
+    assert.ok((memory.stats().byOwner["bplus-tree-pages"] ?? 0) > 0);
+
+    const liveState = memory.track({ owner: "dataflow", bytes: 4096 });
+    assert.equal(storage.cacheStats().residentBytes, 0);
+    assert.equal(
+      (await snapshot.get(tasks, ["task-memory"]))?.title,
+      "Reclaimable page",
+    );
+    assert.equal(storage.cacheStats().residentBytes, 0);
+
+    liveState.release();
+    await snapshot.close();
+    await storage.close();
+    assert.equal(memory.stats().usedBytes, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("recovery ignores a torn commit publication and keeps the prior branch head", async () => {

@@ -5,10 +5,38 @@ import {
   type QuerySource,
 } from "./query.js";
 import type { StorageKey, StorageRange, StorageSnapshot } from "./storage.js";
+import {
+  estimateMemoryBytes,
+  type MemoryHandle,
+  type MemoryManager,
+} from "./memory.js";
 
 type StoredRow = Readonly<Record<string, unknown>>;
 type ExecutionContext = ReadonlyMap<QuerySource, StoredRow>;
 type Match = Readonly<{ context: ExecutionContext; row: StoredRow }>;
+
+class ExecutionMemory {
+  readonly #handle?: MemoryHandle;
+  #bytes = 0;
+
+  constructor(memory?: MemoryManager) {
+    this.#handle = memory?.track({ owner: "executor", priority: 20 });
+  }
+
+  add(value: unknown, overhead = 0): void {
+    this.#bytes += estimateMemoryBytes(value) + overhead;
+    this.#handle?.resize(this.#bytes);
+  }
+
+  addBytes(bytes: number): void {
+    this.#bytes += bytes;
+    this.#handle?.resize(this.#bytes);
+  }
+
+  release(): void {
+    this.#handle?.release();
+  }
+}
 
 function resolveValue(value: PlannedValue, context: ExecutionContext): unknown {
   if (value.kind === "literal") return value.value;
@@ -19,6 +47,7 @@ async function executeNode(
   plan: PhysicalQueryPlan,
   snapshot: StorageSnapshot,
   parentContext: ExecutionContext,
+  memory: ExecutionMemory,
 ): Promise<unknown> {
   const rows: StoredRow[] = [];
   if (plan.access.kind === "primary-key") {
@@ -27,7 +56,10 @@ async function executeNode(
     );
     if (!key.includes(undefined)) {
       const row = await snapshot.get(plan.access.table, key as StorageKey);
-      if (row !== undefined) rows.push(row);
+      if (row !== undefined) {
+        rows.push(row);
+        memory.add(row, 48);
+      }
     }
   } else {
     const range: StorageRange = {
@@ -53,7 +85,10 @@ async function executeNode(
               table: plan.access.table,
               range,
             };
-      for await (const batch of snapshot.scan(request)) rows.push(...batch);
+      for await (const batch of snapshot.scan(request)) {
+        rows.push(...batch);
+        for (const row of batch) memory.add(row, 48);
+      }
     }
   }
 
@@ -62,6 +97,7 @@ async function executeNode(
     context.set(plan.source, row);
     return { context, row };
   });
+  memory.addBytes(matches.length * 96);
   for (const filter of plan.filters) {
     matches = matches.filter(({ context }) =>
       Boolean(evaluateExpressionNode(filter, context)),
@@ -89,7 +125,9 @@ async function executeNode(
   const results: unknown[] = [];
   for (const { context, row } of matches) {
     if (plan.selection === undefined) {
-      results.push(structuredClone(row));
+      const cloned = structuredClone(row);
+      results.push(cloned);
+      memory.add(cloned, 32);
       continue;
     }
 
@@ -97,10 +135,11 @@ async function executeNode(
     for (const [name, value] of Object.entries(plan.selection)) {
       result[name] =
         value.kind === "query"
-          ? await executeNode(value.plan, snapshot, context)
+          ? await executeNode(value.plan, snapshot, context, memory)
           : structuredClone(evaluateExpressionNode(value.expression, context));
     }
     results.push(result);
+    memory.add(result, 32);
   }
 
   switch (plan.cardinality) {
@@ -119,6 +158,10 @@ async function executeNode(
 export function executeQueryPlan(
   plan: PhysicalQueryPlan,
   snapshot: StorageSnapshot,
+  memoryManager?: MemoryManager,
 ): Promise<unknown> {
-  return executeNode(plan, snapshot, new Map());
+  const memory = new ExecutionMemory(memoryManager);
+  return executeNode(plan, snapshot, new Map(), memory).finally(() =>
+    memory.release(),
+  );
 }

@@ -4,6 +4,15 @@ import { database } from "./database.js";
 import { command } from "./command.js";
 
 export {
+  MemoryLimitExceededError,
+  MemoryManager,
+  estimateMemoryBytes,
+  type MemoryAllocation,
+  type MemoryHandle,
+  type MemoryStats,
+} from "./memory.js";
+
+export {
   boolean,
   id,
   index,

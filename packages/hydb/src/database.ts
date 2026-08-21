@@ -10,6 +10,7 @@ import {
 } from "./command.js";
 import { type AnySchema } from "./schema.js";
 import { type CommitBatch, type StorageDatabase } from "./storage.js";
+import { MemoryManager, type MemoryStats } from "./memory.js";
 
 export interface Database {
   fetch<QueryValue extends Query<any>>(
@@ -25,6 +26,8 @@ export interface Database {
     command: CommandValue,
     input: InferCommandInput<CommandValue>,
   ): Promise<InferCommandResult<CommandValue>>;
+
+  memoryStats(): MemoryStats;
 
   close(): Promise<void>;
 }
@@ -44,6 +47,7 @@ class QueryDatabase implements Database {
   constructor(
     private readonly schema: AnySchema,
     private readonly storage: StorageDatabase,
+    private readonly memory: MemoryManager,
     sequence: number,
   ) {
     this.#sequence = sequence;
@@ -57,6 +61,7 @@ class QueryDatabase implements Database {
       return (await executeQueryPlan(
         planQuery(this.schema, query),
         snapshot,
+        this.memory,
       )) as InferQueryResult<QueryValue>;
     } finally {
       await snapshot.close();
@@ -72,6 +77,7 @@ class QueryDatabase implements Database {
       this.storage,
       query,
       listener,
+      this.memory,
     );
     this.#subscriptions.add(subscription);
     void subscription.ready.catch(() => {
@@ -84,6 +90,10 @@ class QueryDatabase implements Database {
     };
   }
 
+  memoryStats(): MemoryStats {
+    return this.memory.stats();
+  }
+
   execute<CommandValue extends Command<any, any, any>>(
     command: CommandValue,
     input: InferCommandInput<CommandValue>,
@@ -91,19 +101,24 @@ class QueryDatabase implements Database {
     const execution = this.#commandQueue.then(async () => {
       const snapshot = await this.storage.snapshot();
       try {
-        const { result, mutations } = await invokeCommand(
+        const invocation = await invokeCommand(
           command,
           input,
           this.schema,
           snapshot,
+          this.memory,
         );
-        if (mutations.length === 0) return result;
-        const commit = await this.storage.commit({
-          expectedHead: snapshot.commit,
-          mutations,
-        });
-        await this.waitForSequence(commit.sequence);
-        return result;
+        try {
+          if (invocation.mutations.length === 0) return invocation.result;
+          const commit = await this.storage.commit({
+            expectedHead: snapshot.commit,
+            mutations: invocation.mutations,
+          });
+          await this.waitForSequence(commit.sequence);
+          return invocation.result;
+        } finally {
+          invocation.releaseMemory();
+        }
       } finally {
         await snapshot.close();
       }
@@ -140,7 +155,7 @@ class QueryDatabase implements Database {
         after,
         signal: this.#abortController.signal,
       })) {
-        this.applyCommit(commit);
+        await this.applyCommit(commit);
       }
     } catch (error) {
       if (this.#abortController.signal.aborted) return;
@@ -150,11 +165,13 @@ class QueryDatabase implements Database {
     }
   }
 
-  private applyCommit(commit: CommitBatch): void {
+  private async applyCommit(commit: CommitBatch): Promise<void> {
     if (commit.sequence <= this.#sequence) return;
-    for (const subscription of [...this.#subscriptions]) {
-      subscription.accept(commit);
-    }
+    await Promise.all(
+      [...this.#subscriptions].map((subscription) =>
+        subscription.accept(commit),
+      ),
+    );
     this.#sequence = commit.sequence;
     for (const [sequence, waiters] of this.#sequenceWaiters) {
       if (sequence > this.#sequence) continue;
@@ -186,14 +203,22 @@ class QueryDatabase implements Database {
 export async function database(options: {
   schema: AnySchema;
   storage: StorageDatabase;
+  memory?: MemoryManager | Readonly<{ maxBytes: number }>;
 }): Promise<Database> {
   const snapshot = await options.storage.snapshot();
   const sequence = snapshot.sequence;
   await snapshot.close();
 
+  const memory =
+    options.memory instanceof MemoryManager
+      ? options.memory
+      : new MemoryManager({
+          maxBytes: options.memory?.maxBytes ?? 128 * 1024 * 1024,
+        });
   const queryDatabase = new QueryDatabase(
     options.schema,
     options.storage,
+    memory,
     sequence,
   );
   queryDatabase.start(sequence);
