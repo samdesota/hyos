@@ -346,3 +346,217 @@ export function getQueryPlan<QueryValue extends Query<any>>(
 ): QueryPlan {
   return value[queryDefinition].node;
 }
+
+type QueryRowValue = Readonly<Record<string, unknown>>;
+type EvaluationContext = ReadonlyMap<QuerySource, QueryRowValue>;
+
+export type QueryDataSource = Readonly<{
+  rows(table: string): readonly QueryRowValue[];
+  lookup?(
+    table: string,
+    column: string,
+    value: unknown,
+  ): readonly QueryRowValue[] | undefined;
+}>;
+
+function valuesEqual(left: unknown, right: unknown): boolean {
+  if (left instanceof Date && right instanceof Date) {
+    return left.getTime() === right.getTime();
+  }
+  return Object.is(left, right);
+}
+
+function evaluateExpression(
+  node: ExpressionNode,
+  context: EvaluationContext,
+): unknown {
+  switch (node.type) {
+    case "field":
+      return context.get(node.source)?.[node.column];
+    case "literal":
+      return node.value;
+    case "comparison": {
+      const equal = valuesEqual(
+        evaluateExpression(node.left, context),
+        evaluateExpression(node.right, context),
+      );
+      return node.operator === "eq" ? equal : !equal;
+    }
+    case "logical": {
+      const left = Boolean(evaluateExpression(node.left, context));
+      return node.operator === "and"
+        ? left && Boolean(evaluateExpression(node.right, context))
+        : left || Boolean(evaluateExpression(node.right, context));
+    }
+    case "not":
+      return !Boolean(evaluateExpression(node.value, context));
+  }
+}
+
+function compareValues(left: unknown, right: unknown): number {
+  if (valuesEqual(left, right)) return 0;
+  if (left === null || left === undefined) return -1;
+  if (right === null || right === undefined) return 1;
+  const leftValue = left instanceof Date ? left.getTime() : left;
+  const rightValue = right instanceof Date ? right.getTime() : right;
+  if (
+    (typeof leftValue === "number" && typeof rightValue === "number") ||
+    (typeof leftValue === "string" && typeof rightValue === "string") ||
+    (typeof leftValue === "boolean" && typeof rightValue === "boolean")
+  ) {
+    return leftValue < rightValue ? -1 : 1;
+  }
+  throw new TypeError("Values cannot be ordered");
+}
+
+function isQueryNode(node: ExpressionNode | QueryNode): node is QueryNode {
+  return "filters" in node;
+}
+
+function referencesSource(node: ExpressionNode, source: QuerySource): boolean {
+  switch (node.type) {
+    case "field":
+      return node.source === source;
+    case "literal":
+      return false;
+    case "comparison":
+    case "logical":
+      return (
+        referencesSource(node.left, source) ||
+        referencesSource(node.right, source)
+      );
+    case "not":
+      return referencesSource(node.value, source);
+  }
+}
+
+function lookupRows(
+  node: QueryNode,
+  source: QueryDataSource,
+  parentContext: EvaluationContext,
+): readonly QueryRowValue[] {
+  if (source.lookup === undefined) return source.rows(node.source.table);
+
+  for (const filter of node.filters) {
+    if (filter.type !== "comparison" || filter.operator !== "eq") continue;
+
+    if (
+      filter.left.type === "field" &&
+      filter.left.source === node.source &&
+      !referencesSource(filter.right, node.source)
+    ) {
+      const rows = source.lookup(
+        node.source.table,
+        filter.left.column,
+        evaluateExpression(filter.right, parentContext),
+      );
+      if (rows !== undefined) return rows;
+    }
+
+    if (
+      filter.right.type === "field" &&
+      filter.right.source === node.source &&
+      !referencesSource(filter.left, node.source)
+    ) {
+      const rows = source.lookup(
+        node.source.table,
+        filter.right.column,
+        evaluateExpression(filter.left, parentContext),
+      );
+      if (rows !== undefined) return rows;
+    }
+  }
+
+  return source.rows(node.source.table);
+}
+
+function evaluateNode(
+  node: QueryNode,
+  source: QueryDataSource,
+  parentContext: EvaluationContext,
+): unknown {
+  let matches = lookupRows(node, source, parentContext).map((row) => {
+    const context = new Map(parentContext);
+    context.set(node.source, row);
+    return { context, row };
+  });
+
+  for (const filter of node.filters) {
+    matches = matches.filter((match) =>
+      Boolean(evaluateExpression(filter, match.context)),
+    );
+  }
+
+  if (node.order.length > 0) {
+    matches.sort((left, right) => {
+      for (const order of node.order) {
+        const comparison = compareValues(
+          evaluateExpression(order.expression, left.context),
+          evaluateExpression(order.expression, right.context),
+        );
+        if (comparison !== 0) {
+          return order.direction === "asc" ? comparison : -comparison;
+        }
+      }
+      return 0;
+    });
+  }
+
+  if (node.limit !== undefined) matches = matches.slice(0, node.limit);
+
+  if (node.cardinality === "count") return matches.length;
+  if (node.cardinality === "exists") return matches.length > 0;
+
+  const results = matches.map(({ context, row }) => {
+    if (node.selection === undefined) return structuredClone(row);
+    return Object.fromEntries(
+      Object.entries(node.selection).map(([name, value]) => [
+        name,
+        isQueryNode(value)
+          ? evaluateNode(value, source, context)
+          : structuredClone(evaluateExpression(value, context)),
+      ]),
+    );
+  });
+
+  switch (node.cardinality) {
+    case "many":
+      return results;
+    case "one":
+      if (results.length > 1) throw new Error("Expected at most one query row");
+      return results[0] ?? null;
+    case "require":
+      if (results.length !== 1)
+        throw new Error("Expected exactly one query row");
+      return results[0];
+    default:
+      throw new Error("Query cardinality is required");
+  }
+}
+
+export function evaluateQuery<QueryValue extends Query<any>>(
+  value: QueryValue,
+  source: QueryDataSource,
+): InferQueryResult<QueryValue> {
+  return evaluateNode(
+    getQueryPlan(value),
+    source,
+    new Map(),
+  ) as InferQueryResult<QueryValue>;
+}
+
+function collectQueryTables(node: QueryNode, tables: Set<string>): void {
+  tables.add(node.source.table);
+  if (node.selection === undefined) return;
+  for (const value of Object.values(node.selection)) {
+    if (isQueryNode(value)) collectQueryTables(value, tables);
+  }
+}
+
+export function getQueryTables<QueryValue extends Query<any>>(
+  value: QueryValue,
+): ReadonlySet<string> {
+  const tables = new Set<string>();
+  collectQueryTables(getQueryPlan(value), tables);
+  return tables;
+}

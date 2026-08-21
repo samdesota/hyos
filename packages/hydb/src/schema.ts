@@ -60,6 +60,12 @@ export type Column<
 
 export type AnyColumn = Column<any, boolean, boolean, boolean>;
 
+export function getColumnDefinition<ColumnValue extends AnyColumn>(
+  value: ColumnValue,
+): ColumnValue[typeof columnDefinition] {
+  return value[columnDefinition];
+}
+
 function createColumnBuilder<
   Data,
   NotNull extends boolean,
@@ -161,6 +167,12 @@ export type IndexDefinition = Readonly<{
 export type IndexBuilder = Readonly<{
   on(first: AnyColumn, ...rest: readonly AnyColumn[]): IndexDefinition;
 }>;
+
+export function getIndexDefinition(
+  value: IndexDefinition,
+): IndexDefinition[typeof indexDefinition] {
+  return value[indexDefinition];
+}
 
 function createIndexBuilder(name: string, unique: boolean): IndexBuilder {
   return Object.freeze({
@@ -273,13 +285,21 @@ export function enumeration<const Values extends readonly string[]>(
   return Object.freeze(definition) as EnumDefinition<Values>;
 }
 
-type TableShape = Readonly<Record<string, AnyTable>>;
+export type TableShape = Readonly<Record<string, AnyTable>>;
 
 export type Schema<Tables extends TableShape> = Readonly<{
   [schemaDefinition]: {
     tables: Tables;
   };
 }>;
+
+export type AnySchema = Schema<TableShape>;
+
+export function getSchemaDefinition<SchemaValue extends AnySchema>(
+  value: SchemaValue,
+): SchemaValue[typeof schemaDefinition] {
+  return value[schemaDefinition];
+}
 
 export function schema<const Tables extends TableShape>(
   tables: Tables,
