@@ -19,6 +19,14 @@ export {
 } from "./schema.js";
 
 export { type InferQueryResult, type Query } from "./query.js";
+export {
+  planQuery,
+  type PhysicalAccess,
+  type PhysicalQueryPlan,
+  type PlannedSelection,
+  type PlannedSelectionValue,
+  type PlannedValue,
+} from "./planner.js";
 export { type Database } from "./database.js";
 export {
   type Command,
