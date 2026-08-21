@@ -246,3 +246,46 @@ test("a stale expected version cannot overwrite a newer commit", async () => {
 
   await storage.close();
 });
+
+test("memory storage shares branch, historical snapshot, and range semantics", async () => {
+  const storage = await memoryStorage({ schema });
+  const initial = await storage.snapshot();
+  const base = await storage.commit({
+    expectedHead: initial.commit,
+    mutations: [
+      storageMutation.insert(tasks, { id: "task-1", title: "One" }),
+      storageMutation.insert(tasks, { id: "task-2", title: "Two" }),
+      storageMutation.insert(tasks, { id: "task-3", title: "Three" }),
+    ],
+  });
+  await storage.createBranch({ name: "feature", from: base.commit });
+  const branchStart = await storage.snapshot({ branch: "feature" });
+  assert.equal(branchStart.commit, base.commit);
+  assert.equal(branchStart.sequence, 0);
+  const feature = await storage.commit({
+    branch: "feature",
+    expectedHead: base.commit,
+    mutations: [storageMutation.delete(tasks, ["task-2"])],
+  });
+
+  assert.equal(await storage.head("main"), base.commit);
+  assert.equal(await storage.head("feature"), feature.commit);
+  const snapshot = await storage.snapshot({ branch: "feature" });
+  const rows = [];
+  for await (const batch of snapshot.scan({
+    type: "table",
+    table: tasks,
+    range: { gte: ["task-1"], lte: ["task-3"], reverse: true, limit: 2 },
+  })) {
+    rows.push(...batch);
+  }
+  assert.deepEqual(rows, [
+    { id: "task-3", title: "Three" },
+    { id: "task-1", title: "One" },
+  ]);
+
+  await initial.close();
+  await branchStart.close();
+  await snapshot.close();
+  await storage.close();
+});

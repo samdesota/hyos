@@ -8,7 +8,11 @@ import {
   type InferRow,
 } from "./schema.js";
 
-export type CommitVersion = number;
+export type CommitId = string;
+export type BranchName = string;
+export type BranchSequence = number;
+/** @deprecated Use BranchSequence for live ordering and CommitId for identity. */
+export type CommitVersion = BranchSequence;
 export type StorageKey = readonly unknown[];
 
 export type InsertMutation = Readonly<{
@@ -33,9 +37,17 @@ export type DeleteMutation = Readonly<{
 export type StorageMutation = InsertMutation | UpdateMutation | DeleteMutation;
 
 export type CommitRequest = Readonly<{
-  expectedVersion: CommitVersion;
+  branch?: BranchName;
   mutations: readonly StorageMutation[];
-}>;
+}> &
+  (
+    | Readonly<{ expectedHead: CommitId; expectedVersion?: never }>
+    | Readonly<{
+        expectedHead?: never;
+        /** @deprecated Compatibility with the original single-main-branch interface. */
+        expectedVersion: CommitVersion;
+      }>
+  );
 
 export type CommittedChange = Readonly<{
   table: AnyTable;
@@ -45,6 +57,11 @@ export type CommittedChange = Readonly<{
 }>;
 
 export type CommitBatch = Readonly<{
+  commit: CommitId;
+  branch: BranchName;
+  sequence: BranchSequence;
+  parent: CommitId;
+  /** @deprecated Alias for sequence. */
   version: CommitVersion;
   changes: readonly CommittedChange[];
 }>;
@@ -52,24 +69,43 @@ export type CommitBatch = Readonly<{
 export type TableScan<TableValue extends AnyTable = AnyTable> = Readonly<{
   type: "table";
   table: TableValue;
+  range?: StorageRange;
 }>;
 
 export type IndexScan<TableValue extends AnyTable = AnyTable> = Readonly<{
   type: "index";
   table: TableValue;
   index: string;
-  key: StorageKey;
+  key?: StorageKey;
+  range?: StorageRange;
+}>;
+
+export type StorageRange = Readonly<{
+  gt?: StorageKey;
+  gte?: StorageKey;
+  lt?: StorageKey;
+  lte?: StorageKey;
+  reverse?: boolean;
+  limit?: number;
 }>;
 
 export type StorageScan<TableValue extends AnyTable = AnyTable> =
   TableScan<TableValue> | IndexScan<TableValue>;
 
 export type ChangeStreamOptions = Readonly<{
-  after: CommitVersion;
+  branch?: BranchName;
+  after: BranchSequence;
   signal?: AbortSignal;
 }>;
 
+export type SnapshotSelector =
+  Readonly<{ branch: BranchName }> | Readonly<{ commit: CommitId }>;
+
 export interface StorageSnapshot {
+  readonly commit: CommitId;
+  readonly branch?: BranchName;
+  readonly sequence: BranchSequence;
+  /** @deprecated Alias for sequence. */
   readonly version: CommitVersion;
 
   get<TableValue extends AnyTable>(
@@ -85,21 +121,33 @@ export interface StorageSnapshot {
 }
 
 export interface StorageDatabase {
-  snapshot(): Promise<StorageSnapshot>;
+  snapshot(selector?: SnapshotSelector): Promise<StorageSnapshot>;
+  head(branch?: BranchName): Promise<CommitId>;
+  createBranch(request: { name: BranchName; from: CommitId }): Promise<void>;
   commit(request: CommitRequest): Promise<CommitBatch>;
   changes(options: ChangeStreamOptions): AsyncIterable<CommitBatch>;
   close(): Promise<void>;
 }
 
 export class StorageConflictError extends Error {
+  readonly expectedHead?: CommitId;
+  readonly actualHead?: CommitId;
+  readonly expectedVersion?: CommitVersion;
+  readonly actualVersion?: CommitVersion;
+
   constructor(
-    readonly expectedVersion: CommitVersion,
-    readonly actualVersion: CommitVersion,
+    expected: CommitId | CommitVersion,
+    actual: CommitId | CommitVersion,
   ) {
-    super(
-      `Storage version conflict: expected ${expectedVersion}, received ${actualVersion}`,
-    );
+    super(`Storage conflict: expected ${expected}, received ${actual}`);
     this.name = "StorageConflictError";
+    if (typeof expected === "number" && typeof actual === "number") {
+      this.expectedVersion = expected;
+      this.actualVersion = actual;
+    } else if (typeof expected === "string" && typeof actual === "string") {
+      this.expectedHead = expected;
+      this.actualHead = actual;
+    }
   }
 }
 
@@ -121,7 +169,8 @@ type TableState = Readonly<{
 }>;
 
 type StorageState = Readonly<{
-  version: CommitVersion;
+  commit: CommitId;
+  sequence: BranchSequence;
   tables: ReadonlyMap<string, TableState>;
 }>;
 
@@ -141,6 +190,45 @@ function encodePart(value: unknown): string {
 
 export function encodeStorageKey(key: StorageKey): string {
   return key.map(encodePart).join("|");
+}
+
+function compareStorageValues(left: unknown, right: unknown): number {
+  if (Object.is(left, right)) return 0;
+  const rank = (value: unknown): number => {
+    if (value === null) return 0;
+    if (typeof value === "boolean") return 1;
+    if (typeof value === "number") return 2;
+    if (value instanceof Date) return 3;
+    if (typeof value === "string") return 4;
+    throw new TypeError(`Unsupported storage key value: ${String(value)}`);
+  };
+  const leftRank = rank(left);
+  const rightRank = rank(right);
+  if (leftRank !== rightRank) return leftRank - rightRank;
+  if (left instanceof Date && right instanceof Date) {
+    return left.getTime() - right.getTime();
+  }
+  return left! < right! ? -1 : 1;
+}
+
+function compareStorageKeys(left: StorageKey, right: StorageKey): number {
+  for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+    const compared = compareStorageValues(left[index], right[index]);
+    if (compared !== 0) return compared;
+  }
+  return left.length - right.length;
+}
+
+function storageKeyInRange(key: StorageKey, range: StorageRange): boolean {
+  if (range.gt !== undefined && compareStorageKeys(key, range.gt) <= 0)
+    return false;
+  if (range.gte !== undefined && compareStorageKeys(key, range.gte) < 0)
+    return false;
+  if (range.lt !== undefined && compareStorageKeys(key, range.lt) >= 0)
+    return false;
+  if (range.lte !== undefined && compareStorageKeys(key, range.lte) > 0)
+    return false;
+  return true;
 }
 
 function rowKey(
@@ -229,11 +317,21 @@ function tableName(table: AnyTable): string {
 }
 
 class MemorySnapshot implements StorageSnapshot {
+  readonly commit: CommitId;
+  readonly branch?: BranchName;
+  readonly sequence: BranchSequence;
   readonly version: CommitVersion;
   #closed = false;
 
-  constructor(private readonly state: StorageState) {
-    this.version = state.version;
+  constructor(
+    private readonly state: StorageState,
+    branch?: BranchName,
+    sequence = state.sequence,
+  ) {
+    this.commit = state.commit;
+    this.branch = branch;
+    this.sequence = sequence;
+    this.version = sequence;
   }
 
   async get<TableValue extends AnyTable>(
@@ -258,22 +356,33 @@ class MemorySnapshot implements StorageSnapshot {
       throw new TypeError(`Unknown table: ${tableName(request.table)}`);
     }
 
-    const tuples: RowTuple[] = [];
-    if (request.type === "table") {
-      tuples.push(...state.rows.values());
-    } else {
-      const index = state.indexes.get(request.index);
-      if (index === undefined) {
-        throw new TypeError(`Unknown index: ${request.index}`);
-      }
-      const primaryKeys = index.entries.get(encodeStorageKey(request.key));
-      if (primaryKeys !== undefined) {
-        for (const primaryKey of primaryKeys) {
-          const tuple = state.rows.get(primaryKey);
-          if (tuple !== undefined) tuples.push(tuple);
-        }
-      }
+    const index =
+      request.type === "index" ? state.indexes.get(request.index) : undefined;
+    if (request.type === "index" && index === undefined) {
+      throw new TypeError(`Unknown index: ${request.index}`);
     }
+    const candidates = [...state.rows.values()]
+      .map((tuple) => {
+        const row = decodeRow(state, tuple);
+        const key =
+          index === undefined
+            ? rowKey(state, row)
+            : index.columnIndexes.map((position) => tuple[position]);
+        return { key, tuple };
+      })
+      .filter(({ key }) => {
+        if (request.type === "index" && request.key !== undefined) {
+          return compareStorageKeys(key, request.key) === 0;
+        }
+        return (
+          request.range === undefined || storageKeyInRange(key, request.range)
+        );
+      })
+      .sort((left, right) => compareStorageKeys(left.key, right.key));
+    if (request.range?.reverse === true) candidates.reverse();
+    const tuples = candidates
+      .slice(0, request.range?.limit)
+      .map((candidate) => candidate.tuple);
 
     const batch: InferRow<TableValue>[] = [];
     for (const tuple of tuples) {
@@ -293,30 +402,95 @@ class MemorySnapshot implements StorageSnapshot {
 
 class MemoryStorage implements StorageDatabase {
   #closed = false;
+  #nextCommit = 1;
+  readonly #commits = new Map<CommitId, StorageState>();
+  readonly #branches = new Map<
+    BranchName,
+    { head: CommitId; sequence: BranchSequence }
+  >();
   readonly #history: CommitBatch[] = [];
   readonly #subscribers = new Set<{
-    after: CommitVersion;
+    branch: BranchName;
+    after: BranchSequence;
     queue: CommitBatch[];
     wake?: () => void;
   }>();
 
-  constructor(private state: StorageState) {}
+  constructor(genesis: StorageState) {
+    this.#commits.set(genesis.commit, genesis);
+    this.#branches.set("main", {
+      head: genesis.commit,
+      sequence: genesis.sequence,
+    });
+  }
 
-  async snapshot(): Promise<StorageSnapshot> {
+  async snapshot(selector?: SnapshotSelector): Promise<StorageSnapshot> {
     this.assertOpen();
-    return new MemorySnapshot(this.state);
+    if (selector !== undefined && "commit" in selector) {
+      const state = this.#commits.get(selector.commit);
+      if (state === undefined) {
+        throw new TypeError(`Unknown commit: ${selector.commit}`);
+      }
+      return new MemorySnapshot(state);
+    }
+
+    const branch = selector?.branch ?? "main";
+    const value = this.#branches.get(branch);
+    if (value === undefined) throw new TypeError(`Unknown branch: ${branch}`);
+    const state = this.#commits.get(value.head);
+    if (state === undefined) throw new Error(`Missing commit: ${value.head}`);
+    return new MemorySnapshot(state, branch, value.sequence);
+  }
+
+  async head(branch = "main"): Promise<CommitId> {
+    this.assertOpen();
+    const value = this.#branches.get(branch);
+    if (value === undefined) throw new TypeError(`Unknown branch: ${branch}`);
+    return value.head;
+  }
+
+  async createBranch(request: {
+    name: BranchName;
+    from: CommitId;
+  }): Promise<void> {
+    this.assertOpen();
+    if (this.#branches.has(request.name)) {
+      throw new TypeError(`Branch already exists: ${request.name}`);
+    }
+    if (!this.#commits.has(request.from)) {
+      throw new TypeError(`Unknown commit: ${request.from}`);
+    }
+    this.#branches.set(request.name, { head: request.from, sequence: 0 });
   }
 
   async commit(request: CommitRequest): Promise<CommitBatch> {
     this.assertOpen();
-    if (request.expectedVersion !== this.state.version) {
+    const branch = request.branch ?? "main";
+    const currentBranch = this.#branches.get(branch);
+    if (currentBranch === undefined) {
+      throw new TypeError(`Unknown branch: ${branch}`);
+    }
+    if (
+      request.expectedHead !== undefined &&
+      request.expectedHead !== currentBranch.head
+    ) {
+      throw new StorageConflictError(request.expectedHead, currentBranch.head);
+    }
+    if (
+      request.expectedHead === undefined &&
+      request.expectedVersion !== currentBranch.sequence
+    ) {
       throw new StorageConflictError(
-        request.expectedVersion,
-        this.state.version,
+        request.expectedVersion ?? -1,
+        currentBranch.sequence,
       );
     }
 
-    const tables = new Map(this.state.tables);
+    const parentState = this.#commits.get(currentBranch.head);
+    if (parentState === undefined) {
+      throw new Error(`Missing commit: ${currentBranch.head}`);
+    }
+    const tables = new Map(parentState.tables);
     const changes: CommittedChange[] = [];
 
     for (const mutation of request.mutations) {
@@ -379,17 +553,26 @@ class MemoryStorage implements StorageDatabase {
       );
     }
 
-    const version = this.state.version + 1;
-    this.state = Object.freeze({ version, tables });
+    const sequence = currentBranch.sequence + 1;
+    const commitId = `memory:${this.#nextCommit++}`;
+    const state = Object.freeze({ commit: commitId, sequence, tables });
+    this.#commits.set(commitId, state);
+    this.#branches.set(branch, { head: commitId, sequence });
     const commit = Object.freeze({
-      version,
+      commit: commitId,
+      branch,
+      sequence,
+      parent: currentBranch.head,
+      version: sequence,
       changes: Object.freeze(changes),
     });
     this.#history.push(commit);
     for (const subscriber of this.#subscribers) {
-      if (commit.version <= subscriber.after) continue;
+      if (subscriber.branch !== branch || sequence <= subscriber.after) {
+        continue;
+      }
       subscriber.queue.push(commit);
-      subscriber.after = commit.version;
+      subscriber.after = sequence;
       subscriber.wake?.();
       subscriber.wake = undefined;
     }
@@ -398,11 +581,16 @@ class MemoryStorage implements StorageDatabase {
 
   async *changes(options: ChangeStreamOptions): AsyncIterable<CommitBatch> {
     this.assertOpen();
+    const branch = options.branch ?? "main";
+    if (!this.#branches.has(branch)) {
+      throw new TypeError(`Unknown branch: ${branch}`);
+    }
     const queue = this.#history.filter(
-      (commit) => commit.version > options.after,
+      (commit) => commit.branch === branch && commit.sequence > options.after,
     );
     const subscriber = {
-      after: queue.at(-1)?.version ?? options.after,
+      branch,
+      after: queue.at(-1)?.sequence ?? options.after,
       queue,
       wake: undefined as (() => void) | undefined,
     };
@@ -488,7 +676,9 @@ export async function memoryStorage(options: {
     );
   }
 
-  return new MemoryStorage(Object.freeze({ version: 0, tables }));
+  return new MemoryStorage(
+    Object.freeze({ commit: "memory:genesis", sequence: 0, tables }),
+  );
 }
 
 export const storageMutation = {

@@ -31,13 +31,18 @@ export {
   memoryStorage,
   storageMutation,
   StorageConflictError,
+  type BranchName,
+  type BranchSequence,
   type CommitBatch,
+  type CommitId,
   type CommitRequest,
   type StorageDatabase,
   type StorageKey,
   type StorageMutation,
+  type StorageRange,
   type StorageScan,
   type StorageSnapshot,
+  type SnapshotSelector,
 } from "./storage.js";
 
 export const hydb = {
