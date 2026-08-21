@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, open, rename, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { MemoryManager } from "../memory.js";
 
 import {
@@ -13,6 +13,7 @@ import {
   type InferRow,
 } from "../schema.js";
 import {
+  HistoryUnavailableError,
   StorageConflictError,
   type BranchName,
   type BranchSequence,
@@ -21,6 +22,8 @@ import {
   type CommitId,
   type CommitRequest,
   type CommittedChange,
+  type GarbageCollectionReport,
+  type RetentionPolicy,
   type SnapshotSelector,
   type StorageDatabase,
   type StorageKey,
@@ -68,6 +71,8 @@ type StoredChange = {
 };
 
 type StoredCommit = {
+  id?: CommitId;
+  committedAtMs?: number;
   parent: CommitId | null;
   branch: BranchName;
   sequence: BranchSequence;
@@ -82,7 +87,73 @@ type StoredRef = {
   sequence: BranchSequence;
 };
 
-type BranchState = { head: CommitId; sequence: BranchSequence };
+type StoredMetadata = {
+  format: 2;
+  retention: RetentionPolicy;
+  retains?: Record<string, CommitId>;
+  historyFloors?: Record<BranchName, BranchSequence>;
+};
+
+const foreverRetention: RetentionPolicy = Object.freeze({ mode: "forever" });
+
+function validateRetention(policy: RetentionPolicy): RetentionPolicy {
+  if (policy.mode === "forever") return foreverRetention;
+  if (!Number.isSafeInteger(policy.keepAtLeast) || policy.keepAtLeast < 1) {
+    throw new TypeError("retention.keepAtLeast must be a positive integer");
+  }
+  if (
+    policy.keepYoungerThanMs !== undefined &&
+    (!Number.isFinite(policy.keepYoungerThanMs) ||
+      policy.keepYoungerThanMs <= 0)
+  ) {
+    throw new TypeError("retention.keepYoungerThanMs must be positive");
+  }
+  return Object.freeze({
+    mode: "window",
+    keepAtLeast: policy.keepAtLeast,
+    ...(policy.keepYoungerThanMs === undefined
+      ? {}
+      : { keepYoungerThanMs: policy.keepYoungerThanMs }),
+  });
+}
+
+function sameRetention(left: RetentionPolicy, right: RetentionPolicy): boolean {
+  return (
+    left.mode === right.mode &&
+    (left.mode === "forever" ||
+      (right.mode === "window" &&
+        left.keepAtLeast === right.keepAtLeast &&
+        left.keepYoungerThanMs === right.keepYoungerThanMs))
+  );
+}
+
+async function syncParentDirectory(path: string): Promise<void> {
+  const directory = await open(dirname(path), "r");
+  try {
+    await directory.sync();
+  } finally {
+    await directory.close();
+  }
+}
+
+type BranchState = {
+  head: CommitId;
+  sequence: BranchSequence;
+  base: CommitId;
+};
+
+type StorageGeneration = {
+  store: AppendOnlyPageStore;
+  tree: ImmutableBPlusTree;
+  leases: number;
+  retired: boolean;
+  closed: boolean;
+};
+
+type CommitLocation = Readonly<{
+  offset: number;
+  value: StoredCommit;
+}>;
 
 type TableMetadata = Readonly<{
   table: AnyTable;
@@ -95,19 +166,7 @@ type TableMetadata = Readonly<{
   }>[];
 }>;
 
-function commitId(offset: number): CommitId {
-  return `commit:${offset}`;
-}
-
-function commitOffset(id: CommitId): number {
-  if (!id.startsWith("commit:"))
-    throw new TypeError(`Invalid commit ID: ${id}`);
-  const offset = Number(id.slice("commit:".length));
-  if (!Number.isSafeInteger(offset) || offset < 0) {
-    throw new TypeError(`Invalid commit ID: ${id}`);
-  }
-  return offset;
-}
+const newCommitId = (): CommitId => `commit:${randomUUID()}`;
 
 function cloneManifest(manifest: DatabaseManifest): DatabaseManifest {
   return {
@@ -226,6 +285,7 @@ class NodeSnapshot implements StorageSnapshot {
     private readonly manifest: DatabaseManifest,
     private readonly tree: ImmutableBPlusTree,
     private readonly tables: ReadonlyMap<string, TableMetadata>,
+    private readonly release: () => Promise<void>,
   ) {
     this.version = sequence;
   }
@@ -299,7 +359,9 @@ class NodeSnapshot implements StorageSnapshot {
   }
 
   async close(): Promise<void> {
+    if (this.#closed) return;
     this.#closed = true;
+    await this.release();
   }
 
   private assertOpen(): void {
@@ -312,42 +374,74 @@ export class NodeStorageDatabase implements StorageDatabase {
   readonly #subscribers = new Set<{
     branch: BranchName;
     after: BranchSequence;
+    retainAfter: BranchSequence;
     queue: CommitBatch[];
     wake?: () => void;
   }>();
   #closed = false;
   #writeQueue: Promise<void> = Promise.resolve();
+  #collectionBarrier: Promise<void> | undefined;
+  #retention: RetentionPolicy = foreverRetention;
+  #metadataFound = false;
+  readonly #retains = new Map<string, CommitId>();
+  readonly #historyFloors = new Map<BranchName, BranchSequence>();
+  readonly #snapshotPins = new Map<CommitId, number>();
+  readonly #commits = new Map<CommitId, CommitLocation>();
+  readonly #generations = new Set<StorageGeneration>();
+  #generation: StorageGeneration;
 
   private constructor(
-    private readonly store: AppendOnlyPageStore,
-    private readonly tree: ImmutableBPlusTree,
+    generation: StorageGeneration,
+    private readonly dataPath: string,
+    private readonly treeOptions: {
+      cacheBytes?: number;
+      maxEntries?: number;
+      memory?: MemoryManager;
+    },
     private readonly fingerprint: string,
     private readonly tables: ReadonlyMap<string, TableMetadata>,
-  ) {}
+    private readonly requestedRetention: RetentionPolicy | undefined,
+  ) {
+    this.#generation = generation;
+    this.#generations.add(generation);
+  }
 
-  static async open(options: {
-    directory: string;
-    schema: AnySchema;
-    cacheBytes?: number;
-    maxEntries?: number;
-    memory?: MemoryManager;
-  }): Promise<NodeStorageDatabase> {
+  private get store(): AppendOnlyPageStore {
+    return this.#generation.store;
+  }
+
+  private get tree(): ImmutableBPlusTree {
+    return this.#generation.tree;
+  }
+
+  static async open(options: NodeStorageOptions): Promise<NodeStorageDatabase> {
+    const requestedRetention =
+      options.retention === undefined
+        ? undefined
+        : validateRetention(options.retention);
     await mkdir(options.directory, { recursive: true });
     const metadata = schemaMetadata(options.schema);
-    const store = await AppendOnlyPageStore.open(
-      join(options.directory, "hydb.data"),
-    );
+    const dataPath = join(options.directory, "hydb.data");
+    const store = await AppendOnlyPageStore.open(dataPath);
+    const treeOptions = {
+      cacheBytes: options.cacheBytes,
+      maxEntries: options.maxEntries,
+      memory: options.memory,
+    };
+    const tree = new ImmutableBPlusTree(store, treeOptions);
     const database = new NodeStorageDatabase(
-      store,
-      new ImmutableBPlusTree(store, options),
+      { store, tree, leases: 1, retired: false, closed: false },
+      dataPath,
+      treeOptions,
       metadata.fingerprint,
       metadata.tables,
+      requestedRetention,
     );
     try {
       await database.load();
       return database;
     } catch (error) {
-      database.tree.dispose();
+      tree.dispose();
       await store.close();
       throw error;
     }
@@ -366,6 +460,8 @@ export class NodeStorageDatabase implements StorageDatabase {
   }
 
   async snapshot(selector?: SnapshotSelector): Promise<StorageSnapshot> {
+    const collection = this.#collectionBarrier;
+    if (collection !== undefined) await collection;
     this.assertOpen();
     let id: CommitId;
     let branch: BranchName | undefined;
@@ -378,8 +474,18 @@ export class NodeStorageDatabase implements StorageDatabase {
       id = state.head;
       sequence = state.sequence;
     }
-    const commit = await this.readCommit(id);
+    const generation = this.#generation;
+    generation.leases += 1;
+    this.#snapshotPins.set(id, (this.#snapshotPins.get(id) ?? 0) + 1);
+    let commit: StoredCommit;
+    try {
+      commit = await this.readCommit(id);
+    } catch (error) {
+      await this.releaseSnapshot(generation, id);
+      throw error;
+    }
     if (commit.manifest.schema !== this.fingerprint) {
+      await this.releaseSnapshot(generation, id);
       throw new TypeError("Storage schema does not match the supplied schema");
     }
     return new NodeSnapshot(
@@ -387,8 +493,9 @@ export class NodeStorageDatabase implements StorageDatabase {
       sequence ?? commit.sequence,
       branch,
       commit.manifest,
-      this.tree,
+      generation.tree,
       this.tables,
+      () => this.releaseSnapshot(generation, id),
     );
   }
 
@@ -416,7 +523,11 @@ export class NodeStorageDatabase implements StorageDatabase {
       };
       await this.store.append("ref", encodeValue(ref));
       await this.store.sync();
-      this.#branches.set(request.name, { head: request.from, sequence: 0 });
+      this.#branches.set(request.name, {
+        head: request.from,
+        sequence: 0,
+        base: request.from,
+      });
     });
   }
 
@@ -428,34 +539,94 @@ export class NodeStorageDatabase implements StorageDatabase {
     return result!;
   }
 
+  async retain(request: { name: string; commit: CommitId }): Promise<void> {
+    return this.enqueueWrite(async () => {
+      this.assertOpen();
+      if (request.name.trim().length === 0) {
+        throw new TypeError("Retention name cannot be empty");
+      }
+      await this.readCommit(request.commit);
+      const current = this.#retains.get(request.name);
+      if (current !== undefined && current !== request.commit) {
+        throw new TypeError(`Retention already exists: ${request.name}`);
+      }
+      if (current === request.commit) return;
+      this.#retains.set(request.name, request.commit);
+      await this.writeMetadata();
+      await this.store.sync();
+    });
+  }
+
+  async releaseRetention(name: string): Promise<void> {
+    return this.enqueueWrite(async () => {
+      this.assertOpen();
+      if (!this.#retains.delete(name)) {
+        throw new TypeError(`Unknown retention: ${name}`);
+      }
+      await this.writeMetadata();
+      await this.store.sync();
+    });
+  }
+
+  collectGarbage(): Promise<GarbageCollectionReport> {
+    const operation = this.enqueueWrite(() => this.collectGarbageNow());
+    const barrier = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.#collectionBarrier = barrier;
+    void barrier.then(() => {
+      if (this.#collectionBarrier === barrier) {
+        this.#collectionBarrier = undefined;
+      }
+    });
+    return operation;
+  }
+
   async *changes(options: ChangeStreamOptions): AsyncIterable<CommitBatch> {
+    const collection = this.#collectionBarrier;
+    if (collection !== undefined) await collection;
     this.assertOpen();
     const branch = options.branch ?? "main";
     const branchState = this.#branches.get(branch);
     if (branchState === undefined)
       throw new TypeError(`Unknown branch: ${branch}`);
+    const historyFloor = this.#historyFloors.get(branch) ?? 0;
+    if (options.after < historyFloor) {
+      throw new HistoryUnavailableError(undefined, historyFloor);
+    }
     const through = branchState.sequence;
     const subscriber = {
       branch,
       after: through,
+      retainAfter: options.after,
       queue: [] as CommitBatch[],
       wake: undefined as (() => void) | undefined,
     };
+    const replayGeneration = this.#generation;
+    replayGeneration.leases += 1;
     const wakeOnAbort = () => subscriber.wake?.();
     options.signal?.addEventListener("abort", wakeOnAbort, { once: true });
     this.#subscribers.add(subscriber);
     try {
-      for await (const commit of this.readChanges(
-        branch,
-        options.after,
-        through,
-      )) {
-        if (options.signal?.aborted === true) return;
-        yield commit;
+      try {
+        for await (const commit of this.readChanges(
+          replayGeneration,
+          branch,
+          options.after,
+          through,
+        )) {
+          if (options.signal?.aborted === true) return;
+          subscriber.retainAfter = commit.sequence;
+          yield commit;
+        }
+      } finally {
+        await this.releaseGeneration(replayGeneration);
       }
       while (!this.#closed && options.signal?.aborted !== true) {
         const commit = subscriber.queue.shift();
         if (commit !== undefined) {
+          subscriber.retainAfter = commit.sequence;
           yield commit;
           continue;
         }
@@ -474,19 +645,68 @@ export class NodeStorageDatabase implements StorageDatabase {
     this.#closed = true;
     for (const subscriber of this.#subscribers) subscriber.wake?.();
     await this.#writeQueue;
-    this.tree.dispose();
-    await this.store.close();
+    await Promise.all(
+      [...this.#generations].map((generation) =>
+        this.closeGeneration(generation),
+      ),
+    );
   }
 
   private async load(): Promise<void> {
-    for await (const record of this.store.records(new Set(["ref"]))) {
-      const ref = decodeValue(record.payload) as StoredRef;
-      this.#branches.set(ref.branch, {
-        head: ref.head,
-        sequence: ref.sequence,
-      });
+    const published = new Set<CommitId>();
+    for await (const record of this.store.records(
+      new Set(["commit", "ref", "meta"]),
+    )) {
+      if (record.type === "commit") {
+        const stored = decodeValue(record.payload) as StoredCommit;
+        const id = stored.id ?? `commit:${record.id}`;
+        this.#commits.set(id, { offset: record.id, value: stored });
+      } else if (record.type === "meta") {
+        const metadata = decodeValue(record.payload) as StoredMetadata;
+        if (metadata.format !== 2)
+          throw new Error("Unsupported storage format");
+        this.#retention = validateRetention(metadata.retention);
+        this.#retains.clear();
+        for (const [name, commit] of Object.entries(metadata.retains ?? {})) {
+          this.#retains.set(name, commit);
+        }
+        this.#historyFloors.clear();
+        for (const [branch, floor] of Object.entries(
+          metadata.historyFloors ?? {},
+        )) {
+          this.#historyFloors.set(branch, floor);
+        }
+        this.#metadataFound = true;
+      } else {
+        const ref = decodeValue(record.payload) as StoredRef;
+        published.add(ref.head);
+        const previous = this.#branches.get(ref.branch);
+        this.#branches.set(ref.branch, {
+          head: ref.head,
+          sequence: ref.sequence,
+          base:
+            ref.operation === "create"
+              ? ref.head
+              : (previous?.base ?? ref.head),
+        });
+      }
     }
-    if (this.#branches.size === 0) await this.initialize();
+    for (const id of this.#commits.keys()) {
+      if (!published.has(id)) this.#commits.delete(id);
+    }
+    if (this.#branches.size === 0) {
+      this.#retention = this.requestedRetention ?? foreverRetention;
+      await this.initialize();
+    } else if (!this.#metadataFound) {
+      this.#retention = this.requestedRetention ?? foreverRetention;
+      await this.writeMetadata();
+      await this.store.sync();
+    } else if (
+      this.requestedRetention !== undefined &&
+      !sameRetention(this.requestedRetention, this.#retention)
+    ) {
+      throw new TypeError("Configured retention policy does not match storage");
+    }
     const main = this.#branches.get("main");
     if (main === undefined) throw new Error("Storage has no main branch");
     const head = await this.readCommit(main.head);
@@ -511,6 +731,8 @@ export class NodeStorageDatabase implements StorageDatabase {
       ),
     };
     const stored: StoredCommit = {
+      id: newCommitId(),
+      committedAtMs: Date.now(),
       parent: null,
       branch: "main",
       sequence: 0,
@@ -518,7 +740,7 @@ export class NodeStorageDatabase implements StorageDatabase {
       changes: [],
     };
     const offset = await this.store.append("commit", encodeValue(stored));
-    const head = commitId(offset);
+    const head = stored.id!;
     const ref: StoredRef = {
       operation: "create",
       branch: "main",
@@ -526,8 +748,23 @@ export class NodeStorageDatabase implements StorageDatabase {
       sequence: 0,
     };
     await this.store.append("ref", encodeValue(ref));
+    await this.writeMetadata();
     await this.store.sync();
-    this.#branches.set("main", { head, sequence: 0 });
+    this.#commits.set(head, { offset, value: stored });
+    this.#branches.set("main", { head, sequence: 0, base: head });
+  }
+
+  private async writeMetadata(): Promise<void> {
+    await this.store.append(
+      "meta",
+      encodeValue({
+        format: 2,
+        retention: this.#retention,
+        retains: Object.fromEntries(this.#retains),
+        historyFloors: Object.fromEntries(this.#historyFloors),
+      } satisfies StoredMetadata),
+    );
+    this.#metadataFound = true;
   }
 
   private async commitNow(request: CommitRequest): Promise<CommitBatch> {
@@ -641,6 +878,8 @@ export class NodeStorageDatabase implements StorageDatabase {
     }
 
     const stored: StoredCommit = {
+      id: newCommitId(),
+      committedAtMs: Date.now(),
       parent: current.head,
       branch,
       sequence: current.sequence + 1,
@@ -648,7 +887,7 @@ export class NodeStorageDatabase implements StorageDatabase {
       changes,
     };
     const offset = await this.store.append("commit", encodeValue(stored));
-    const id = commitId(offset);
+    const id = stored.id!;
     const ref: StoredRef = {
       operation: "commit",
       branch,
@@ -657,7 +896,12 @@ export class NodeStorageDatabase implements StorageDatabase {
     };
     await this.store.append("ref", encodeValue(ref));
     await this.store.sync();
-    this.#branches.set(branch, { head: id, sequence: stored.sequence });
+    this.#commits.set(id, { offset, value: stored });
+    this.#branches.set(branch, {
+      head: id,
+      sequence: stored.sequence,
+      base: current.base,
+    });
     const batch = this.toCommitBatch(id, stored);
     for (const subscriber of this.#subscribers) {
       if (subscriber.branch !== branch || stored.sequence <= subscriber.after)
@@ -671,16 +915,247 @@ export class NodeStorageDatabase implements StorageDatabase {
   }
 
   private async readCommit(id: CommitId): Promise<StoredCommit> {
-    const record = await this.store.read(commitOffset(id), "commit");
-    return decodeValue(record.payload) as StoredCommit;
+    const location = this.#commits.get(id);
+    if (location === undefined) throw new HistoryUnavailableError(id);
+    return location.value;
+  }
+
+  private retainedCommitIds(now: number): Set<CommitId> {
+    if (this.#retention.mode === "forever") {
+      return new Set(this.#commits.keys());
+    }
+    const retained = new Set<CommitId>();
+    for (const branch of this.#branches.values()) {
+      retained.add(branch.head);
+      retained.add(branch.base);
+    }
+    for (const commit of this.#retains.values()) retained.add(commit);
+    for (const commit of this.#snapshotPins.keys()) retained.add(commit);
+
+    const cutoff =
+      this.#retention.keepYoungerThanMs === undefined
+        ? undefined
+        : now - this.#retention.keepYoungerThanMs;
+    for (const [id, location] of this.#commits) {
+      if (
+        cutoff !== undefined &&
+        (location.value.committedAtMs ?? Number.NEGATIVE_INFINITY) >= cutoff
+      ) {
+        retained.add(id);
+      }
+    }
+
+    for (const branch of this.#branches.keys()) {
+      const commits = [...this.#commits.entries()]
+        .filter(([, location]) => location.value.branch === branch)
+        .sort(
+          (left, right) => right[1].value.sequence - left[1].value.sequence,
+        );
+      for (const [id] of commits.slice(0, this.#retention.keepAtLeast)) {
+        retained.add(id);
+      }
+    }
+
+    for (const subscriber of this.#subscribers) {
+      for (const [id, location] of this.#commits) {
+        if (
+          location.value.branch === subscriber.branch &&
+          location.value.sequence > subscriber.retainAfter
+        ) {
+          retained.add(id);
+        }
+      }
+    }
+    return retained;
+  }
+
+  private historyFloorsFor(
+    retained: ReadonlySet<CommitId>,
+  ): Map<string, number> {
+    const floors = new Map<string, number>();
+    for (const [branch, state] of this.#branches) {
+      const sequences = new Set(
+        [...this.#commits.entries()]
+          .filter(
+            ([id, location]) =>
+              retained.has(id) && location.value.branch === branch,
+          )
+          .map(([, location]) => location.value.sequence),
+      );
+      let floor = state.sequence;
+      while (floor > 0 && sequences.has(floor)) floor -= 1;
+      floors.set(branch, floor);
+    }
+    return floors;
+  }
+
+  private async collectGarbageNow(): Promise<GarbageCollectionReport> {
+    this.assertOpen();
+    const before = this.store.endOffset;
+    const commitsBefore = this.#commits.size;
+    const retained = this.retainedCommitIds(Date.now());
+    const commits = [...this.#commits.entries()].filter(([id]) =>
+      retained.has(id),
+    );
+    const floors = this.historyFloorsFor(retained);
+    const temporaryPath = `${this.dataPath}.compact-${randomUUID()}`;
+    const nextStore = await AppendOnlyPageStore.open(temporaryPath);
+    const nextTree = new ImmutableBPlusTree(nextStore, this.treeOptions);
+    let published = false;
+
+    try {
+      const manifests = commits.map(([, location]) =>
+        cloneManifest(location.value.manifest),
+      );
+      const roots: TreeRoot[] = [];
+      const setters: ((root: TreeRoot) => void)[] = [];
+      for (const manifest of manifests) {
+        for (const table of Object.values(manifest.tables)) {
+          roots.push(table.primary);
+          setters.push((root) => {
+            table.primary = root;
+          });
+          for (const index of Object.keys(table.indexes)) {
+            roots.push(table.indexes[index] ?? null);
+            setters.push((root) => {
+              table.indexes[index] = root;
+            });
+          }
+        }
+      }
+      const copiedTrees = await this.tree.copyRootsTo(roots, nextTree);
+      copiedTrees.roots.forEach((root, index) => setters[index]!(root));
+
+      const nextCommits = new Map<CommitId, CommitLocation>();
+      for (let index = 0; index < commits.length; index += 1) {
+        const [id, location] = commits[index]!;
+        const value: StoredCommit = {
+          ...location.value,
+          id,
+          manifest: manifests[index]!,
+        };
+        const offset = await nextStore.append("commit", encodeValue(value));
+        nextCommits.set(id, { offset, value });
+      }
+
+      let refCount = 0;
+      for (const [branch, state] of this.#branches) {
+        await nextStore.append(
+          "ref",
+          encodeValue({
+            operation: "create",
+            branch,
+            head: state.base,
+            sequence: 0,
+          } satisfies StoredRef),
+        );
+        refCount += 1;
+        const branchCommits = commits
+          .filter(([, location]) => location.value.branch === branch)
+          .sort(
+            (left, right) => left[1].value.sequence - right[1].value.sequence,
+          );
+        for (const [id, location] of branchCommits) {
+          if (location.value.sequence === 0) continue;
+          await nextStore.append(
+            "ref",
+            encodeValue({
+              operation: "commit",
+              branch,
+              head: id,
+              sequence: location.value.sequence,
+            } satisfies StoredRef),
+          );
+          refCount += 1;
+        }
+      }
+      await nextStore.append(
+        "meta",
+        encodeValue({
+          format: 2,
+          retention: this.#retention,
+          retains: Object.fromEntries(this.#retains),
+          historyFloors: Object.fromEntries(floors),
+        } satisfies StoredMetadata),
+      );
+      await nextStore.sync();
+      const after = nextStore.endOffset;
+      await rename(temporaryPath, this.dataPath);
+      published = true;
+
+      const previous = this.#generation;
+      this.#generation = {
+        store: nextStore,
+        tree: nextTree,
+        leases: 1,
+        retired: false,
+        closed: false,
+      };
+      this.#generations.add(this.#generation);
+      this.#commits.clear();
+      for (const [id, location] of nextCommits) {
+        this.#commits.set(id, location);
+      }
+      this.#historyFloors.clear();
+      for (const [branch, floor] of floors) {
+        this.#historyFloors.set(branch, floor);
+      }
+      await syncParentDirectory(this.dataPath);
+      previous.retired = true;
+      await this.releaseGeneration(previous);
+
+      return Object.freeze({
+        commitsCollected: commitsBefore - commits.length,
+        recordsCopied: copiedTrees.pagesCopied + commits.length + refCount + 1,
+        bytesBefore: before,
+        bytesAfter: after,
+        bytesReclaimed: Math.max(0, before - after),
+      });
+    } catch (error) {
+      if (!published) {
+        nextTree.dispose();
+        await nextStore.close();
+        await rm(temporaryPath, { force: true });
+      }
+      throw error;
+    }
+  }
+
+  private async releaseSnapshot(
+    generation: StorageGeneration,
+    commit: CommitId,
+  ): Promise<void> {
+    const pins = this.#snapshotPins.get(commit);
+    if (pins === 1) this.#snapshotPins.delete(commit);
+    else if (pins !== undefined) this.#snapshotPins.set(commit, pins - 1);
+    await this.releaseGeneration(generation);
+  }
+
+  private async releaseGeneration(
+    generation: StorageGeneration,
+  ): Promise<void> {
+    if (generation.closed) return;
+    generation.leases -= 1;
+    if (generation.leases === 0 && generation.retired) {
+      await this.closeGeneration(generation);
+    }
+  }
+
+  private async closeGeneration(generation: StorageGeneration): Promise<void> {
+    if (generation.closed) return;
+    generation.closed = true;
+    generation.tree.dispose();
+    await generation.store.close();
+    this.#generations.delete(generation);
   }
 
   private async *readChanges(
+    generation: StorageGeneration,
     branch: BranchName,
     after: BranchSequence,
     through: BranchSequence,
   ): AsyncIterable<CommitBatch> {
-    for await (const record of this.store.records(new Set(["ref"]))) {
+    for await (const record of generation.store.records(new Set(["ref"]))) {
       const ref = decodeValue(record.payload) as StoredRef;
       if (
         ref.operation !== "commit" ||
@@ -734,12 +1209,18 @@ export class NodeStorageDatabase implements StorageDatabase {
   }
 }
 
-export async function openNodeStorage(options: {
+export type NodeStorageOptions = Readonly<{
   directory: string;
   schema: AnySchema;
   cacheBytes?: number;
   maxEntries?: number;
   memory?: MemoryManager;
-}): Promise<NodeStorageDatabase> {
+  /** Persisted on creation; an explicit mismatch on reopen is rejected. */
+  retention?: RetentionPolicy;
+}>;
+
+export async function openNodeStorage(
+  options: NodeStorageOptions,
+): Promise<NodeStorageDatabase> {
   return NodeStorageDatabase.open(options);
 }

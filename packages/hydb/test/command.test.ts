@@ -56,6 +56,15 @@ function recordStorageOperations(
     changes(options) {
       return storage.changes(options);
     },
+    retain(request) {
+      return storage.retain(request);
+    },
+    releaseRetention(name) {
+      return storage.releaseRetention(name);
+    },
+    collectGarbage() {
+      return storage.collectGarbage();
+    },
     close() {
       return storage.close();
     },
@@ -132,6 +141,9 @@ test("command commits settle through the ordered durable change stream", async (
       await changesReleased;
       yield* underlying.changes(options);
     },
+    retain: (request) => underlying.retain(request),
+    releaseRetention: (name) => underlying.releaseRetention(name),
+    collectGarbage: () => underlying.collectGarbage(),
     close: () => underlying.close(),
   };
   const db = await hydb.database({ schema, storage });

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { open, type FileHandle } from "node:fs/promises";
 
 export type RecordId = number;
-export type RecordType = "page" | "commit" | "ref";
+export type RecordType = "page" | "commit" | "ref" | "meta";
 
 export type StoredRecord = Readonly<{
   id: RecordId;
@@ -14,11 +14,17 @@ const magic = Buffer.from("HYDB");
 const formatVersion = 1;
 const checksumBytes = 16;
 const headerBytes = 4 + 1 + 1 + 4 + checksumBytes;
-const typeCode: Record<RecordType, number> = { page: 1, commit: 2, ref: 3 };
+const typeCode: Record<RecordType, number> = {
+  page: 1,
+  commit: 2,
+  ref: 3,
+  meta: 4,
+};
 const codeType = new Map<number, RecordType>([
   [1, "page"],
   [2, "commit"],
   [3, "ref"],
+  [4, "meta"],
 ]);
 
 function checksum(payload: Uint8Array): Buffer {

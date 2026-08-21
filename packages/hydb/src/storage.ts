@@ -11,6 +11,39 @@ import {
 export type CommitId = string;
 export type BranchName = string;
 export type BranchSequence = number;
+
+export type RetentionPolicy =
+  /** Preserve every published commit. This is the persistent-storage default. */
+  | Readonly<{ mode: "forever" }>
+  | Readonly<{
+      mode: "window";
+      /** Retain at least this many commits authored on each branch. */
+      keepAtLeast: number;
+      /** Also retain every commit no older than this many milliseconds. */
+      keepYoungerThanMs?: number;
+    }>;
+
+export type GarbageCollectionReport = Readonly<{
+  commitsCollected: number;
+  recordsCopied: number;
+  bytesBefore: number;
+  bytesAfter: number;
+  bytesReclaimed: number;
+}>;
+
+export class HistoryUnavailableError extends Error {
+  constructor(
+    readonly commit?: CommitId,
+    readonly oldestAvailableSequence?: BranchSequence,
+  ) {
+    super(
+      commit === undefined
+        ? `Requested history is unavailable; changes begin after sequence ${oldestAvailableSequence}`
+        : `Historical commit is unavailable: ${commit}`,
+    );
+    this.name = "HistoryUnavailableError";
+  }
+}
 /** @deprecated Use BranchSequence for live ordering and CommitId for identity. */
 export type CommitVersion = BranchSequence;
 export type StorageKey = readonly unknown[];
@@ -126,6 +159,12 @@ export interface StorageDatabase {
   createBranch(request: { name: BranchName; from: CommitId }): Promise<void>;
   commit(request: CommitRequest): Promise<CommitBatch>;
   changes(options: ChangeStreamOptions): AsyncIterable<CommitBatch>;
+  /** Persistently names a commit as a garbage-collection root. */
+  retain(request: { name: string; commit: CommitId }): Promise<void>;
+  /** Removes a named root; reclamation occurs on a later collection. */
+  releaseRetention(name: string): Promise<void>;
+  /** Copies reachable data into a compact generation and publishes it. */
+  collectGarbage(): Promise<GarbageCollectionReport>;
   close(): Promise<void>;
 }
 
@@ -418,6 +457,7 @@ class MemoryStorage implements StorageDatabase {
     { head: CommitId; sequence: BranchSequence }
   >();
   readonly #history: CommitBatch[] = [];
+  readonly #retains = new Map<string, CommitId>();
   readonly #subscribers = new Set<{
     branch: BranchName;
     after: BranchSequence;
@@ -622,6 +662,39 @@ class MemoryStorage implements StorageDatabase {
       options.signal?.removeEventListener("abort", wakeOnAbort);
       this.#subscribers.delete(subscriber);
     }
+  }
+
+  async retain(request: { name: string; commit: CommitId }): Promise<void> {
+    this.assertOpen();
+    if (request.name.trim().length === 0) {
+      throw new TypeError("Retention name cannot be empty");
+    }
+    if (!this.#commits.has(request.commit)) {
+      throw new HistoryUnavailableError(request.commit);
+    }
+    const existing = this.#retains.get(request.name);
+    if (existing !== undefined && existing !== request.commit) {
+      throw new TypeError(`Retention already exists: ${request.name}`);
+    }
+    this.#retains.set(request.name, request.commit);
+  }
+
+  async releaseRetention(name: string): Promise<void> {
+    this.assertOpen();
+    if (!this.#retains.delete(name)) {
+      throw new TypeError(`Unknown retention: ${name}`);
+    }
+  }
+
+  async collectGarbage(): Promise<GarbageCollectionReport> {
+    this.assertOpen();
+    return Object.freeze({
+      commitsCollected: 0,
+      recordsCopied: 0,
+      bytesBefore: 0,
+      bytesAfter: 0,
+      bytesReclaimed: 0,
+    });
   }
 
   async close(): Promise<void> {

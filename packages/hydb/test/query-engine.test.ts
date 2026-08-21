@@ -72,6 +72,15 @@ function recordStorageOperations(
     changes(options) {
       return storage.changes(options);
     },
+    retain(request) {
+      return storage.retain(request);
+    },
+    releaseRetention(name) {
+      return storage.releaseRetention(name);
+    },
+    collectGarbage() {
+      return storage.collectGarbage();
+    },
     close() {
       return storage.close();
     },
@@ -156,6 +165,9 @@ test("subscriptions replay commits that arrive during snapshot bootstrap exactly
     createBranch: (request) => underlying.createBranch(request),
     commit: (request) => underlying.commit(request),
     changes: (options) => underlying.changes(options),
+    retain: (request) => underlying.retain(request),
+    releaseRetention: (name) => underlying.releaseRetention(name),
+    collectGarbage: () => underlying.collectGarbage(),
     close: () => underlying.close(),
   };
   const db = await hydb.database({ schema: localSchema, storage });

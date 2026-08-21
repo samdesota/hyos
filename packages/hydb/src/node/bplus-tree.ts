@@ -22,6 +22,11 @@ export type TreeEntry = Readonly<{
   value: Uint8Array;
 }>;
 
+export type TreeCopyResult = Readonly<{
+  roots: readonly TreeRoot[];
+  pagesCopied: number;
+}>;
+
 type EncodedEntry = { key: string; value: string };
 type LeafPage = { kind: "leaf"; entries: EncodedEntry[] };
 type InternalPage = { kind: "internal"; keys: string[]; children: RecordId[] };
@@ -174,6 +179,46 @@ export class ImmutableBPlusTree {
       emitted += 1;
       if (range.limit !== undefined && emitted >= range.limit) return;
     }
+  }
+
+  /** Copies a forest while preserving structural sharing between its roots. */
+  async copyRootsTo(
+    roots: readonly TreeRoot[],
+    target: ImmutableBPlusTree,
+  ): Promise<TreeCopyResult> {
+    const relocated = new Map<RecordId, Promise<RecordId>>();
+    const copy = (id: RecordId): Promise<RecordId> => {
+      const existing = relocated.get(id);
+      if (existing !== undefined) return existing;
+      const pending = (async () => {
+        const page = await this.#cache.get(id);
+        if (page.kind === "leaf") {
+          return target.writePage({
+            kind: "leaf",
+            entries: page.entries.map((entry) => ({ ...entry })),
+          });
+        }
+        const children: RecordId[] = [];
+        for (const child of page.children) children.push(await copy(child));
+        return target.writePage({
+          kind: "internal",
+          keys: [...page.keys],
+          children,
+        });
+      })();
+      relocated.set(id, pending);
+      return pending;
+    };
+    return {
+      roots: await (async () => {
+        const copied: TreeRoot[] = [];
+        for (const root of roots) {
+          copied.push(root === null ? null : await copy(root));
+        }
+        return copied;
+      })(),
+      pagesCopied: relocated.size,
+    };
   }
 
   private async insert(

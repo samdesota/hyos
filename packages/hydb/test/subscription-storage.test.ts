@@ -37,6 +37,9 @@ function recordScans(
     createBranch: (request) => storage.createBranch(request),
     commit: (request) => storage.commit(request),
     changes: (options) => storage.changes(options),
+    retain: (request) => storage.retain(request),
+    releaseRetention: (name) => storage.releaseRetention(name),
+    collectGarbage: () => storage.collectGarbage(),
     close: () => storage.close(),
   };
 }
@@ -525,6 +528,9 @@ test("unsubscribing during a bucket load does not fail the change stream", async
     createBranch: (request) => underlying.createBranch(request),
     commit: (request) => underlying.commit(request),
     changes: (options) => underlying.changes(options),
+    retain: (request) => underlying.retain(request),
+    releaseRetention: (name) => underlying.releaseRetention(name),
+    collectGarbage: () => underlying.collectGarbage(),
     close: () => underlying.close(),
   };
   const db = await hydb.database({ schema, storage });

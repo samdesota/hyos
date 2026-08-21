@@ -7,9 +7,9 @@
 - [x] Add a shared, byte-budgeted memory manager.
 - [x] Implement spillable sort and join operators.
 - [x] Implement spillable differential dataflow arrangements.
-- [ ] Add snapshot pinning and garbage collection.
-- [ ] Add safe append-only storage compaction.
+- [x] Add snapshot pinning and garbage collection.
+- [x] Add safe append-only storage compaction.
 - [ ] Add crash, corruption, and fault-injection testing.
 - [ ] Add performance instrumentation and benchmarks.
 - [ ] Complete the branch-aware current and historical database interface.
-- [ ] Add tree diff, logical merge, retention, and replication features.
+- [ ] Add tree diff, logical merge, and replication features.
