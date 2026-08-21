@@ -6,6 +6,12 @@ import {
 } from "./query.js";
 import { DifferentialQuery } from "./dataflow.js";
 import {
+  invokeCommand,
+  type Command,
+  type InferCommandInput,
+  type InferCommandResult,
+} from "./command.js";
+import {
   getColumnDefinition,
   getSchemaDefinition,
   getTableDefinition,
@@ -31,6 +37,11 @@ export interface Database {
     listener: (result: InferQueryResult<QueryValue>) => void,
   ): () => void;
 
+  execute<CommandValue extends Command<any, any, any>>(
+    command: CommandValue,
+    input: InferCommandInput<CommandValue>,
+  ): Promise<InferCommandResult<CommandValue>>;
+
   close(): Promise<void>;
 }
 
@@ -42,11 +53,16 @@ class QueryDatabase implements Database, QueryDataSource {
     Map<string, Map<string, Set<string>>>
   >();
   #changeLoop?: Promise<void>;
+  #version: number;
+  #commandQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly storage: StorageDatabase,
     private readonly tables: ReadonlyMap<string, Map<string, StoredRow>>,
-  ) {}
+    version: number,
+  ) {
+    this.#version = version;
+  }
 
   rows(table: string): readonly StoredRow[] {
     const rows = this.tables.get(table);
@@ -107,6 +123,32 @@ class QueryDatabase implements Database, QueryDataSource {
     };
   }
 
+  execute<CommandValue extends Command<any, any, any>>(
+    command: CommandValue,
+    input: InferCommandInput<CommandValue>,
+  ): Promise<InferCommandResult<CommandValue>> {
+    const execution = this.#commandQueue.then(async () => {
+      const expectedVersion = this.#version;
+      const { result, mutations } = await invokeCommand(
+        command,
+        input,
+        this.tables,
+      );
+      if (mutations.length === 0) return result;
+      const commit = await this.storage.commit({
+        expectedVersion,
+        mutations,
+      });
+      this.applyCommit(commit);
+      return result;
+    });
+    this.#commandQueue = execution.then(
+      () => undefined,
+      () => undefined,
+    );
+    return execution;
+  }
+
   start(after: number): void {
     this.#changeLoop = this.consumeChanges(after);
   }
@@ -132,6 +174,7 @@ class QueryDatabase implements Database, QueryDataSource {
   }
 
   private applyCommit(commit: CommitBatch): void {
+    if (commit.version <= this.#version) return;
     for (const change of commit.changes) {
       const name = getTableDefinition(change.table).name;
       const rows = this.tables.get(name);
@@ -145,6 +188,7 @@ class QueryDatabase implements Database, QueryDataSource {
     for (const subscription of [...this.#subscriptions]) {
       subscription.apply(commit);
     }
+    this.#version = commit.version;
   }
 
   private updateArrangements(
@@ -214,7 +258,11 @@ export async function database(options: {
     await snapshot.close();
   }
 
-  const queryDatabase = new QueryDatabase(options.storage, tables);
+  const queryDatabase = new QueryDatabase(
+    options.storage,
+    tables,
+    snapshot.version,
+  );
   queryDatabase.start(snapshot.version);
   return queryDatabase;
 }
