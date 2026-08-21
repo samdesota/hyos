@@ -51,8 +51,17 @@ export type PhysicalQueryPlan = Readonly<{
   order: QueryPlan["order"];
   limit?: number;
   cardinality: NonNullable<QueryPlan["cardinality"]>;
+  join?: PhysicalJoin;
   selection?: PlannedSelection;
 }>;
+
+export type PhysicalJoin =
+  | Readonly<{ kind: "indexed-loop" }>
+  | Readonly<{
+      kind: "hash";
+      childColumn: string;
+      parent: PlannedValue;
+    }>;
 
 export type PlannedSelectionValue =
   | Readonly<{ kind: "expression"; expression: ExpressionNode }>
@@ -324,6 +333,20 @@ function planNode(schema: AnySchema, logical: QueryPlan): PhysicalQueryPlan {
     }
   }
 
+  const correlatedEquality = equalities.find(
+    (equality) => equality.value.kind === "outer-field",
+  );
+  const join: PhysicalJoin | undefined =
+    correlatedEquality === undefined
+      ? undefined
+      : access.kind === "table-scan"
+        ? Object.freeze({
+            kind: "hash" as const,
+            childColumn: correlatedEquality.column,
+            parent: correlatedEquality.value,
+          })
+        : Object.freeze({ kind: "indexed-loop" as const });
+
   return Object.freeze({
     source: logical.source,
     access,
@@ -331,6 +354,7 @@ function planNode(schema: AnySchema, logical: QueryPlan): PhysicalQueryPlan {
     order: orderCovered ? Object.freeze([]) : logical.order,
     ...(logical.limit === undefined ? {} : { limit: logical.limit }),
     cardinality,
+    ...(join === undefined ? {} : { join }),
     ...(logical.selection === undefined
       ? {}
       : {

@@ -159,6 +159,39 @@ test("nested queries plan correlated index lookups using outer-field bindings", 
   assert.equal(nested.plan.access.key[0].column, "id");
   assert.deepEqual(nested.plan.filters, []);
   assert.deepEqual(nested.plan.order, []);
+  assert.deepEqual(nested.plan.join, { kind: "indexed-loop" });
+});
+
+test("an unindexed equality correlation plans an adaptive hash join", () => {
+  const notes = hydb.table("planner_notes", {
+    id: id().primaryKey(),
+    projectId: id().notNull(),
+    body: text().notNull(),
+  });
+  const localSchema = hydb.schema({ projects, notes });
+  const planned = planQuery(
+    localSchema,
+    query(projects)
+      .select((project) => ({
+        notes: query(notes)
+          .where((note) => note.projectId.eq(project.id))
+          .many(),
+      }))
+      .many(),
+  );
+  const nested = planned.selection?.notes;
+  assert.equal(nested?.kind, "query");
+  if (nested?.kind !== "query") assert.fail("Expected a nested query plan");
+  assert.equal(nested.plan.access.kind, "table-scan");
+  assert.deepEqual(nested.plan.join, {
+    kind: "hash",
+    childColumn: "projectId",
+    parent: {
+      kind: "outer-field",
+      source: planned.source,
+      column: "id",
+    },
+  });
 });
 
 test("a table scan uses primary-key ordering in either direction", () => {

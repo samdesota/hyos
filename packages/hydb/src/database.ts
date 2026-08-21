@@ -11,6 +11,7 @@ import {
 import { type AnySchema } from "./schema.js";
 import { type CommitBatch, type StorageDatabase } from "./storage.js";
 import { MemoryManager, type MemoryStats } from "./memory.js";
+import type { SpillOptions } from "./spill.js";
 
 export interface Database {
   fetch<QueryValue extends Query<any>>(
@@ -35,6 +36,7 @@ export interface Database {
 class QueryDatabase implements Database {
   readonly #abortController = new AbortController();
   readonly #subscriptions = new Set<SubscriptionRuntime<any>>();
+  readonly #subscriptionClosures = new Set<Promise<void>>();
   readonly #sequenceWaiters = new Map<
     number,
     Array<{ resolve: () => void; reject: (error: unknown) => void }>
@@ -48,6 +50,7 @@ class QueryDatabase implements Database {
     private readonly schema: AnySchema,
     private readonly storage: StorageDatabase,
     private readonly memory: MemoryManager,
+    private readonly spill: SpillOptions | undefined,
     sequence: number,
   ) {
     this.#sequence = sequence;
@@ -62,6 +65,7 @@ class QueryDatabase implements Database {
         planQuery(this.schema, query),
         snapshot,
         this.memory,
+        this.spill,
       )) as InferQueryResult<QueryValue>;
     } finally {
       await snapshot.close();
@@ -78,15 +82,14 @@ class QueryDatabase implements Database {
       query,
       listener,
       this.memory,
+      this.spill,
     );
     this.#subscriptions.add(subscription);
     void subscription.ready.catch(() => {
-      this.#subscriptions.delete(subscription);
-      subscription.dispose();
+      this.disposeSubscription(subscription);
     });
     return () => {
-      this.#subscriptions.delete(subscription);
-      subscription.dispose();
+      this.disposeSubscription(subscription);
     };
   }
 
@@ -140,11 +143,15 @@ class QueryDatabase implements Database {
     try {
       await this.#changeLoop;
     } finally {
-      for (const subscription of this.#subscriptions) subscription.dispose();
+      const subscriptions = [...this.#subscriptions];
+      for (const subscription of subscriptions) {
+        this.disposeSubscription(subscription);
+      }
       await Promise.allSettled(
-        [...this.#subscriptions].map((subscription) => subscription.ready),
+        subscriptions.map((subscription) => subscription.ready),
       );
       this.#subscriptions.clear();
+      await Promise.allSettled(this.#subscriptionClosures);
       await this.storage.close();
     }
   }
@@ -198,12 +205,24 @@ class QueryDatabase implements Database {
     }
     this.#sequenceWaiters.clear();
   }
+
+  private disposeSubscription(subscription: SubscriptionRuntime<any>): void {
+    this.#subscriptions.delete(subscription);
+    subscription.dispose();
+    const closure = subscription.whenDisposed();
+    this.#subscriptionClosures.add(closure);
+    void closure.then(
+      () => this.#subscriptionClosures.delete(closure),
+      () => this.#subscriptionClosures.delete(closure),
+    );
+  }
 }
 
 export async function database(options: {
   schema: AnySchema;
   storage: StorageDatabase;
   memory?: MemoryManager | Readonly<{ maxBytes: number }>;
+  spill?: SpillOptions;
 }): Promise<Database> {
   const snapshot = await options.storage.snapshot();
   const sequence = snapshot.sequence;
@@ -219,6 +238,7 @@ export async function database(options: {
     options.schema,
     options.storage,
     memory,
+    options.spill,
     sequence,
   );
   queryDatabase.start(sequence);

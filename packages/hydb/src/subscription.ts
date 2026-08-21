@@ -1,4 +1,8 @@
-import { DifferentialQuery, type QueryDemand } from "./dataflow.js";
+import {
+  DifferentialQuery,
+  type DataflowSpillOptions,
+  type QueryDemand,
+} from "./dataflow.js";
 import {
   planQuery,
   type PhysicalAccess,
@@ -27,6 +31,7 @@ import {
   type MemoryHandle,
   type MemoryManager,
 } from "./memory.js";
+import type { SpillOptions, SpillSession } from "./spill.js";
 
 type StoredRow = Readonly<Record<string, unknown>>;
 type QueryContext = ReadonlyMap<QuerySource, StoredRow>;
@@ -163,6 +168,8 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
   #live = false;
   #disposed = false;
   #applyQueue: Promise<void> = Promise.resolve();
+  #spillSession?: Promise<SpillSession>;
+  #disposePromise: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly schema: AnySchema,
@@ -170,6 +177,7 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
     private readonly queryValue: QueryValue,
     private readonly listener: (result: InferQueryResult<QueryValue>) => void,
     private readonly memoryManager: MemoryManager,
+    private readonly spillOptions?: SpillOptions,
   ) {
     this.#memory = memoryManager.track({
       owner: "subscriptions",
@@ -210,7 +218,11 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
     this.#pendingDemands = [];
     this.#query?.dispose();
     this.#memory.release();
-    void this.releaseSnapshot();
+    this.#disposePromise = this.releaseResources();
+  }
+
+  whenDisposed(): Promise<void> {
+    return this.#disposePromise;
   }
 
   private async bootstrap(): Promise<void> {
@@ -238,10 +250,11 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
         this.listener,
         (demands) => this.#pendingDemands.push(...demands),
         this.memoryManager,
+        this.dataflowSpill(),
       );
       this.#query = query;
       this.#lastSequence = snapshot.sequence;
-      query.bootstrap();
+      await query.bootstrap();
       await this.settleDemands(snapshot);
       query.publishInitial();
 
@@ -278,7 +291,7 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
       query.begin();
       for (const scope of this.#scopes) {
         const changes = this.filterChanges(scope, commit);
-        query.apply(scope.plan.source, changes);
+        await query.apply(scope.plan.source, changes);
       }
       if (this.#pendingDemands.length > 0) {
         const snapshot = await this.storage.snapshot({ commit: commit.commit });
@@ -333,7 +346,7 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
           if (previous !== 0 || entry === undefined) continue;
           const rows = await loadRows(snapshot, scope.plan.access, entry.key);
           const added = this.mergeRows(scope, rows);
-          this.#query!.seed(scope.plan.source, added);
+          await this.#query!.seed(scope.plan.source, added);
         }
       }
 
@@ -345,7 +358,7 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
           }
         }
       }
-      for (const scope of scopesToEvict) this.evictIrrelevantRows(scope);
+      for (const scope of scopesToEvict) await this.evictIrrelevantRows(scope);
     }
   }
 
@@ -413,7 +426,7 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
     return false;
   }
 
-  private evictIrrelevantRows(scope: SourceScope): void {
+  private async evictIrrelevantRows(scope: SourceScope): Promise<void> {
     const rows = this.#rowsBySource.get(scope.plan.source);
     if (rows === undefined) return;
     const removed: string[] = [];
@@ -423,7 +436,7 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
       this.forgetRow(scope.plan.source, id);
       removed.push(id);
     }
-    this.#query!.remove(scope.plan.source, removed);
+    await this.#query!.remove(scope.plan.source, removed);
   }
 
   private async releaseSnapshot(): Promise<void> {
@@ -431,6 +444,27 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
     if (snapshot === undefined) return;
     this.#snapshot = undefined;
     await snapshot.close();
+  }
+
+  private dataflowSpill(): DataflowSpillOptions | undefined {
+    if (this.spillOptions === undefined) return undefined;
+    return {
+      memoryBytes: this.spillOptions.memoryBytes ?? 8 * 1024 * 1024,
+      session: () => {
+        this.#spillSession ??= this.spillOptions!.store.createSession({
+          owner: "subscription",
+        });
+        return this.#spillSession;
+      },
+    };
+  }
+
+  private async releaseResources(): Promise<void> {
+    await Promise.allSettled([this.ready, this.#applyQueue]);
+    await this.releaseSnapshot();
+    if (this.#spillSession !== undefined) {
+      await (await this.#spillSession).close();
+    }
   }
 
   private accountRow(source: QuerySource, id: string, row: StoredRow): void {

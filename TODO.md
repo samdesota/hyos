@@ -5,8 +5,8 @@
 - [x] Remove global table hydration from the database runtime.
 - [x] Bootstrap subscriptions from targeted snapshots and durable change streams.
 - [x] Add a shared, byte-budgeted memory manager.
-- [ ] Implement spillable sort and join operators.
-- [ ] Implement spillable differential dataflow arrangements.
+- [x] Implement spillable sort and join operators.
+- [x] Implement spillable differential dataflow arrangements.
 - [ ] Add snapshot pinning and garbage collection.
 - [ ] Add safe append-only storage compaction.
 - [ ] Add crash, corruption, and fault-injection testing.

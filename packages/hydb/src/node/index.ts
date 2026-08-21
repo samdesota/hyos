@@ -9,3 +9,4 @@ export { ByteLruCache } from "./page-cache.js";
 export type { PageCacheStats } from "./page-cache.js";
 export { encodeOrderedKey, keyPrefixUpperBound } from "./codec.js";
 export { NodeStorageDatabase, openNodeStorage } from "./node-storage.js";
+export { nodeSpillStore } from "./spill-store.js";

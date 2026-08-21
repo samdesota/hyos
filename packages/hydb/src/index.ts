@@ -11,6 +11,17 @@ export {
   type MemoryHandle,
   type MemoryStats,
 } from "./memory.js";
+export {
+  SpillCorruptionError,
+  SpillLimitExceededError,
+  memorySpillStore,
+  type SpillRun,
+  type SpillRunKind,
+  type SpillSession,
+  type SpillStats,
+  type SpillStore,
+  type SpillOptions,
+} from "./spill.js";
 
 export {
   boolean,
@@ -31,6 +42,7 @@ export { type InferQueryResult, type Query } from "./query.js";
 export {
   planQuery,
   type PhysicalAccess,
+  type PhysicalJoin,
   type PhysicalQueryPlan,
   type PlannedSelection,
   type PlannedSelectionValue,
