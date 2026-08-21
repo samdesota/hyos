@@ -1,0 +1,22 @@
+{
+  "name": "@hyos/hydb-project-management-example",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hyos/hydb": "0.0.0",
+    "lucide-solid": "^1.32.0",
+    "solid-js": "^1.9.15",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1",
+    "vite-plugin-solid": "^2.11.14"
+  }
+}
