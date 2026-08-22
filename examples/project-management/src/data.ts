@@ -109,12 +109,11 @@ export const teamQuery = hydb
   .orderBy((user) => user.name.asc())
   .many();
 
-export const readRegistry = Object.freeze({
+export const readRegistry = hyapp.gatewayReadRegistry({
   projectBoard: projectBoardQuery,
   team: teamQuery,
 });
 
-export type ReadName = keyof typeof readRegistry;
 export type ProjectBoard = InferQueryResult<typeof projectBoardQuery>;
 export type ProjectView = ProjectBoard[number];
 export type TaskView = ProjectView["tasks"][number];

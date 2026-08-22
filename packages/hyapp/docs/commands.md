@@ -538,10 +538,12 @@ The client also parses command input before sending and validates the transport
 result with the command's output schema. `fetch` and `subscribe` preserve the
 query's inferred result type.
 
-Every command request includes a client-generated invocation ID. HTTP and
-WebSocket adapters implement the `GatewayClientTransport` interface; the
-included `directGatewayTransport` connects a client to an in-process,
-principal-bound gateway session for tests and backend composition.
+Every command request includes a client-generated invocation ID. The included
+HTTP adapter implements `GatewayClientTransport` using named reads, streaming
+NDJSON subscriptions, and the shared wire codec. A future WebSocket adapter can
+implement the same interface. The included `directGatewayTransport` connects a
+client to an in-process, principal-bound gateway session for tests and backend
+composition.
 
 An optional `OptimisticCoordinator` owns optimistic layers. For a command with
 an optimistic method, the gateway client:

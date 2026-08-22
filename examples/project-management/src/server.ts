@@ -1,15 +1,12 @@
-import {
-  createServer,
-  type IncomingMessage,
-  type ServerResponse,
-} from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { readFile, rm, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
 
-import { AuthorizationError, hydb } from "@hyos/hydb";
+import { hydb } from "@hyos/hydb";
 import { openNodeStorage } from "@hyos/hydb/node";
-import { hyapp, type GatewaySession } from "@hyos/hyapp";
-import { ZodError } from "zod";
+import { hyapp } from "@hyos/hyapp";
+import { GatewayHttpError } from "@hyos/hyapp/http";
+import { createNodeGatewayHttpHandler } from "@hyos/hyapp/node";
 
 import {
   commandRegistry,
@@ -17,12 +14,11 @@ import {
   principalSchema,
   readPolicies,
   readRegistry,
-  type ReadName,
 } from "./data.js";
-import { demoUsers, seedStorage } from "./seed.js";
-import { parseWire, stringifyWire } from "./wire.js";
+import { demoPeople } from "./demo-people.js";
+import { seedStorage } from "./seed.js";
 
-const knownUsers = new Set<string>(demoUsers.map((user) => user.id));
+const knownUsers = new Set<string>(demoPeople.map((user) => user.id));
 const contentTypes: Readonly<Record<string, string>> = Object.freeze({
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -31,42 +27,12 @@ const contentTypes: Readonly<Record<string, string>> = Object.freeze({
   ".svg": "image/svg+xml",
 });
 
-type AppSession = GatewaySession<typeof commandRegistry>;
-
 function sendJson(response: ServerResponse, status: number, value: unknown) {
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
   });
-  response.end(stringifyWire(value));
-}
-
-async function readBody(request: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += buffer.byteLength;
-    if (size > 64 * 1024) throw new TypeError("Request body is too large");
-    chunks.push(buffer);
-  }
-  return parseWire(Buffer.concat(chunks).toString("utf8"));
-}
-
-function sessionFor(
-  request: IncomingMessage,
-  gateway: ReturnType<typeof hyapp.gateway>,
-): AppSession {
-  const userId = request.headers["x-demo-user-id"];
-  if (typeof userId !== "string" || !knownUsers.has(userId)) {
-    throw new AuthorizationError("Choose a valid demo user");
-  }
-  return gateway.forPrincipal({ userId }) as AppSession;
-}
-
-function readName(pathname: string, prefix: string): ReadName | undefined {
-  const value = decodeURIComponent(pathname.slice(prefix.length));
-  return Object.hasOwn(readRegistry, value) ? (value as ReadName) : undefined;
+  response.end(JSON.stringify(value));
 }
 
 async function serveStatic(
@@ -101,22 +67,6 @@ async function serveStatic(
   }
 }
 
-function errorResponse(response: ServerResponse, error: unknown): void {
-  if (error instanceof AuthorizationError) {
-    sendJson(response, 403, { error: error.message });
-    return;
-  }
-  if (error instanceof ZodError || error instanceof TypeError) {
-    sendJson(response, 400, {
-      error:
-        error instanceof ZodError ? "Request validation failed" : error.message,
-    });
-    return;
-  }
-  console.error(error);
-  sendJson(response, 500, { error: "Internal server error" });
-}
-
 export async function startProjectManagementServer(options?: {
   host?: string;
   port?: number;
@@ -142,84 +92,42 @@ export async function startProjectManagementServer(options?: {
     registry: commandRegistry,
     readPolicies,
   });
+  const handleGateway = createNodeGatewayHttpHandler({
+    gateway,
+    reads: readRegistry,
+    basePath: "/api",
+    principal(request) {
+      const userId = request.headers["x-demo-user-id"];
+      if (typeof userId !== "string" || !knownUsers.has(userId)) {
+        throw new GatewayHttpError(401, "Choose a valid demo user");
+      }
+      return { userId };
+    },
+    onError(error) {
+      console.error(error);
+    },
+  });
 
   const server = createServer(async (request, response) => {
-    try {
-      const url = new URL(
-        request.url ?? "/",
-        `http://${request.headers.host ?? host}`,
-      );
-      const pathname = url.pathname;
+    const url = new URL(
+      request.url ?? "/",
+      `http://${request.headers.host ?? host}`,
+    );
+    const pathname = url.pathname;
 
-      if (request.method === "GET" && pathname === "/api/health") {
-        sendJson(response, 200, { status: "ok" });
-        return;
-      }
-
-      if (request.method === "GET" && pathname.startsWith("/api/reads/")) {
-        const name = readName(pathname, "/api/reads/");
-        if (name === undefined) {
-          sendJson(response, 404, { error: "Unknown read" });
-          return;
-        }
-        const result = await sessionFor(request, gateway).fetch(
-          readRegistry[name],
-        );
-        sendJson(response, 200, result);
-        return;
-      }
-
-      if (
-        request.method === "GET" &&
-        pathname.startsWith("/api/subscriptions/")
-      ) {
-        const name = readName(pathname, "/api/subscriptions/");
-        if (name === undefined) {
-          sendJson(response, 404, { error: "Unknown read" });
-          return;
-        }
-        const session = sessionFor(request, gateway);
-        response.writeHead(200, {
-          "content-type": "application/x-ndjson; charset=utf-8",
-          "cache-control": "no-store",
-          connection: "keep-alive",
-        });
-        const unsubscribe = session.subscribe(readRegistry[name], (result) => {
-          response.write(`${stringifyWire(result)}\n`);
-        });
-        request.once("close", unsubscribe);
-        return;
-      }
-
-      if (request.method === "POST" && pathname.startsWith("/api/commands/")) {
-        const name = decodeURIComponent(
-          pathname.slice("/api/commands/".length),
-        );
-        if (!Object.hasOwn(commandRegistry, name)) {
-          sendJson(response, 404, { error: "Unknown command" });
-          return;
-        }
-        const requestBody = (await readBody(request)) as { input?: unknown };
-        const result = await sessionFor(request, gateway).execute(
-          name as keyof typeof commandRegistry,
-          requestBody.input as never,
-        );
-        sendJson(response, 200, { result });
-        return;
-      }
-
-      if (
-        request.method === "GET" &&
-        options?.staticDirectory !== undefined &&
-        (await serveStatic(pathname, response, options.staticDirectory))
-      ) {
-        return;
-      }
-
-      sendJson(response, 404, { error: "Not found" });
-    } catch (error) {
-      errorResponse(response, error);
+    if (request.method === "GET" && pathname === "/api/health") {
+      sendJson(response, 200, { status: "ok" });
+      return;
     }
+    if (await handleGateway(request, response)) return;
+    if (
+      request.method === "GET" &&
+      options?.staticDirectory !== undefined &&
+      (await serveStatic(pathname, response, options.staticDirectory))
+    ) {
+      return;
+    }
+    sendJson(response, 404, { error: "Not found" });
   });
 
   await new Promise<void>((resolveListen, rejectListen) => {
