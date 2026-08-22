@@ -4,14 +4,24 @@ import { planQuery } from "./planner.js";
 import { SubscriptionRuntime } from "./subscription.js";
 import {
   invokeCommand,
+  invokeTransaction,
   type Command,
   type InferCommandInput,
   type InferCommandResult,
+  type Transaction,
 } from "./command.js";
 import { type AnySchema } from "./schema.js";
 import { type CommitBatch, type StorageDatabase } from "./storage.js";
 import { MemoryManager, type MemoryStats } from "./memory.js";
 import type { SpillOptions } from "./spill.js";
+import type { output as ZodOutput, ZodType } from "zod";
+import {
+  createWritePolicyEnforcer,
+  type WritePolicy,
+  type WritePolicyEnforcer,
+} from "./write-policy.js";
+
+const databaseSchemas = new WeakMap<Database, AnySchema>();
 
 export interface Database {
   fetch<QueryValue extends Query<any>>(
@@ -27,6 +37,15 @@ export interface Database {
     command: CommandValue,
     input: InferCommandInput<CommandValue>,
   ): Promise<InferCommandResult<CommandValue>>;
+
+  transact<PrincipalSchema extends ZodType, Result>(
+    options: Readonly<{
+      principalSchema: PrincipalSchema;
+      principal: ZodOutput<PrincipalSchema>;
+      defaultPolicy: readonly WritePolicy<ZodOutput<PrincipalSchema>>[];
+    }>,
+    execute: (transaction: Transaction) => Result | PromiseLike<Result>,
+  ): Promise<Awaited<Result>>;
 
   memoryStats(): MemoryStats;
 
@@ -131,6 +150,57 @@ class QueryDatabase implements Database {
       () => undefined,
     );
     return execution;
+  }
+
+  transact<PrincipalSchema extends ZodType, Result>(
+    options: Readonly<{
+      principalSchema: PrincipalSchema;
+      principal: ZodOutput<PrincipalSchema>;
+      defaultPolicy: readonly WritePolicy<ZodOutput<PrincipalSchema>>[];
+    }>,
+    execute: (transaction: Transaction) => Result | PromiseLike<Result>,
+  ): Promise<Awaited<Result>> {
+    const enforcer = createWritePolicyEnforcer(
+      this.schema,
+      options.principalSchema,
+      options.defaultPolicy,
+    );
+    const execution = this.#commandQueue.then(async () => {
+      const snapshot = await this.storage.snapshot();
+      try {
+        const principal = await options.principalSchema.parseAsync(
+          options.principal,
+        );
+        const invocation = await invokeTransaction(
+          execute,
+          this.schema,
+          snapshot,
+          this.memory,
+          {
+            principal,
+            enforcer: enforcer as WritePolicyEnforcer<unknown>,
+          },
+        );
+        try {
+          if (invocation.mutations.length === 0) return invocation.result;
+          const commit = await this.storage.commit({
+            expectedHead: snapshot.commit,
+            mutations: invocation.mutations,
+          });
+          await this.waitForSequence(commit.sequence);
+          return invocation.result;
+        } finally {
+          invocation.releaseMemory();
+        }
+      } finally {
+        await snapshot.close();
+      }
+    });
+    this.#commandQueue = execution.then(
+      () => undefined,
+      () => undefined,
+    );
+    return execution as Promise<Awaited<Result>>;
   }
 
   start(after: number): void {
@@ -241,6 +311,15 @@ export async function database(options: {
     options.spill,
     sequence,
   );
+  databaseSchemas.set(queryDatabase, options.schema);
   queryDatabase.start(sequence);
   return queryDatabase;
+}
+
+export function getDatabaseSchema(database: Database): AnySchema {
+  const schema = databaseSchemas.get(database);
+  if (schema === undefined) {
+    throw new TypeError("Gateway requires a database created by hydb.database");
+  }
+  return schema;
 }

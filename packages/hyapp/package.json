@@ -1,0 +1,39 @@
+{
+  "name": "@hyos/hyapp",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./compiler": {
+      "types": "./dist/src/compiler.d.ts",
+      "import": "./dist/src/compiler.js"
+    },
+    "./esbuild": {
+      "types": "./dist/src/esbuild.d.ts",
+      "import": "./dist/src/esbuild.js"
+    }
+  },
+  "scripts": {
+    "build": "npm run build:hydb && tsc",
+    "build:hydb": "npm run build --workspace @hyos/hydb",
+    "test": "npm run build:hydb && tsc --noEmit && tsc && node --test dist/test/*.test.js",
+    "typecheck": "npm run build:hydb && tsc --noEmit"
+  },
+  "dependencies": {
+    "@hyos/hydb": "0.0.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@babel/generator": "^8.0.0",
+    "@babel/parser": "^8.0.4",
+    "@babel/traverse": "^8.0.4",
+    "@babel/types": "^8.0.4",
+    "@types/node": "^24.13.3",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}

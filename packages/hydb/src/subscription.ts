@@ -74,6 +74,9 @@ function collectPlans(
   plans: PhysicalQueryPlan[] = [],
 ): readonly PhysicalQueryPlan[] {
   plans.push(plan);
+  if (plan.authorization !== undefined) {
+    collectPlans(plan.authorization.parent, plans);
+  }
   if (plan.selection !== undefined) {
     for (const value of Object.values(plan.selection)) {
       if (value.kind === "query") collectPlans(value.plan, plans);

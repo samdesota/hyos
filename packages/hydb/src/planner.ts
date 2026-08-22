@@ -52,7 +52,15 @@ export type PhysicalQueryPlan = Readonly<{
   limit?: number;
   cardinality: NonNullable<QueryPlan["cardinality"]>;
   join?: PhysicalJoin;
+  authorization?: PhysicalAuthorization;
   selection?: PlannedSelection;
+}>;
+
+export type PhysicalAuthorization = Readonly<{
+  kind: "through";
+  parent: PhysicalQueryPlan;
+  childColumn: string;
+  parentColumn: string;
 }>;
 
 export type PhysicalJoin =
@@ -307,6 +315,7 @@ function planNode(schema: AnySchema, logical: QueryPlan): PhysicalQueryPlan {
         table,
         reverse: tableOrder.covered && tableOrder.reverse,
         ...(scanLimit !== undefined &&
+        logical.authorization === undefined &&
         filters.length === 0 &&
         tableOrder.covered
           ? { limit: scanLimit }
@@ -325,6 +334,7 @@ function planNode(schema: AnySchema, logical: QueryPlan): PhysicalQueryPlan {
         key: Object.freeze(candidate.equalities.map(({ value }) => value)),
         reverse: candidate.reverse,
         ...(scanLimit !== undefined &&
+        logical.authorization === undefined &&
         residualFilters.length === 0 &&
         orderCovered
           ? { limit: scanLimit }
@@ -347,6 +357,16 @@ function planNode(schema: AnySchema, logical: QueryPlan): PhysicalQueryPlan {
           })
         : Object.freeze({ kind: "indexed-loop" as const });
 
+  const authorization: PhysicalAuthorization | undefined =
+    logical.authorization === undefined
+      ? undefined
+      : Object.freeze({
+          kind: "through" as const,
+          parent: planNode(schema, logical.authorization.parent),
+          childColumn: logical.authorization.childColumn,
+          parentColumn: logical.authorization.parentColumn,
+        });
+
   return Object.freeze({
     source: logical.source,
     access,
@@ -355,6 +375,7 @@ function planNode(schema: AnySchema, logical: QueryPlan): PhysicalQueryPlan {
     ...(logical.limit === undefined ? {} : { limit: logical.limit }),
     cardinality,
     ...(join === undefined ? {} : { join }),
+    ...(authorization === undefined ? {} : { authorization }),
     ...(logical.selection === undefined
       ? {}
       : {

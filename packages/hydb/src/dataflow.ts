@@ -866,6 +866,10 @@ function correlation(
 }
 
 type SourceRows = ReadonlyMap<QuerySource, ReadonlyMap<string, Row>>;
+type CompiledMatches = Readonly<{
+  matches: Stream<MatchRecord>;
+  groups: Stream<GroupRecord>;
+}>;
 
 class QueryCompiler {
   readonly #inputs = new Map<QuerySource, InputOperator>();
@@ -935,6 +939,59 @@ class QueryCompiler {
     node: QueryNode,
     parents?: Stream<MatchRecord>,
   ): Stream<MaterializedRecord> {
+    const { matches, groups } = this.compileMatches(node, parents);
+
+    if (node.cardinality === "count" || node.cardinality === "exists") {
+      return new ReduceOperator(matches, groups, node.cardinality, this.memory)
+        .output;
+    }
+
+    let projected: Stream<ProjectedRecord> = new MapOperator(
+      matches,
+      (_id, match): ProjectedRecord => {
+        if (node.selection === undefined) {
+          return {
+            group: match.group,
+            match,
+            value: structuredClone(match.row),
+          };
+        }
+        return {
+          group: match.group,
+          match,
+          value: Object.fromEntries(
+            Object.entries(node.selection)
+              .filter(([, value]) => !isQueryNode(value))
+              .map(([name, value]) => [
+                name,
+                structuredClone(
+                  evaluateExpressionNode(
+                    value as ExpressionNode,
+                    match.context,
+                  ),
+                ),
+              ]),
+          ),
+        };
+      },
+    ).output;
+
+    if (node.selection !== undefined) {
+      for (const [name, selection] of Object.entries(node.selection)) {
+        if (!isQueryNode(selection)) continue;
+        const nested = this.compileNode(selection, matches);
+        projected = new NestOperator(projected, nested, name, this.memory)
+          .output;
+      }
+    }
+
+    return new CardinalityOperator(projected, groups, node, this.memory).output;
+  }
+
+  private compileMatches(
+    node: QueryNode,
+    parents?: Stream<MatchRecord>,
+  ): CompiledMatches {
     const source = this.input(node.source).output;
     let matches: Stream<MatchRecord>;
     let groups: Stream<GroupRecord>;
@@ -1010,6 +1067,37 @@ class QueryCompiler {
       })).output;
     }
 
+    if (node.authorization !== undefined) {
+      const authorizedParents = this.compileMatches(
+        node.authorization.parent,
+      ).matches;
+      const childKey = (match: MatchRecord) =>
+        arrangementKey(match.row[node.authorization!.childColumn]);
+      const parentKey = (match: MatchRecord) =>
+        arrangementKey(match.row[node.authorization!.parentColumn]);
+      const children = new ArrangeOperator(
+        matches,
+        childKey,
+        this.memory,
+        this.spill,
+        this.#sourceList,
+      );
+      const allowed = new ArrangeOperator(
+        authorizedParents,
+        parentKey,
+        this.memory,
+        this.spill,
+        this.#sourceList,
+      );
+      matches = new JoinOperator<MatchRecord, MatchRecord, MatchRecord>(
+        children,
+        allowed,
+        (childId, child) => ({ id: childId, value: child }),
+        childKey,
+        parentKey,
+      ).output;
+    }
+
     matches = new FilterOperator(matches, (match) =>
       node.filters.every((filter) =>
         Boolean(evaluateExpressionNode(filter, match.context)),
@@ -1022,52 +1110,7 @@ class QueryCompiler {
       this.spill,
       this.#sourceList,
     ).output;
-
-    if (node.cardinality === "count" || node.cardinality === "exists") {
-      return new ReduceOperator(matches, groups, node.cardinality, this.memory)
-        .output;
-    }
-
-    let projected: Stream<ProjectedRecord> = new MapOperator(
-      matches,
-      (_id, match): ProjectedRecord => {
-        if (node.selection === undefined) {
-          return {
-            group: match.group,
-            match,
-            value: structuredClone(match.row),
-          };
-        }
-        return {
-          group: match.group,
-          match,
-          value: Object.fromEntries(
-            Object.entries(node.selection)
-              .filter(([, value]) => !isQueryNode(value))
-              .map(([name, value]) => [
-                name,
-                structuredClone(
-                  evaluateExpressionNode(
-                    value as ExpressionNode,
-                    match.context,
-                  ),
-                ),
-              ]),
-          ),
-        };
-      },
-    ).output;
-
-    if (node.selection !== undefined) {
-      for (const [name, selection] of Object.entries(node.selection)) {
-        if (!isQueryNode(selection)) continue;
-        const nested = this.compileNode(selection, matches);
-        projected = new NestOperator(projected, nested, name, this.memory)
-          .output;
-      }
-    }
-
-    return new CardinalityOperator(projected, groups, node, this.memory).output;
+    return { matches, groups };
   }
 }
 
