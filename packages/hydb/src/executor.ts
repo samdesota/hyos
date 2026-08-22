@@ -62,6 +62,10 @@ class QuerySpill {
     PhysicalQueryPlan,
     Promise<SpillableHashIndex<StoredRow>>
   >();
+  readonly #authorizationKeys = new Map<
+    PhysicalQueryPlan,
+    Promise<ReadonlySet<string>>
+  >();
 
   constructor(readonly options?: SpillOptions) {}
 
@@ -80,6 +84,7 @@ class QuerySpill {
 
   async close(): Promise<void> {
     this.#hashIndexes.clear();
+    this.#authorizationKeys.clear();
     if (this.#session !== undefined) await (await this.#session).close();
   }
 
@@ -94,6 +99,18 @@ class QuerySpill {
     }
     return index;
   }
+
+  authorizationKeys(
+    plan: PhysicalQueryPlan,
+    create: () => Promise<ReadonlySet<string>>,
+  ): Promise<ReadonlySet<string>> {
+    let keys = this.#authorizationKeys.get(plan);
+    if (keys === undefined) {
+      keys = create();
+      this.#authorizationKeys.set(plan, keys);
+    }
+    return keys;
+  }
 }
 
 type SourceRegistry = Readonly<{
@@ -105,6 +122,9 @@ function sourceRegistry(plan: PhysicalQueryPlan): SourceRegistry {
   const sources: QuerySource[] = [];
   const visit = (current: PhysicalQueryPlan): void => {
     sources.push(current.source);
+    if (current.authorization !== undefined) {
+      visit(current.authorization.parent);
+    }
     if (current.selection === undefined) return;
     for (const value of Object.values(current.selection)) {
       if (value.kind === "query") visit(value.plan);
@@ -228,6 +248,29 @@ async function executeNode(
   inputRows?: AsyncIterable<StoredRow>,
 ): Promise<unknown> {
   const matches: Match[] = [];
+  const authorizationKeys =
+    plan.authorization === undefined
+      ? undefined
+      : await spill.authorizationKeys(plan.authorization.parent, async () => {
+          const result = await executeNode(
+            plan.authorization!.parent,
+            snapshot,
+            new Map(),
+            memory,
+            spill,
+            registry,
+          );
+          if (!Array.isArray(result)) {
+            throw new TypeError("Read-policy parent query must return rows");
+          }
+          return new Set(
+            result.map((row) =>
+              encodeStorageKey([
+                (row as StoredRow)[plan.authorization!.parentColumn],
+              ]),
+            ),
+          );
+        });
   const sorter =
     plan.order.length > 0 && spill.options !== undefined
       ? new SpillableSorter<Match>(
@@ -241,6 +284,14 @@ async function executeNode(
   for await (const row of inputRows ??
     scanRows(plan, snapshot, parentContext)) {
     memory.add(row, 48);
+    if (
+      authorizationKeys !== undefined &&
+      !authorizationKeys.has(
+        encodeStorageKey([row[plan.authorization!.childColumn]]),
+      )
+    ) {
+      continue;
+    }
     const context = new Map(parentContext);
     context.set(plan.source, row);
     if (

@@ -21,6 +21,12 @@ import {
   type MemoryHandle,
   type MemoryManager,
 } from "./memory.js";
+import {
+  AuthorizationError,
+  type TransactionReader,
+  type WriteChange,
+  type WritePolicyEnforcer,
+} from "./write-policy.js";
 
 const commandDefinition = Symbol("hydb.command");
 const missingRow = Symbol("hydb.missing-row");
@@ -48,6 +54,13 @@ export interface Transaction {
     table: TableValue,
     key: StorageKey,
   ): Promise<void>;
+
+  withAdminPolicy<Result>(
+    execute: (context: {
+      db: TransactionReader;
+      assert(authorized: boolean, message: string): void;
+    }) => Result | PromiseLike<Result>,
+  ): Promise<Result>;
 }
 
 export type Command<Input, Result, ParsedInput = Input> = Readonly<{
@@ -102,11 +115,16 @@ class CommandTransaction implements Transaction {
   readonly #memory?: MemoryHandle;
   readonly #memoryEntries = new Map<string, number>();
   #memoryBytes = 0;
+  readonly #adminScopes: Array<{ asserted: boolean }> = [];
 
   constructor(
     private readonly schema: AnySchema,
     private readonly snapshot: StorageSnapshot,
     memory?: MemoryManager,
+    private readonly authorization?: Readonly<{
+      principal: unknown;
+      enforcer: WritePolicyEnforcer<unknown>;
+    }>,
   ) {
     this.#memory = memory?.track({ owner: "transactions", priority: 50 });
   }
@@ -154,6 +172,7 @@ class CommandTransaction implements Transaction {
         `Duplicate primary key for table ${tableName(table)}`,
       );
     }
+    await this.authorize(table, { kind: "insert", after: row });
     this.setOverlay(table, key, row);
     this.#mutations.push(storageMutation.insert(table, row));
     this.accountMutation();
@@ -178,6 +197,11 @@ class CommandTransaction implements Transaction {
         `Primary keys cannot be updated for table ${tableName(table)}`,
       );
     }
+    await this.authorize(table, {
+      kind: "update",
+      before: current,
+      after: row as InferRow<TableValue>,
+    });
     this.setOverlay(table, key, row);
     this.#mutations.push(
       storageMutation.update(table, key, row as InferRow<TableValue>),
@@ -192,14 +216,53 @@ class CommandTransaction implements Transaction {
   ): Promise<void> {
     this.assertActive();
     this.assertTable(table);
-    if ((await this.get(table, key)) === undefined) {
+    const current = await this.get(table, key);
+    if (current === undefined) {
       throw new TypeError(`Missing row for table ${tableName(table)}`);
     }
+    await this.authorize(table, { kind: "delete", before: current });
     const encodedKey = encodeStorageKey(key);
     this.overlay(table).set(encodedKey, deletedRow);
     this.account(`write:${tableName(table)}:${encodedKey}`, deletedRow);
     this.#mutations.push(storageMutation.delete(table, key));
     this.accountMutation();
+  }
+
+  async withAdminPolicy<Result>(
+    execute: (context: {
+      db: TransactionReader;
+      assert(authorized: boolean, message: string): void;
+    }) => Result | PromiseLike<Result>,
+  ): Promise<Result> {
+    this.assertActive();
+    const scope = { asserted: false };
+    this.#adminScopes.push(scope);
+    const assertAuthorization = (authorized: boolean, message: string) => {
+      if (typeof message !== "string" || message.trim().length === 0) {
+        throw new TypeError(
+          "Authorization assertions require a meaningful error message",
+        );
+      }
+      if (authorized !== true) throw new AuthorizationError(message);
+      scope.asserted = true;
+    };
+    try {
+      const result = await execute({
+        db: Object.freeze({ get: this.get.bind(this) }),
+        assert: assertAuthorization,
+      });
+      if (!scope.asserted) {
+        throw new TypeError(
+          "withAdminPolicy requires at least one successful authorization assertion",
+        );
+      }
+      return result;
+    } finally {
+      const popped = this.#adminScopes.pop();
+      if (popped !== scope) {
+        throw new Error("Admin policy scopes completed out of order");
+      }
+    }
   }
 
   finish(): readonly StorageMutation[] {
@@ -246,6 +309,28 @@ class CommandTransaction implements Transaction {
   private accountMutation(): void {
     const index = this.#mutations.length - 1;
     this.account(`mutation:${index}`, this.#mutations[index]);
+  }
+
+  private async authorize<TableValue extends AnyTable>(
+    table: TableValue,
+    change: WriteChange<InferRow<TableValue>>,
+  ): Promise<void> {
+    const admin = this.#adminScopes.at(-1);
+    if (admin !== undefined) {
+      if (!admin.asserted) {
+        throw new AuthorizationError(
+          "Admin policy must be asserted before performing a mutation",
+        );
+      }
+      return;
+    }
+    if (this.authorization === undefined) return;
+    await this.authorization.enforcer.authorize(
+      table,
+      change as WriteChange<Readonly<Record<string, unknown>>>,
+      this.authorization.principal,
+      this,
+    );
   }
 
   private assertActive(): void {
@@ -331,6 +416,41 @@ export async function invokeCommand<Input, Result, ParsedInput>(
       transaction,
       parsedInput,
     );
+    return Object.freeze({
+      result,
+      mutations: transaction.finish(),
+      releaseMemory: () => transaction.releaseMemory(),
+    });
+  } catch (error) {
+    transaction.abort();
+    throw error;
+  }
+}
+
+export async function invokeTransaction<Result>(
+  handler: (transaction: Transaction) => Result | PromiseLike<Result>,
+  schema: AnySchema,
+  snapshot: StorageSnapshot,
+  memory?: MemoryManager,
+  authorization?: Readonly<{
+    principal: unknown;
+    enforcer: WritePolicyEnforcer<unknown>;
+  }>,
+): Promise<
+  Readonly<{
+    result: Awaited<Result>;
+    mutations: readonly StorageMutation[];
+    releaseMemory: () => void;
+  }>
+> {
+  const transaction = new CommandTransaction(
+    schema,
+    snapshot,
+    memory,
+    authorization,
+  );
+  try {
+    const result = await handler(transaction);
     return Object.freeze({
       result,
       mutations: transaction.finish(),

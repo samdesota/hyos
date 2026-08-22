@@ -28,17 +28,11 @@ import {
   onMount,
   type JSX,
 } from "solid-js";
-import type { Database as HyDatabase } from "@hyos/hydb";
+import { gatewayClient, type GatewayClient } from "@hyos/hyapp";
 
 import {
-  assignTask,
-  createDemoDatabase,
-  createProject,
-  createTask,
-  deleteTask,
-  moveTask,
+  commandRegistry,
   projectBoardQuery,
-  rebalanceSprint,
   taskStatuses,
   teamQuery,
   type ProjectBoard,
@@ -47,6 +41,7 @@ import {
   type TaskView,
   type Team,
 } from "./data.js";
+import { browserGatewayTransport } from "./browser-transport.js";
 
 type ActivityEntry = Readonly<{
   id: number;
@@ -66,9 +61,11 @@ const statusDetails: Record<
 };
 
 const priorityLabels = ["", "Low", "Normal", "High", "Urgent"];
+const projectColors = ["#6c5ce7", "#e17055", "#00a884", "#2d7ff9"];
+type AppGatewayClient = GatewayClient<typeof commandRegistry>;
 
 export function App() {
-  const [database, setDatabase] = createSignal<HyDatabase>();
+  const [principalId, setPrincipalId] = createSignal("user-maya");
   const [projectList, setProjectList] = createSignal<ProjectBoard>([]);
   const [team, setTeam] = createSignal<Team>([]);
   const [selectedProjectId, setSelectedProjectId] =
@@ -85,6 +82,17 @@ export function App() {
   let unsubscribeProjects: (() => void) | undefined;
   let unsubscribeTeam: (() => void) | undefined;
   let disposed = false;
+  let connection = 0;
+
+  const client = gatewayClient({
+    registry: commandRegistry,
+    transport: browserGatewayTransport({
+      principalId,
+      onSubscriptionError(cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      },
+    }),
+  });
 
   const activeProject = createMemo<ProjectView | undefined>(() => {
     const projects = projectList();
@@ -131,15 +139,23 @@ export function App() {
     );
   }
 
-  onMount(() => {
-    void (async () => {
-      const db = await createDemoDatabase();
-      if (disposed) {
-        await db.close();
-        return;
-      }
-      setDatabase(db);
-      unsubscribeProjects = db.subscribe(projectBoardQuery, (projects) => {
+  async function connect(): Promise<void> {
+    const currentConnection = ++connection;
+    unsubscribeProjects?.();
+    unsubscribeTeam?.();
+    setLoading(true);
+    setError(undefined);
+    try {
+      const [initialProjects, initialTeam] = await Promise.all([
+        client.fetch(projectBoardQuery),
+        client.fetch(teamQuery),
+      ]);
+      if (disposed || currentConnection !== connection) return;
+      setProjectList(initialProjects);
+      setTeam(initialTeam);
+      setSelectedProjectId(initialProjects[0]?.id ?? "");
+      unsubscribeProjects = client.subscribe(projectBoardQuery, (projects) => {
+        if (currentConnection !== connection) return;
         setProjectList(projects);
         setMaterializationCount((count) => count + 1);
         appendActivity({
@@ -151,33 +167,45 @@ export function App() {
           )} nested tasks`,
         });
       });
-      unsubscribeTeam = db.subscribe(teamQuery, setTeam);
+      unsubscribeTeam = client.subscribe(teamQuery, (members) => {
+        if (currentConnection === connection) setTeam(members);
+      });
       setLoading(false);
-    })().catch((cause: unknown) => {
+    } catch (cause: unknown) {
+      if (currentConnection !== connection) return;
       setError(cause instanceof Error ? cause.message : String(cause));
       setLoading(false);
-    });
+    }
+  }
+
+  onMount(() => {
+    void connect();
   });
 
   onCleanup(() => {
     disposed = true;
+    connection += 1;
     unsubscribeProjects?.();
     unsubscribeTeam?.();
-    const db = database();
-    if (db !== undefined) void db.close();
   });
+
+  function changePrincipal(userId: string) {
+    if (userId === principalId()) return;
+    setPrincipalId(userId);
+    setActivities([]);
+    void connect();
+  }
 
   async function runCommand(
     label: string,
-    action: (db: HyDatabase) => Promise<unknown>,
+    action: (gateway: AppGatewayClient) => Promise<unknown>,
   ): Promise<boolean> {
-    const db = database();
-    if (db === undefined || runningCommand() !== undefined) return false;
+    if (runningCommand() !== undefined) return false;
     setError(undefined);
     setRunningCommand(label);
     const startedAt = performance.now();
     try {
-      await action(db);
+      await action(client);
       appendActivity({
         kind: "command",
         title: label,
@@ -196,19 +224,21 @@ export function App() {
   }
 
   async function changeTaskStatus(taskId: string, status: TaskStatus) {
-    await runCommand(`Move task to ${statusDetails[status].label}`, (db) =>
-      db.execute(moveTask, { taskId, status }),
+    await runCommand(`Move task to ${statusDetails[status].label}`, (gateway) =>
+      gateway.execute("moveTask", { taskId, status }),
     );
   }
 
   async function changeAssignee(taskId: string, assigneeId: string | null) {
-    await runCommand("Update task owner", (db) =>
-      db.execute(assignTask, { taskId, assigneeId }),
+    await runCommand("Update task owner", (gateway) =>
+      gateway.execute("assignTask", { taskId, assigneeId }),
     );
   }
 
   async function removeTask(taskId: string) {
-    await runCommand("Delete task", (db) => db.execute(deleteTask, { taskId }));
+    await runCommand("Delete task", (gateway) =>
+      gateway.execute("deleteTask", { taskId }),
+    );
   }
 
   async function runRebalance() {
@@ -221,8 +251,9 @@ export function App() {
           (taskStatuses.indexOf(task.status) + 1 + index) % taskStatuses.length
         ]!,
     }));
-    await runCommand(`Atomic sprint rebalance (${moves.length} writes)`, (db) =>
-      db.execute(rebalanceSprint, { moves }),
+    await runCommand(
+      `Atomic sprint rebalance (${moves.length} writes)`,
+      (gateway) => gateway.execute("rebalanceSprint", { moves }),
     );
   }
 
@@ -232,14 +263,16 @@ export function App() {
     if (project === undefined) return;
     const form = event.currentTarget as HTMLFormElement;
     const values = new FormData(form);
-    const success = await runCommand("Create task", (db) =>
-      db.execute(createTask, {
+    const success = await runCommand("Create task", (gateway) =>
+      gateway.execute("createTask", {
+        id: crypto.randomUUID(),
         projectId: project.id,
         title: String(values.get("title") ?? ""),
         description: String(values.get("description") ?? ""),
         status: String(values.get("status") ?? "backlog") as TaskStatus,
         priority: Number(values.get("priority") ?? 2),
         assigneeId: String(values.get("assigneeId") ?? "") || null,
+        createdAt: new Date(),
       }),
     );
     if (success) {
@@ -253,10 +286,15 @@ export function App() {
     const form = event.currentTarget as HTMLFormElement;
     const values = new FormData(form);
     let projectId: string | undefined;
-    const success = await runCommand("Create project", async (db) => {
-      const project = await db.execute(createProject, {
-        name: String(values.get("name") ?? ""),
+    const success = await runCommand("Create project", async (gateway) => {
+      const name = String(values.get("name") ?? "");
+      const project = await gateway.execute("createProject", {
+        id: crypto.randomUUID(),
+        ownerId: principalId(),
+        name,
         description: String(values.get("description") ?? ""),
+        color: projectColors[name.length % projectColors.length]!,
+        createdAt: new Date(),
       });
       projectId = project.id;
     });
@@ -276,7 +314,7 @@ export function App() {
           </div>
           <div>
             <strong>Northstar</strong>
-            <span>HyDB prototype</span>
+            <span>HyApp workspace</span>
           </div>
         </div>
 
@@ -330,18 +368,38 @@ export function App() {
             <span class="pulse-dot" /> Live engine
             <span>online</span>
           </div>
-          <p>In-memory DDF graph</p>
+          <p>Persistent policy gateway</p>
           <div class="engine-stat">
             <Zap size={14} /> {materializationCount()} materializations
           </div>
         </div>
         <div class="profile-row">
-          <span class="avatar avatar-sam">SA</span>
+          <span
+            class="avatar"
+            style={{
+              "background-color": team().find(
+                (member) => member.id === principalId(),
+              )?.color,
+            }}
+          >
+            {team().find((member) => member.id === principalId())?.initials ??
+              "MC"}
+          </span>
           <div>
-            <strong>Sam</strong>
-            <span>Workspace owner</span>
+            <strong data-testid="current-user">
+              {team().find((member) => member.id === principalId())?.name ??
+                "Maya Chen"}
+            </strong>
+            <select
+              aria-label="Signed in user"
+              value={principalId()}
+              onChange={(event) => changePrincipal(event.currentTarget.value)}
+            >
+              <For each={team()}>
+                {(member) => <option value={member.id}>{member.name}</option>}
+              </For>
+            </select>
           </div>
-          <MoreHorizontal size={17} />
         </div>
       </aside>
 
@@ -536,8 +594,8 @@ export function App() {
                 <div class="prototype-note">
                   <Sparkles size={15} />
                   <span>
-                    <strong>Front-end only</strong> — reload to reset the
-                    in-memory database.
+                    <strong>Policy synchronized</strong> — this browser only
+                    receives rows authorized for the selected principal.
                   </span>
                 </div>
               </aside>
@@ -830,7 +888,7 @@ function LoadingState(props: { error?: string }) {
       <h2>{props.error ? "Could not start the demo" : "Starting HyDB"}</h2>
       <p>
         {props.error ??
-          "Seeding the in-memory database and compiling live queries…"}
+          "Connecting to the policy gateway and materializing live queries…"}
       </p>
     </div>
   );

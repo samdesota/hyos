@@ -3,10 +3,13 @@
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "paths": {
-      "@hyos/hydb": ["../../packages/hydb/src/index.ts"]
+      "@hyos/hyapp": ["../../packages/hyapp/src/index.ts"],
+      "@hyos/hyapp/compiler": ["../../packages/hyapp/src/compiler.ts"],
+      "@hyos/hydb": ["../../packages/hydb/src/index.ts"],
+      "@hyos/hydb/node": ["../../packages/hydb/src/node/index.ts"]
     },
-    "types": ["vite/client"],
+    "types": ["node", "vite/client"],
     "noEmit": true
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "e2e", "playwright.config.ts", "vite.config.ts"]
 }

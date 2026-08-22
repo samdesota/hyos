@@ -4,6 +4,7 @@ const expressionDefinition = Symbol("hydb.expression");
 const queryDefinition = Symbol("hydb.query");
 
 export type QuerySource = Readonly<{
+  kind: "table";
   table: string;
 }>;
 
@@ -49,6 +50,13 @@ export type SelectionNode = Readonly<
   Record<string, ExpressionNode | QueryNode>
 >;
 
+export type QueryAuthorization = Readonly<{
+  kind: "through";
+  parent: QueryNode;
+  childColumn: string;
+  parentColumn: string;
+}>;
+
 export type QueryPlan = Readonly<{
   source: QuerySource;
   filters: readonly ExpressionNode[];
@@ -56,6 +64,7 @@ export type QueryPlan = Readonly<{
   limit?: number;
   selection?: SelectionNode;
   cardinality?: "many" | "one" | "require" | "exists" | "count";
+  authorization?: QueryAuthorization;
 }>;
 
 export type QueryNode = QueryPlan;
@@ -86,7 +95,7 @@ export type FieldExpression<Data> = Expression<Data> &
     desc(): OrderExpression;
   }>;
 
-type QueryRow<TableValue extends AnyTable> = {
+export type QueryRow<TableValue extends AnyTable> = {
   readonly [Key in keyof InferRow<TableValue>]: FieldExpression<
     InferRow<TableValue>[Key]
   >;
@@ -207,7 +216,7 @@ function field<Data>(
   });
 }
 
-function queryRow<TableValue extends AnyTable>(
+export function queryRow<TableValue extends AnyTable>(
   table: TableValue,
   source: QuerySource,
 ): QueryRow<TableValue> {
@@ -222,7 +231,7 @@ function queryRow<TableValue extends AnyTable>(
   ) as QueryRow<TableValue>;
 }
 
-function queryResult<Result>(node: QueryNode): Query<Result> {
+export function queryResult<Result>(node: QueryNode): Query<Result> {
   return Object.freeze({
     [queryDefinition]: Object.freeze({ result: undefined as Result, node }),
   });
@@ -252,7 +261,11 @@ export class QueryBuilder<TableValue extends AnyTable, Result> {
   constructor(table: TableValue, node?: QueryNode) {
     this.#tableValue = table;
     const source =
-      node?.source ?? Object.freeze({ table: getTableDefinition(table).name });
+      node?.source ??
+      Object.freeze({
+        kind: "table" as const,
+        table: getTableDefinition(table).name,
+      });
     this.#row = queryRow(table, source);
     this.#node =
       node ??
@@ -347,6 +360,10 @@ export function getQueryPlan<QueryValue extends Query<any>>(
   value: QueryValue,
 ): QueryPlan {
   return value[queryDefinition].node;
+}
+
+export function getExpressionNode(value: BooleanExpression): ExpressionNode {
+  return value[expressionDefinition].node;
 }
 
 type QueryRowValue = Readonly<Record<string, unknown>>;
@@ -554,6 +571,9 @@ export function evaluateQuery<QueryValue extends Query<any>>(
 
 function collectQueryTables(node: QueryNode, tables: Set<string>): void {
   tables.add(node.source.table);
+  if (node.authorization !== undefined) {
+    collectQueryTables(node.authorization.parent, tables);
+  }
   if (node.selection === undefined) return;
   for (const value of Object.values(node.selection)) {
     if (isQueryNode(value)) collectQueryTables(value, tables);
