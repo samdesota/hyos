@@ -23,6 +23,12 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
+      "@hyos/hyapp/solid": fileURLToPath(
+        new URL("../../packages/hyapp/src/solid.ts", import.meta.url),
+      ),
+      "@hyos/hyapp/http": fileURLToPath(
+        new URL("../../packages/hyapp/src/http.ts", import.meta.url),
+      ),
       "@hyos/hyapp": fileURLToPath(
         new URL("../../packages/hyapp/src/index.ts", import.meta.url),
       ),

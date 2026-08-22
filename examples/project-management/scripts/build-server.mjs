@@ -11,6 +11,18 @@ await build({
   format: "esm",
   platform: "node",
   alias: {
+    "@hyos/hyapp/http": resolve(
+      exampleDirectory,
+      "../../packages/hyapp/src/http.ts",
+    ),
+    "@hyos/hyapp/node": resolve(
+      exampleDirectory,
+      "../../packages/hyapp/src/node/index.ts",
+    ),
+    "@hyos/hyapp/wire": resolve(
+      exampleDirectory,
+      "../../packages/hyapp/src/wire.ts",
+    ),
     "@hyos/hyapp": resolve(
       exampleDirectory,
       "../../packages/hyapp/src/index.ts",

@@ -17,6 +17,7 @@
   "dependencies": {
     "@hyos/hyapp": "0.0.0",
     "@hyos/hydb": "0.0.0",
+    "@solidjs/router": "^0.15.4",
     "lucide-solid": "^1.32.0",
     "solid-js": "^1.9.15",
     "zod": "^4.4.3"

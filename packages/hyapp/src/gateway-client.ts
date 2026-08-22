@@ -32,7 +32,11 @@ export type GatewayCommandResponse = Readonly<{
 export interface GatewayClientTransport {
   fetch(query: Query<any>): Promise<unknown>;
 
-  subscribe(query: Query<any>, listener: (result: unknown) => void): () => void;
+  subscribe(
+    query: Query<any>,
+    listener: (result: unknown) => void,
+    onError?: (error: unknown) => void,
+  ): () => void;
 
   execute(request: GatewayCommandRequest): Promise<GatewayCommandResponse>;
 }
@@ -63,6 +67,7 @@ export interface GatewayClient<Registry extends CommandRegistry> {
   subscribe<QueryValue extends Query<any>>(
     query: QueryValue,
     listener: (result: InferQueryResult<QueryValue>) => void,
+    onError?: (error: unknown) => void,
   ): () => void;
 
   execute<Name extends RegistryCommandName<Registry>>(
@@ -121,10 +126,12 @@ export function gatewayClient<const Registry extends CommandRegistry>(options: {
     subscribe<QueryValue extends Query<any>>(
       query: QueryValue,
       listener: (result: InferQueryResult<QueryValue>) => void,
+      onError?: (error: unknown) => void,
     ): () => void {
       return options.transport.subscribe(
         query,
         listener as (result: unknown) => void,
+        onError,
       );
     },
 

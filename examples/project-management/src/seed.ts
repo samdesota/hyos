@@ -5,13 +5,7 @@ import {
 } from "@hyos/hydb";
 
 import { projects, tasks, users, type TaskStatus } from "./data.js";
-
-const people = [
-  { id: "user-maya", name: "Maya Chen", initials: "MC", color: "#7257d9" },
-  { id: "user-jon", name: "Jon Bell", initials: "JB", color: "#e17055" },
-  { id: "user-nia", name: "Nia Okafor", initials: "NO", color: "#008f72" },
-  { id: "user-luca", name: "Luca Reyes", initials: "LR", color: "#2d7ff9" },
-] as const;
+import { demoPeople } from "./demo-people.js";
 
 const seededProjects = [
   {
@@ -135,15 +129,13 @@ const taskTuples: ReadonlyArray<
   ],
 ];
 
-export const demoUsers = people;
-
 export async function seedStorage(storage: StorageDatabase): Promise<void> {
   const snapshot = await storage.snapshot();
   try {
     if (snapshot.sequence !== 0) return;
 
     const mutations: StorageMutation[] = [
-      ...people.map((person) => storageMutation.insert(users, person)),
+      ...demoPeople.map((person) => storageMutation.insert(users, person)),
       ...seededProjects.map((project) =>
         storageMutation.insert(projects, project),
       ),

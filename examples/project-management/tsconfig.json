@@ -5,6 +5,10 @@
     "paths": {
       "@hyos/hyapp": ["../../packages/hyapp/src/index.ts"],
       "@hyos/hyapp/compiler": ["../../packages/hyapp/src/compiler.ts"],
+      "@hyos/hyapp/http": ["../../packages/hyapp/src/http.ts"],
+      "@hyos/hyapp/node": ["../../packages/hyapp/src/node/index.ts"],
+      "@hyos/hyapp/solid": ["../../packages/hyapp/src/solid.ts"],
+      "@hyos/hyapp/wire": ["../../packages/hyapp/src/wire.ts"],
       "@hyos/hydb": ["../../packages/hydb/src/index.ts"],
       "@hyos/hydb/node": ["../../packages/hydb/src/node/index.ts"]
     },
