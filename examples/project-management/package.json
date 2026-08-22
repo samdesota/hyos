@@ -4,17 +4,28 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit"
+    "dev": "concurrently --kill-others-on-fail npm:dev:server npm:dev:client",
+    "dev:client": "vite --host 127.0.0.1 --port 5173",
+    "dev:server": "tsx watch src/server.ts",
+    "dev:server:e2e": "HYAPP_DATA_DIR=.playwright-data HYAPP_RESET_DATA=1 tsx src/server.ts",
+    "build": "npm run build --workspace @hyos/hyapp && tsc --noEmit && vite build && npm run build:server",
+    "build:server": "node scripts/build-server.mjs",
+    "start": "HYAPP_STATIC_DIR=dist/client node dist/server/server.mjs",
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@hyos/hyapp": "0.0.0",
     "@hyos/hydb": "0.0.0",
     "lucide-solid": "^1.32.0",
     "solid-js": "^1.9.15",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "concurrently": "^10.0.5",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.12",
     "typescript": "^7.0.2",
     "vite": "^8.2.1",
     "vite-plugin-solid": "^2.11.14"

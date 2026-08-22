@@ -1,13 +1,13 @@
 import {
   hydb,
   id,
+  index,
   integer,
-  memoryStorage,
   text,
   timestamp,
-  type Database,
   type InferQueryResult,
 } from "@hyos/hydb";
+import { hyapp } from "@hyos/hyapp";
 import { z } from "zod";
 
 export const taskStatuses = ["backlog", "in_progress", "done"] as const;
@@ -22,28 +22,42 @@ export const users = hydb.table("demo_users", {
   color: text().notNull(),
 });
 
-export const projects = hydb.table("demo_projects", {
-  id: id().primaryKey(),
-  name: text().notNull(),
-  description: text().notNull(),
-  color: text().notNull(),
-  createdAt: timestamp().notNull(),
-});
+export const projects = hydb.table(
+  "demo_projects",
+  {
+    id: id().primaryKey(),
+    ownerId: id()
+      .notNull()
+      .references(() => users.id),
+    name: text().notNull(),
+    description: text().notNull(),
+    color: text().notNull(),
+    createdAt: timestamp().notNull(),
+  },
+  (columns) => [index("demo_projects_owner_idx").on(columns.ownerId)],
+);
 
-export const tasks = hydb.table("demo_tasks", {
-  id: id().primaryKey(),
-  projectId: id()
-    .notNull()
-    .references(() => projects.id),
-  assigneeId: id().references(() => users.id),
-  title: text().notNull(),
-  description: text().notNull().default(""),
-  status: taskStatus().notNull().default("backlog"),
-  priority: integer().notNull().default(1),
-  createdAt: timestamp().notNull(),
-});
+export const tasks = hydb.table(
+  "demo_tasks",
+  {
+    id: id().primaryKey(),
+    projectId: id()
+      .notNull()
+      .references(() => projects.id),
+    assigneeId: id().references(() => users.id),
+    title: text().notNull(),
+    description: text().notNull().default(""),
+    status: taskStatus().notNull().default("backlog"),
+    priority: integer().notNull().default(1),
+    createdAt: timestamp().notNull(),
+  },
+  (columns) => [index("demo_tasks_project_idx").on(columns.projectId)],
+);
 
 export const demoSchema = hydb.schema({ users, projects, tasks });
+
+export const principalSchema = z.object({ userId: z.string().min(1) });
+export type Principal = z.output<typeof principalSchema>;
 
 export const projectBoardQuery = hydb
   .query(projects)
@@ -95,76 +109,136 @@ export const teamQuery = hydb
   .orderBy((user) => user.name.asc())
   .many();
 
+export const readRegistry = Object.freeze({
+  projectBoard: projectBoardQuery,
+  team: teamQuery,
+});
+
+export type ReadName = keyof typeof readRegistry;
 export type ProjectBoard = InferQueryResult<typeof projectBoardQuery>;
 export type ProjectView = ProjectBoard[number];
 export type TaskView = ProjectView["tasks"][number];
 export type Team = InferQueryResult<typeof teamQuery>;
 
-const projectColors = ["#6c5ce7", "#e17055", "#00a884", "#2d7ff9"];
+const reads = hydb.readPolicy(principalSchema);
+export const readPolicies = Object.freeze([
+  reads.allowAll(users),
+  reads.where(projects, ({ row, principal }) =>
+    row.ownerId.eq(principal.userId),
+  ),
+  reads.through(tasks, projects, {
+    from: tasks.projectId,
+    to: projects.id,
+  }),
+]);
 
-export const createProject = hydb.command({
+const writes = hydb.writePolicy(principalSchema);
+export const writePolicies = Object.freeze([
+  writes.denyAll(users),
+  writes.where(projects, ({ change, principal }) => {
+    const ownsBefore =
+      change.kind === "insert" || change.before.ownerId === principal.userId;
+    const ownsAfter =
+      change.kind === "delete" || change.after.ownerId === principal.userId;
+    return ownsBefore && ownsAfter;
+  }),
+  writes.through(tasks, projects, {
+    from: tasks.projectId,
+    to: projects.id,
+  }),
+]);
+
+const commands = hyapp.commandFactory({
+  principal: principalSchema,
+  defaultPolicy: writePolicies,
+});
+const identifierResult = z.object({ id: z.string() });
+
+export const createProject = commands.define({
   input: z.object({
+    id: z.string().min(1),
+    ownerId: z.string().min(1),
     name: z.string().trim().min(2).max(48),
     description: z.string().trim().max(140).default(""),
+    color: z.string().regex(/^#[0-9a-f]{6}$/i),
+    createdAt: z.date(),
   }),
-  handler: (tx, input) => {
-    const id = crypto.randomUUID();
-    return tx.insert(projects, {
-      id,
-      name: input.name,
-      description: input.description,
-      color: projectColors[input.name.length % projectColors.length]!,
-      createdAt: new Date(),
-    });
+  output: identifierResult,
+  async optimistic({ transaction }, input) {
+    await transaction.insert(projects, input);
+  },
+  async server({ applyOptimistic }, input) {
+    await applyOptimistic();
+    return { id: input.id };
   },
 });
 
-export const createTask = hydb.command({
+export const createTask = commands.define({
   input: z.object({
+    id: z.string().min(1),
     projectId: z.string().min(1),
     title: z.string().trim().min(2).max(100),
     description: z.string().trim().max(240).default(""),
     status: z.enum(taskStatuses).default("backlog"),
     priority: z.number().int().min(1).max(4).default(2),
     assigneeId: z.string().nullable().default(null),
+    createdAt: z.date(),
   }),
-  handler: (tx, input) =>
-    tx.insert(tasks, {
-      id: crypto.randomUUID(),
-      projectId: input.projectId,
-      assigneeId: input.assigneeId,
-      title: input.title,
-      description: input.description,
-      status: input.status,
-      priority: input.priority,
-      createdAt: new Date(),
-    }),
+  output: identifierResult,
+  async optimistic({ transaction }, input) {
+    await transaction.insert(tasks, input);
+  },
+  async server({ applyOptimistic }, input) {
+    await applyOptimistic();
+    return { id: input.id };
+  },
 });
 
-export const moveTask = hydb.command({
+export const moveTask = commands.define({
   input: z.object({
     taskId: z.string().min(1),
     status: z.enum(taskStatuses),
   }),
-  handler: (tx, input) =>
-    tx.update(tasks, [input.taskId], { status: input.status }),
+  output: identifierResult,
+  async optimistic({ transaction }, input) {
+    await transaction.update(tasks, [input.taskId], { status: input.status });
+  },
+  async server({ applyOptimistic }, input) {
+    await applyOptimistic();
+    return { id: input.taskId };
+  },
 });
 
-export const assignTask = hydb.command({
+export const assignTask = commands.define({
   input: z.object({
     taskId: z.string().min(1),
     assigneeId: z.string().nullable(),
   }),
-  handler: (tx, input) =>
-    tx.update(tasks, [input.taskId], { assigneeId: input.assigneeId }),
+  output: identifierResult,
+  async optimistic({ transaction }, input) {
+    await transaction.update(tasks, [input.taskId], {
+      assigneeId: input.assigneeId,
+    });
+  },
+  async server({ applyOptimistic }, input) {
+    await applyOptimistic();
+    return { id: input.taskId };
+  },
 });
 
-export const deleteTask = hydb.command({
+export const deleteTask = commands.define({
   input: z.object({ taskId: z.string().min(1) }),
-  handler: (tx, input) => tx.delete(tasks, [input.taskId]),
+  output: identifierResult,
+  async optimistic({ transaction }, input) {
+    await transaction.delete(tasks, [input.taskId]);
+  },
+  async server({ applyOptimistic }, input) {
+    await applyOptimistic();
+    return { id: input.taskId };
+  },
 });
 
-export const rebalanceSprint = hydb.command({
+export const rebalanceSprint = commands.define({
   input: z.object({
     moves: z
       .array(
@@ -172,173 +246,23 @@ export const rebalanceSprint = hydb.command({
       )
       .min(1),
   }),
-  handler: async (tx, input) => {
+  output: z.object({ updated: z.number().int().nonnegative() }),
+  async optimistic({ transaction }, input) {
     for (const move of input.moves) {
-      await tx.update(tasks, [move.taskId], { status: move.status });
+      await transaction.update(tasks, [move.taskId], { status: move.status });
     }
-    return input.moves.length;
+  },
+  async server({ applyOptimistic }, input) {
+    await applyOptimistic();
+    return { updated: input.moves.length };
   },
 });
 
-const seedDemo = hydb.command({
-  input: z.undefined(),
-  handler: async (tx) => {
-    for (const user of [
-      { id: "user-maya", name: "Maya Chen", initials: "MC", color: "#7257d9" },
-      { id: "user-jon", name: "Jon Bell", initials: "JB", color: "#e17055" },
-      { id: "user-nia", name: "Nia Okafor", initials: "NO", color: "#008f72" },
-      { id: "user-luca", name: "Luca Reyes", initials: "LR", color: "#2d7ff9" },
-    ]) {
-      await tx.insert(users, user);
-    }
-
-    const seededProjects = [
-      {
-        id: "project-hydb",
-        name: "HyDB launch",
-        description: "Ship the first fast, reactive local database experience.",
-        color: "#6c5ce7",
-        createdAt: new Date("2026-08-01T09:00:00Z"),
-      },
-      {
-        id: "project-studio",
-        name: "Studio refresh",
-        description: "A calmer visual system for the HyOS workspace.",
-        color: "#e17055",
-        createdAt: new Date("2026-08-05T09:00:00Z"),
-      },
-      {
-        id: "project-docs",
-        name: "Developer docs",
-        description: "Turn the prototype into a story developers can follow.",
-        color: "#00a884",
-        createdAt: new Date("2026-08-10T09:00:00Z"),
-      },
-    ];
-    for (const project of seededProjects) await tx.insert(projects, project);
-
-    const seededTasks: Array<{
-      id: string;
-      projectId: string;
-      assigneeId: string | null;
-      title: string;
-      description: string;
-      status: TaskStatus;
-      priority: number;
-      createdAt: Date;
-    }> = [
-      [
-        "ddf",
-        "project-hydb",
-        "user-maya",
-        "Harden incremental joins",
-        "Exercise re-keying and nested defaults.",
-        "in_progress",
-        4,
-      ],
-      [
-        "commands",
-        "project-hydb",
-        "user-jon",
-        "Design command ergonomics",
-        "Keep tricky writes out of components.",
-        "done",
-        4,
-      ],
-      [
-        "bench",
-        "project-hydb",
-        "user-nia",
-        "Build browser benchmark",
-        "Measure update propagation under load.",
-        "backlog",
-        3,
-      ],
-      [
-        "storage",
-        "project-hydb",
-        "user-luca",
-        "Prototype persistent adapter",
-        "Map the storage seam onto IndexedDB.",
-        "backlog",
-        2,
-      ],
-      [
-        "tokens",
-        "project-studio",
-        "user-maya",
-        "Consolidate color tokens",
-        "Reduce one-off values across surfaces.",
-        "in_progress",
-        3,
-      ],
-      [
-        "nav",
-        "project-studio",
-        "user-luca",
-        "Polish workspace navigation",
-        "Improve density and active states.",
-        "done",
-        2,
-      ],
-      [
-        "empty",
-        "project-studio",
-        null,
-        "Design empty states",
-        "Make new workspaces feel intentional.",
-        "backlog",
-        1,
-      ],
-      [
-        "quickstart",
-        "project-docs",
-        "user-nia",
-        "Write five-minute quickstart",
-        "Schema to live query in one page.",
-        "in_progress",
-        4,
-      ],
-      [
-        "commands-doc",
-        "project-docs",
-        "user-jon",
-        "Document command handlers",
-        "Explain Zod validation and atomicity.",
-        "backlog",
-        3,
-      ],
-      [
-        "diagram",
-        "project-docs",
-        null,
-        "Diagram the dataflow graph",
-        "Show operators and weighted updates.",
-        "backlog",
-        2,
-      ],
-    ].map(
-      (
-        [id, projectId, assigneeId, title, description, status, priority],
-        index,
-      ) => ({
-        id: String(id),
-        projectId: String(projectId),
-        assigneeId: assigneeId === null ? null : String(assigneeId),
-        title: String(title),
-        description: String(description),
-        status: status as TaskStatus,
-        priority: Number(priority),
-        createdAt: new Date(Date.UTC(2026, 7, 11 + index, 9, 0, 0)),
-      }),
-    );
-    for (const task of seededTasks) await tx.insert(tasks, task);
-  },
+export const commandRegistry = hyapp.commandRegistry({
+  createProject,
+  createTask,
+  moveTask,
+  assignTask,
+  deleteTask,
+  rebalanceSprint,
 });
-
-export async function createDemoDatabase(): Promise<Database> {
-  const storage = await memoryStorage({ schema: demoSchema });
-  const database = await hydb.database({ schema: demoSchema, storage });
-  await database.execute(seedDemo, undefined);
-  return database;
-}

@@ -7,6 +7,7 @@ import { build } from "esbuild";
 
 import { compileCommandModule } from "../src/compiler.js";
 import { hyappCommandsPlugin } from "../src/esbuild.js";
+import { hyapp } from "../src/index.js";
 
 const source = `
   import { commandFactory } from "@hyos/hyapp";
@@ -35,6 +36,11 @@ const source = `
     },
   });
 `;
+
+test("the hyapp namespace exposes both compiler-target factories", () => {
+  assert.equal(typeof hyapp.createClientCommandFactory, "function");
+  assert.equal(typeof hyapp.createServerCommandFactory, "function");
+});
 
 test("client compilation removes the server dependency graph", () => {
   const compiled = compileCommandModule(source, {

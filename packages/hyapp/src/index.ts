@@ -1,4 +1,8 @@
-import { commandFactory } from "./command.js";
+import {
+  commandFactory,
+  createClientCommandFactory,
+  createServerCommandFactory,
+} from "./command.js";
 import { gateway } from "./gateway.js";
 import { gatewayClient } from "./gateway-client.js";
 import { commandRegistry } from "./registry.js";
@@ -55,6 +59,8 @@ export {
 
 export const hyapp = Object.freeze({
   commandFactory,
+  createClientCommandFactory,
+  createServerCommandFactory,
   commandRegistry,
   gateway,
   gatewayClient,
