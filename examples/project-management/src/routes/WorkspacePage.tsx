@@ -48,16 +48,13 @@ export function WorkspacePage() {
   const [showTaskDialog, setShowTaskDialog] = createSignal(false);
   const [showProjectDialog, setShowProjectDialog] = createSignal(false);
   const [runningCommand, setRunningCommand] = createSignal<string>();
-  const [commandPending, setCommandPending] = createSignal(false);
   const [localError, setLocalError] = createSignal<string>();
   const [materializationCount, setMaterializationCount] = createSignal(0);
   const [activities, setActivities] = createSignal<ActivityEntry[]>([]);
   const [pendingProjectRoute, setPendingProjectRoute] = createSignal<string>();
   let activityId = 0;
   let searchedPath = location.pathname;
-  const execute = createGatewayExecutor(gateway, {
-    setPending: setCommandPending,
-  });
+  const execute = createGatewayExecutor(gateway);
 
   const projects = () => board.data() ?? [];
   const members = () => team.data() ?? [];
@@ -185,7 +182,7 @@ export function WorkspacePage() {
     label: string,
     action: () => Promise<unknown>,
   ): Promise<boolean> {
-    if (commandPending()) return false;
+    if (runningCommand() !== undefined) return false;
     setLocalError(undefined);
     setRunningCommand(label);
     const startedAt = performance.now();
@@ -434,7 +431,7 @@ export function WorkspacePage() {
                         </button>
                         <button
                           class="primary-button"
-                          disabled={commandPending()}
+                          disabled={execute.isPending("createTask")}
                         >
                           Create task
                         </button>
@@ -479,7 +476,7 @@ export function WorkspacePage() {
                       </button>
                       <button
                         class="primary-button"
-                        disabled={commandPending()}
+                        disabled={execute.isPending("createProject")}
                       >
                         Create project
                       </button>

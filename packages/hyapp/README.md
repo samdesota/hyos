@@ -63,10 +63,10 @@ reactive query state and a typed command executor:
 
 ```tsx
 const board = createGatewayQuery(client, boardQuery);
-const [pending, setPending] = createSignal(false);
-const execute = createGatewayExecutor(client, { setPending });
+const execute = createGatewayExecutor(client);
 
 <Show when={board.data()}>{(rows) => <Board rows={rows()} />}</Show>;
+<button disabled={execute.isPending("createTask")}>Create task</button>;
 await execute("createTask", { id, projectId, title });
 ```
 
@@ -74,7 +74,8 @@ await execute("createTask", { id, projectId, title });
 cleanup, loading/error state, and explicit refetching. Both its client and query
 may be accessors, so changing authenticated gateway context replaces the active
 subscription. `createGatewayExecutor` preserves registry-derived command,
-input, and result types. Its pending-state interface counts concurrent work and
-only settles after the final execution finishes. Solid is an optional peer
-dependency; non-Solid applications continue to use the base gateway client
-directly.
+input, and result types. Its typed `isPending(command)` method reads reactive
+per-command state, so Solid dependents update automatically. Overlapping calls
+keep a command pending until its final execution settles. Solid is an optional
+peer dependency; non-Solid applications continue to use the base gateway
+client directly.

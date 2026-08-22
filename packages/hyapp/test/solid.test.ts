@@ -3,7 +3,7 @@ import test from "node:test";
 import { z } from "zod";
 
 import { hydb, id, text, type Query } from "@hyos/hydb";
-import { createRoot, createSignal } from "solid-js";
+import { createEffect, createRoot, createSignal } from "solid-js";
 
 import {
   createClientCommandFactory,
@@ -85,17 +85,20 @@ test("a Solid gateway executor types commands and settles pending after all work
     },
   };
   const client = gatewayClient({ registry, transport });
-  const pending: boolean[] = [];
-  const execute = createRoot(() =>
-    createGatewayExecutor(client, {
-      setPending(value) {
-        pending.push(value);
-      },
-    }),
-  );
+  const observedPending: boolean[] = [];
+  const execute = createRoot(() => {
+    const executor = createGatewayExecutor(client);
+    createEffect(() => observedPending.push(executor.isPending("rename")));
+    return executor;
+  });
+  await tick();
+  assert.deepEqual(observedPending, [false]);
+
   const first = execute("rename", { id: "first", title: "After" });
   const second = execute("rename", { id: "second", title: "Later" });
-  assert.deepEqual(pending, [true]);
+  assert.equal(execute.isPending("rename"), true);
+  await tick();
+  assert.deepEqual(observedPending, [false, true]);
   for (let index = 0; index < 10 && requests.length < 2; index += 1) {
     await tick();
   }
@@ -103,14 +106,20 @@ test("a Solid gateway executor types commands and settles pending after all work
 
   requests[0]!.resolve({ result: { id: "first" } });
   assert.deepEqual(await first, { id: "first" });
-  assert.deepEqual(pending, [true]);
+  assert.equal(execute.isPending("rename"), true);
+  await tick();
+  assert.deepEqual(observedPending, [false, true]);
 
   requests[1]!.resolve({ result: { id: "second" } });
   assert.deepEqual(await second, { id: "second" });
-  assert.deepEqual(pending, [true, false]);
+  assert.equal(execute.isPending("rename"), false);
+  await tick();
+  assert.deepEqual(observedPending, [false, true, false]);
 
   if (false) {
     // @ts-expect-error title is required by the registered command
     void execute("rename", { id: "task" });
+    // @ts-expect-error pending state is limited to registered commands
+    execute.isPending("missing");
   }
 });

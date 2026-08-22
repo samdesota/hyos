@@ -18,16 +18,15 @@ export type GatewayQueryState<Result> = Readonly<{
   refetch(): void;
 }>;
 
-export type GatewayExecutorOptions = Readonly<{
-  setPending(pending: boolean): void;
-}>;
-
-export type GatewayExecutor<Registry extends CommandRegistry> = <
+export type GatewayExecutor<Registry extends CommandRegistry> = (<
   Name extends RegistryCommandName<Registry>,
 >(
   command: Name,
   input: RegistryCommandInput<Registry, Name>,
-) => Promise<RegistryCommandResult<Registry, Name>>;
+) => Promise<RegistryCommandResult<Registry, Name>>) &
+  Readonly<{
+    isPending(command: RegistryCommandName<Registry>): boolean;
+  }>;
 
 function sourceValue<Value>(source: GatewaySource<Value>): Value {
   return typeof source === "function" ? (source as Accessor<Value>)() : source;
@@ -107,18 +106,45 @@ export function createGatewayQuery<
 
 export function createGatewayExecutor<Registry extends CommandRegistry>(
   client: GatewaySource<GatewayClient<Registry>>,
-  options: GatewayExecutorOptions,
 ): GatewayExecutor<Registry> {
-  let inFlight = 0;
+  type CommandName = RegistryCommandName<Registry>;
+  const inFlight = new Map<CommandName, number>();
+  const [pendingCommands, setPendingCommands] = createSignal<
+    ReadonlySet<CommandName>
+  >(new Set());
 
-  return async (command, input) => {
-    inFlight += 1;
+  function adjustPending(command: CommandName, change: 1 | -1) {
+    const previous = inFlight.get(command) ?? 0;
+    const count = previous + change;
+    if (count === 0) inFlight.delete(command);
+    else inFlight.set(command, count);
+
+    if (previous === 0 && count === 1) {
+      setPendingCommands((current) => new Set(current).add(command));
+    } else if (previous === 1 && count === 0) {
+      setPendingCommands((current) => {
+        const next = new Set(current);
+        next.delete(command);
+        return next;
+      });
+    }
+  }
+
+  const execute = async <Name extends CommandName>(
+    command: Name,
+    input: RegistryCommandInput<Registry, Name>,
+  ): Promise<RegistryCommandResult<Registry, Name>> => {
+    adjustPending(command, 1);
     try {
-      if (inFlight === 1) options.setPending(true);
       return await sourceValue(client).execute(command, input);
     } finally {
-      inFlight -= 1;
-      if (inFlight === 0) options.setPending(false);
+      adjustPending(command, -1);
     }
   };
+
+  return Object.assign(execute, {
+    isPending(command: CommandName) {
+      return pendingCommands().has(command);
+    },
+  });
 }
