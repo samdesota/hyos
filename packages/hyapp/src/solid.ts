@@ -18,11 +18,16 @@ export type GatewayQueryState<Result> = Readonly<{
   refetch(): void;
 }>;
 
-export type GatewayCommandState<Input, Result> = Readonly<{
-  execute(input: Input): Promise<Result>;
-  pending: Accessor<boolean>;
-  error: Accessor<unknown>;
+export type GatewayExecutorOptions = Readonly<{
+  setPending(pending: boolean): void;
 }>;
+
+export type GatewayExecutor<Registry extends CommandRegistry> = <
+  Name extends RegistryCommandName<Registry>,
+>(
+  command: Name,
+  input: RegistryCommandInput<Registry, Name>,
+) => Promise<RegistryCommandResult<Registry, Name>>;
 
 function sourceValue<Value>(source: GatewaySource<Value>): Value {
   return typeof source === "function" ? (source as Accessor<Value>)() : source;
@@ -100,35 +105,20 @@ export function createGatewayQuery<
   });
 }
 
-export function createGatewayCommand<
-  Registry extends CommandRegistry,
-  Name extends RegistryCommandName<Registry>,
->(
+export function createGatewayExecutor<Registry extends CommandRegistry>(
   client: GatewaySource<GatewayClient<Registry>>,
-  command: Name,
-): GatewayCommandState<
-  RegistryCommandInput<Registry, Name>,
-  RegistryCommandResult<Registry, Name>
-> {
-  const [inFlight, setInFlight] = createSignal(0);
-  const [error, setError] = createSignal<unknown>();
-  let latestInvocation = 0;
+  options: GatewayExecutorOptions,
+): GatewayExecutor<Registry> {
+  let inFlight = 0;
 
-  return Object.freeze({
-    async execute(input: RegistryCommandInput<Registry, Name>) {
-      const invocation = ++latestInvocation;
-      setError(undefined);
-      setInFlight((count) => count + 1);
-      try {
-        return await sourceValue(client).execute(command, input);
-      } catch (cause) {
-        if (invocation === latestInvocation) setError(() => cause);
-        throw cause;
-      } finally {
-        setInFlight((count) => count - 1);
-      }
-    },
-    pending: () => inFlight() > 0,
-    error,
-  });
+  return async (command, input) => {
+    inFlight += 1;
+    try {
+      if (inFlight === 1) options.setPending(true);
+      return await sourceValue(client).execute(command, input);
+    } finally {
+      inFlight -= 1;
+      if (inFlight === 0) options.setPending(false);
+    }
+  };
 }

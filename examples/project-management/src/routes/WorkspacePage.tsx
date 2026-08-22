@@ -1,5 +1,5 @@
 import { Navigate, useLocation, useNavigate, useParams } from "@solidjs/router";
-import { createGatewayCommand, createGatewayQuery } from "@hyos/hyapp/solid";
+import { createGatewayExecutor, createGatewayQuery } from "@hyos/hyapp/solid";
 import { Database } from "lucide-solid";
 import {
   Match,
@@ -44,23 +44,20 @@ export function WorkspacePage() {
   const params = useParams<{ projectId?: string }>();
   const board = createGatewayQuery(gateway, projectBoardQuery);
   const team = createGatewayQuery(gateway, teamQuery);
-  const createProject = createGatewayCommand(gateway, "createProject");
-  const createTask = createGatewayCommand(gateway, "createTask");
-  const moveTask = createGatewayCommand(gateway, "moveTask");
-  const assignTask = createGatewayCommand(gateway, "assignTask");
-  const deleteTask = createGatewayCommand(gateway, "deleteTask");
-  const rebalanceSprint = createGatewayCommand(gateway, "rebalanceSprint");
-
   const [search, setSearch] = createSignal("");
   const [showTaskDialog, setShowTaskDialog] = createSignal(false);
   const [showProjectDialog, setShowProjectDialog] = createSignal(false);
   const [runningCommand, setRunningCommand] = createSignal<string>();
+  const [commandPending, setCommandPending] = createSignal(false);
   const [localError, setLocalError] = createSignal<string>();
   const [materializationCount, setMaterializationCount] = createSignal(0);
   const [activities, setActivities] = createSignal<ActivityEntry[]>([]);
   const [pendingProjectRoute, setPendingProjectRoute] = createSignal<string>();
   let activityId = 0;
   let searchedPath = location.pathname;
+  const execute = createGatewayExecutor(gateway, {
+    setPending: setCommandPending,
+  });
 
   const projects = () => board.data() ?? [];
   const members = () => team.data() ?? [];
@@ -188,7 +185,7 @@ export function WorkspacePage() {
     label: string,
     action: () => Promise<unknown>,
   ): Promise<boolean> {
-    if (runningCommand() !== undefined) return false;
+    if (commandPending()) return false;
     setLocalError(undefined);
     setRunningCommand(label);
     const startedAt = performance.now();
@@ -210,18 +207,18 @@ export function WorkspacePage() {
 
   async function changeTaskStatus(taskId: string, status: TaskStatus) {
     await runCommand(`Move task to ${statusDetails[status].label}`, () =>
-      moveTask.execute({ taskId, status }),
+      execute("moveTask", { taskId, status }),
     );
   }
 
   async function changeAssignee(taskId: string, assigneeId: string | null) {
     await runCommand("Update task owner", () =>
-      assignTask.execute({ taskId, assigneeId }),
+      execute("assignTask", { taskId, assigneeId }),
     );
   }
 
   async function removeTask(taskId: string) {
-    await runCommand("Delete task", () => deleteTask.execute({ taskId }));
+    await runCommand("Delete task", () => execute("deleteTask", { taskId }));
   }
 
   async function runRebalance() {
@@ -235,7 +232,7 @@ export function WorkspacePage() {
         ]!,
     }));
     await runCommand(`Atomic sprint rebalance (${moves.length} writes)`, () =>
-      rebalanceSprint.execute({ moves }),
+      execute("rebalanceSprint", { moves }),
     );
   }
 
@@ -246,7 +243,7 @@ export function WorkspacePage() {
     const form = event.currentTarget as HTMLFormElement;
     const values = new FormData(form);
     const success = await runCommand("Create task", () =>
-      createTask.execute({
+      execute("createTask", {
         id: crypto.randomUUID(),
         projectId: project.id,
         title: String(values.get("title") ?? ""),
@@ -270,7 +267,7 @@ export function WorkspacePage() {
     const name = String(values.get("name") ?? "");
     const id = crypto.randomUUID();
     const success = await runCommand("Create project", () =>
-      createProject.execute({
+      execute("createProject", {
         id,
         ownerId: auth.userId()!,
         name,
@@ -437,7 +434,7 @@ export function WorkspacePage() {
                         </button>
                         <button
                           class="primary-button"
-                          disabled={runningCommand() !== undefined}
+                          disabled={commandPending()}
                         >
                           Create task
                         </button>
@@ -482,7 +479,7 @@ export function WorkspacePage() {
                       </button>
                       <button
                         class="primary-button"
-                        disabled={runningCommand() !== undefined}
+                        disabled={commandPending()}
                       >
                         Create project
                       </button>

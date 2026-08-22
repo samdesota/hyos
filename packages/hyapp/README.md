@@ -59,20 +59,22 @@ JSON data loss.
 ## SolidJS helpers
 
 The optional `@hyos/hyapp/solid` entry point turns a gateway client into small
-reactive query and command resources:
+reactive query state and a typed command executor:
 
 ```tsx
 const board = createGatewayQuery(client, boardQuery);
-const createTask = createGatewayCommand(client, "createTask");
+const [pending, setPending] = createSignal(false);
+const execute = createGatewayExecutor(client, { setPending });
 
 <Show when={board.data()}>{(rows) => <Board rows={rows()} />}</Show>;
-await createTask.execute({ id, projectId, title });
+await execute("createTask", { id, projectId, title });
 ```
 
 `createGatewayQuery` owns the initial fetch, live subscription, race handling,
 cleanup, loading/error state, and explicit refetching. Both its client and query
 may be accessors, so changing authenticated gateway context replaces the active
-subscription. `createGatewayCommand` preserves registry-derived input and
-result types while exposing reactive pending and error state. Solid is an
-optional peer dependency; non-Solid applications continue to use the base
-gateway client directly.
+subscription. `createGatewayExecutor` preserves registry-derived command,
+input, and result types. Its pending-state interface counts concurrent work and
+only settles after the final execution finishes. Solid is an optional peer
+dependency; non-Solid applications continue to use the base gateway client
+directly.
