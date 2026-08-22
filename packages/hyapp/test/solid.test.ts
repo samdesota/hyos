@@ -3,7 +3,7 @@ import test from "node:test";
 import { z } from "zod";
 
 import { hydb, id, text, type Query } from "@hyos/hydb";
-import { createRoot, createSignal } from "solid-js";
+import { createEffect, createRoot, createSignal } from "solid-js";
 
 import {
   createClientCommandFactory,
@@ -11,7 +11,7 @@ import {
   hyapp,
   type GatewayClientTransport,
 } from "../src/index.js";
-import { createGatewayCommand, createGatewayQuery } from "../src/solid.js";
+import { createGatewayExecutor, createGatewayQuery } from "../src/solid.js";
 
 const tasks = hydb.table("solid_gateway_tasks", {
   id: id().primaryKey(),
@@ -69,11 +69,10 @@ test("a Solid gateway query follows client changes and cleans subscriptions", as
   assert.deepEqual(disposed, ["one", "two"]);
 });
 
-test("a Solid gateway command exposes typed pending and error state", async () => {
-  let resolveRequest!: (value: { result: { id: string } }) => void;
-  const request = new Promise<{ result: { id: string } }>((resolve) => {
-    resolveRequest = resolve;
-  });
+test("a Solid gateway executor types commands and settles pending after all work", async () => {
+  const requests: Array<{
+    resolve(value: { result: { id: string } }): void;
+  }> = [];
   const transport: GatewayClientTransport = {
     async fetch() {
       return [];
@@ -82,20 +81,45 @@ test("a Solid gateway command exposes typed pending and error state", async () =
       return () => undefined;
     },
     execute() {
-      return request;
+      return new Promise((resolve) => requests.push({ resolve }));
     },
   };
   const client = gatewayClient({ registry, transport });
-  const command = createRoot(() => createGatewayCommand(client, "rename"));
-  const execution = command.execute({ id: "task", title: "After" });
-  assert.equal(command.pending(), true);
-  resolveRequest({ result: { id: "task" } });
-  assert.deepEqual(await execution, { id: "task" });
-  assert.equal(command.pending(), false);
-  assert.equal(command.error(), undefined);
+  const observedPending: boolean[] = [];
+  const execute = createRoot(() => {
+    const executor = createGatewayExecutor(client);
+    createEffect(() => observedPending.push(executor.isPending("rename")));
+    return executor;
+  });
+  await tick();
+  assert.deepEqual(observedPending, [false]);
+
+  const first = execute("rename", { id: "first", title: "After" });
+  const second = execute("rename", { id: "second", title: "Later" });
+  assert.equal(execute.isPending("rename"), true);
+  await tick();
+  assert.deepEqual(observedPending, [false, true]);
+  for (let index = 0; index < 10 && requests.length < 2; index += 1) {
+    await tick();
+  }
+  assert.equal(requests.length, 2);
+
+  requests[0]!.resolve({ result: { id: "first" } });
+  assert.deepEqual(await first, { id: "first" });
+  assert.equal(execute.isPending("rename"), true);
+  await tick();
+  assert.deepEqual(observedPending, [false, true]);
+
+  requests[1]!.resolve({ result: { id: "second" } });
+  assert.deepEqual(await second, { id: "second" });
+  assert.equal(execute.isPending("rename"), false);
+  await tick();
+  assert.deepEqual(observedPending, [false, true, false]);
 
   if (false) {
     // @ts-expect-error title is required by the registered command
-    void command.execute({ id: "task" });
+    void execute("rename", { id: "task" });
+    // @ts-expect-error pending state is limited to registered commands
+    execute.isPending("missing");
   }
 });
