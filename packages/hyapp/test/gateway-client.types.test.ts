@@ -25,7 +25,10 @@ const renameTask = commands.define({
   input: z.object({ id: z.string(), title: z.string() }),
   output: z.object({ id: z.string() }),
 });
-const registry = hyapp.commandRegistry({ renameTask });
+const deleteTask = commands.define({
+  input: z.object({ id: z.string() }),
+});
+const registry = hyapp.commandRegistry({ renameTask, deleteTask });
 const transport: GatewayClientTransport = {
   async fetch() {
     return undefined;
@@ -33,13 +36,13 @@ const transport: GatewayClientTransport = {
   subscribe(_query: Query<any>, _listener: (result: unknown) => void) {
     return () => undefined;
   },
-  async execute() {
+  async dispatch() {
     return { result: { id: "task" } };
   },
 };
 const client = gatewayClient({ registry, transport });
 
-const execution = client.execute("renameTask", {
+const execution = client.dispatch("renameTask", {
   id: "task",
   title: "Typed",
 });
@@ -51,12 +54,16 @@ type FetchMatches = Expect<
 >;
 
 if (false) {
+  const deletion = client.dispatch("deleteTask", { id: "task" });
+  type VoidResultMatches = Expect<Equal<Awaited<typeof deletion>, void>>;
+  void (null as unknown as VoidResultMatches);
+
   // @ts-expect-error unknown registry command
-  void client.execute("deleteTask", { id: "task" });
+  void client.dispatch("archiveTask", { id: "task" });
   // @ts-expect-error title is required
-  void client.execute("renameTask", { id: "task" });
+  void client.dispatch("renameTask", { id: "task" });
   // @ts-expect-error id must be a string
-  void client.execute("renameTask", { id: 42, title: "Typed" });
+  void client.dispatch("renameTask", { id: 42, title: "Typed" });
 }
 
 void (null as unknown as ResultMatches);

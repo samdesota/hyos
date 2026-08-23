@@ -4,7 +4,12 @@ import {
   getDatabaseSchema,
   getWritePolicyPrincipalSchema,
 } from "@hyos/hydb";
-import type { input as ZodInput, output as ZodOutput, ZodType } from "zod";
+import {
+  z,
+  type input as ZodInput,
+  type output as ZodOutput,
+  type ZodType,
+} from "zod";
 
 const commandDefinition = Symbol("hyapp.command");
 const contractDefinition = Symbol("hyapp.command-contract");
@@ -54,7 +59,7 @@ type ServerCommandDefinition<
   defaultPolicy: readonly WritePolicy<Principal>[];
   contract: CommandContract<Input, Output, ParsedInput, ParsedOutput>;
   optimistic?: OptimisticHandler<ParsedInput>;
-  server: ServerHandler<Principal, ParsedInput, unknown>;
+  server?: ServerHandler<Principal, ParsedInput, unknown>;
 }>;
 
 type ClientCommandDefinition<Input, Output, ParsedInput, ParsedOutput> =
@@ -108,6 +113,11 @@ export type InferCommandInput<CommandValue extends AnyCommand> =
 export type InferCommandResult<CommandValue extends AnyCommand> =
   CommandValue[typeof commandOutput];
 
+export function createCommandContract<InputSchema extends ZodType>(options: {
+  input: InputSchema;
+  output?: never;
+}): CommandContract<ZodInput<InputSchema>, void, ZodOutput<InputSchema>, void>;
+
 export function createCommandContract<
   InputSchema extends ZodType,
   OutputSchema extends ZodType,
@@ -119,14 +129,19 @@ export function createCommandContract<
   ZodOutput<OutputSchema>,
   ZodOutput<InputSchema>,
   ZodOutput<OutputSchema>
-> {
+>;
+
+export function createCommandContract<InputSchema extends ZodType>(options: {
+  input: InputSchema;
+  output?: ZodType;
+}): CommandContract<ZodInput<InputSchema>, unknown, ZodOutput<InputSchema>> {
   return Object.freeze({
     [contractDefinition]: Object.freeze({
       input: options.input as ZodType<
         ZodOutput<InputSchema>,
         ZodInput<InputSchema>
       >,
-      output: options.output as ZodType<ZodOutput<OutputSchema>, any>,
+      output: options.output ?? z.void(),
     }),
   });
 }
@@ -147,7 +162,33 @@ type UnifiedCommandDefinition<
   >;
 }>;
 
+type VoidCommandDefinition<Principal, InputSchema extends ZodType> = Readonly<
+  {
+    input: InputSchema;
+    output?: never;
+  } & (
+    | {
+        optimistic: OptimisticHandler<ZodOutput<InputSchema>>;
+        server?: ServerHandler<Principal, ZodOutput<InputSchema>, void>;
+      }
+    | {
+        optimistic?: OptimisticHandler<ZodOutput<InputSchema>>;
+        server: ServerHandler<Principal, ZodOutput<InputSchema>, void>;
+      }
+  )
+>;
+
 export interface ServerCommandFactory<Principal> {
+  define<InputSchema extends ZodType>(
+    definition: VoidCommandDefinition<Principal, InputSchema>,
+  ): ServerCommand<
+    ZodInput<InputSchema>,
+    void,
+    Principal,
+    ZodOutput<InputSchema>,
+    void
+  >;
+
   define<InputSchema extends ZodType, OutputSchema extends ZodType>(
     definition: UnifiedCommandDefinition<Principal, InputSchema, OutputSchema>,
   ): ServerCommand<
@@ -175,35 +216,32 @@ export function createServerCommandFactory<
     }
   }
   return Object.freeze({
-    define<InputSchema extends ZodType, OutputSchema extends ZodType>(
-      definition: UnifiedCommandDefinition<
-        Principal,
-        InputSchema,
-        OutputSchema
-      >,
+    define<InputSchema extends ZodType>(
+      definition: Readonly<{
+        input: InputSchema;
+        output?: ZodType;
+        optimistic?: OptimisticHandler<ZodOutput<InputSchema>>;
+        server?: ServerHandler<Principal, ZodOutput<InputSchema>, unknown>;
+      }>,
     ) {
       const contract = createCommandContract({
         input: definition.input,
-        output: definition.output,
+        output: definition.output ?? z.void(),
       });
       return Object.freeze({
         [commandInput]: undefined as unknown as ZodInput<InputSchema>,
-        [commandOutput]: undefined as unknown as ZodOutput<OutputSchema>,
+        [commandOutput]: undefined as unknown,
         [commandDefinition]: Object.freeze({
           target: "server" as const,
           principalSchema: options.principal as ZodType<Principal>,
           defaultPolicy,
           contract,
           optimistic: definition.optimistic,
-          server: definition.server as ServerHandler<
-            Principal,
-            ZodOutput<InputSchema>,
-            unknown
-          >,
+          server: definition.server,
         }),
       });
     },
-  });
+  }) as unknown as ServerCommandFactory<Principal>;
 }
 
 export const commandFactory = createServerCommandFactory;
@@ -227,6 +265,12 @@ export interface ClientCommandFactory {
     ZodOutput<InputSchema>,
     ZodOutput<OutputSchema>
   >;
+
+  define<InputSchema extends ZodType>(definition: {
+    input: InputSchema;
+    output?: never;
+    optimistic?: OptimisticHandler<ZodOutput<InputSchema>>;
+  }): ClientCommand<ZodInput<InputSchema>, void, ZodOutput<InputSchema>, void>;
 }
 
 export function createClientCommandFactory(): ClientCommandFactory {
@@ -239,17 +283,17 @@ export function createClientCommandFactory(): ClientCommandFactory {
     }) {
       const contract =
         definition.contract ??
-        (definition.input !== undefined && definition.output !== undefined
+        (definition.input !== undefined
           ? Object.freeze({
               [contractDefinition]: Object.freeze({
                 input: definition.input,
-                output: definition.output,
+                output: definition.output ?? z.void(),
               }),
             })
           : undefined);
       if (contract === undefined) {
         throw new TypeError(
-          "Client commands require a contract or input and output schemas",
+          "Client commands require a contract or an input schema",
         );
       }
       return Object.freeze({
@@ -303,14 +347,17 @@ export async function executeServerCommand<
         optimisticApplied = true;
         await definition.optimistic({ transaction }, parsedInput);
       };
-      const result = await definition.server(
-        {
-          transaction,
-          principal: parsedPrincipal,
-          applyOptimistic,
-        },
-        parsedInput,
-      );
+      const result =
+        definition.server === undefined
+          ? await applyOptimistic()
+          : await definition.server(
+              {
+                transaction,
+                principal: parsedPrincipal,
+                applyOptimistic,
+              },
+              parsedInput,
+            );
       return contract.output.parseAsync(result);
     },
   ) as Promise<Output>;

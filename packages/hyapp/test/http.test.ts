@@ -152,7 +152,7 @@ test("the HTTP adapter carries authorized reads, subscriptions, and commands", a
     });
     const updatedAt = new Date("2026-08-22T11:00:00.000Z");
     assert.deepEqual(
-      await client.execute("rename", {
+      await client.dispatch("rename", {
         id: "alice-task",
         title: "After",
         updatedAt,
@@ -163,7 +163,7 @@ test("the HTTP adapter carries authorized reads, subscriptions, and commands", a
     unsubscribe();
 
     await assert.rejects(
-      client.execute("rename", {
+      client.dispatch("rename", {
         id: "bob-task",
         title: "Stolen",
         updatedAt,

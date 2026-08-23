@@ -38,7 +38,7 @@ export interface GatewayClientTransport {
     onError?: (error: unknown) => void,
   ): () => void;
 
-  execute(request: GatewayCommandRequest): Promise<GatewayCommandResponse>;
+  dispatch(request: GatewayCommandRequest): Promise<GatewayCommandResponse>;
 }
 
 export interface OptimisticLayer {
@@ -70,7 +70,7 @@ export interface GatewayClient<Registry extends CommandRegistry> {
     onError?: (error: unknown) => void,
   ): () => void;
 
-  execute<Name extends RegistryCommandName<Registry>>(
+  dispatch<Name extends RegistryCommandName<Registry>>(
     command: Name,
     input: RegistryCommandInput<Registry, Name>,
   ): Promise<RegistryCommandResult<Registry, Name>>;
@@ -135,7 +135,7 @@ export function gatewayClient<const Registry extends CommandRegistry>(options: {
       );
     },
 
-    async execute<Name extends RegistryCommandName<Registry>>(
+    async dispatch<Name extends RegistryCommandName<Registry>>(
       name: Name,
       input: RegistryCommandInput<Registry, Name>,
     ): Promise<RegistryCommandResult<Registry, Name>> {
@@ -165,7 +165,7 @@ export function gatewayClient<const Registry extends CommandRegistry>(options: {
       let response: GatewayCommandResponse;
       let result: RegistryCommandResult<Registry, Name>;
       try {
-        response = await options.transport.execute(request);
+        response = await options.transport.dispatch(request);
         result = await parseCommandResult(command, response.result);
       } catch (error) {
         return rejectOptimisticLayer(layer, error);
@@ -187,8 +187,8 @@ export function directGatewayTransport<Commands extends ServerCommandRegistry>(
     subscribe(query: Query<any>, listener: (result: unknown) => void) {
       return session.subscribe(query, listener);
     },
-    async execute(request: GatewayCommandRequest) {
-      const result = await session.execute(
+    async dispatch(request: GatewayCommandRequest) {
+      const result = await session.dispatch(
         request.command as Extract<keyof Commands, string>,
         request.input as never,
       );

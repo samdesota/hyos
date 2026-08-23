@@ -154,7 +154,9 @@ export function compileCommandModule(
         ),
       );
       const looksLikeCommand =
-        names.has("server") || (names.has("input") && names.has("output"));
+        names.has("server") ||
+        (names.has("input") &&
+          (names.has("output") || names.has("optimistic")));
       if (!looksLikeCommand) return;
       if (
         properties.some(

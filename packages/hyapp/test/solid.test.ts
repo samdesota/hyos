@@ -11,7 +11,7 @@ import {
   hyapp,
   type GatewayClientTransport,
 } from "../src/index.js";
-import { createGatewayExecutor, createGatewayQuery } from "../src/solid.js";
+import { createCommandDispatcher, createGatewayQuery } from "../src/solid.js";
 
 const tasks = hydb.table("solid_gateway_tasks", {
   id: id().primaryKey(),
@@ -43,7 +43,7 @@ test("a Solid gateway query follows client changes and cleans subscriptions", as
           listeners.push(listener);
           return () => disposed.push(name);
         },
-        async execute() {
+        async dispatch() {
           return { result: { id: name } };
         },
       },
@@ -69,7 +69,7 @@ test("a Solid gateway query follows client changes and cleans subscriptions", as
   assert.deepEqual(disposed, ["one", "two"]);
 });
 
-test("a Solid gateway executor types commands and settles pending after all work", async () => {
+test("a Solid command dispatcher types commands and settles pending after all work", async () => {
   const requests: Array<{
     resolve(value: { result: { id: string } }): void;
   }> = [];
@@ -80,23 +80,23 @@ test("a Solid gateway executor types commands and settles pending after all work
     subscribe() {
       return () => undefined;
     },
-    execute() {
+    dispatch() {
       return new Promise((resolve) => requests.push({ resolve }));
     },
   };
   const client = gatewayClient({ registry, transport });
   const observedPending: boolean[] = [];
-  const execute = createRoot(() => {
-    const executor = createGatewayExecutor(client);
-    createEffect(() => observedPending.push(executor.isPending("rename")));
-    return executor;
+  const dispatch = createRoot(() => {
+    const dispatcher = createCommandDispatcher(client);
+    createEffect(() => observedPending.push(dispatcher.isPending("rename")));
+    return dispatcher;
   });
   await tick();
   assert.deepEqual(observedPending, [false]);
 
-  const first = execute("rename", { id: "first", title: "After" });
-  const second = execute("rename", { id: "second", title: "Later" });
-  assert.equal(execute.isPending("rename"), true);
+  const first = dispatch("rename", { id: "first", title: "After" });
+  const second = dispatch("rename", { id: "second", title: "Later" });
+  assert.equal(dispatch.isPending("rename"), true);
   await tick();
   assert.deepEqual(observedPending, [false, true]);
   for (let index = 0; index < 10 && requests.length < 2; index += 1) {
@@ -106,20 +106,20 @@ test("a Solid gateway executor types commands and settles pending after all work
 
   requests[0]!.resolve({ result: { id: "first" } });
   assert.deepEqual(await first, { id: "first" });
-  assert.equal(execute.isPending("rename"), true);
+  assert.equal(dispatch.isPending("rename"), true);
   await tick();
   assert.deepEqual(observedPending, [false, true]);
 
   requests[1]!.resolve({ result: { id: "second" } });
   assert.deepEqual(await second, { id: "second" });
-  assert.equal(execute.isPending("rename"), false);
+  assert.equal(dispatch.isPending("rename"), false);
   await tick();
   assert.deepEqual(observedPending, [false, true, false]);
 
   if (false) {
     // @ts-expect-error title is required by the registered command
-    void execute("rename", { id: "task" });
+    void dispatch("rename", { id: "task" });
     // @ts-expect-error pending state is limited to registered commands
-    execute.isPending("missing");
+    dispatch.isPending("missing");
   }
 });

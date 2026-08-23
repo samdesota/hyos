@@ -36,12 +36,23 @@ const renameTask = commands.define({
   },
 });
 
+const completeTask = commands.define({
+  input: z.object({ id: z.string() }),
+  async optimistic({ transaction }, input) {
+    await transaction.update(tasks, [input.id], { title: "Complete" });
+  },
+});
+
 type InputMatches = Expect<
   Equal<InferCommandInput<typeof renameTask>, { id: string; title: string }>
 >;
 type ResultMatches = Expect<
   Equal<InferCommandResult<typeof renameTask>, { id: string }>
 >;
+type DefaultResultIsVoid = Expect<
+  Equal<InferCommandResult<typeof completeTask>, void>
+>;
 
 void (null as unknown as InputMatches);
 void (null as unknown as ResultMatches);
+void (null as unknown as DefaultResultIsVoid);

@@ -1,5 +1,5 @@
 import { Navigate, useLocation, useNavigate, useParams } from "@solidjs/router";
-import { createGatewayExecutor, createGatewayQuery } from "@hyos/hyapp/solid";
+import { createCommandDispatcher, createGatewayQuery } from "@hyos/hyapp/solid";
 import { Database } from "lucide-solid";
 import {
   Match,
@@ -54,7 +54,7 @@ export function WorkspacePage() {
   const [pendingProjectRoute, setPendingProjectRoute] = createSignal<string>();
   let activityId = 0;
   let searchedPath = location.pathname;
-  const execute = createGatewayExecutor(gateway);
+  const dispatch = createCommandDispatcher(gateway);
 
   const projects = () => board.data() ?? [];
   const members = () => team.data() ?? [];
@@ -204,18 +204,18 @@ export function WorkspacePage() {
 
   async function changeTaskStatus(taskId: string, status: TaskStatus) {
     await runCommand(`Move task to ${statusDetails[status].label}`, () =>
-      execute("moveTask", { taskId, status }),
+      dispatch("moveTask", { taskId, status }),
     );
   }
 
   async function changeAssignee(taskId: string, assigneeId: string | null) {
     await runCommand("Update task owner", () =>
-      execute("assignTask", { taskId, assigneeId }),
+      dispatch("assignTask", { taskId, assigneeId }),
     );
   }
 
   async function removeTask(taskId: string) {
-    await runCommand("Delete task", () => execute("deleteTask", { taskId }));
+    await runCommand("Delete task", () => dispatch("deleteTask", { taskId }));
   }
 
   async function runRebalance() {
@@ -229,7 +229,7 @@ export function WorkspacePage() {
         ]!,
     }));
     await runCommand(`Atomic sprint rebalance (${moves.length} writes)`, () =>
-      execute("rebalanceSprint", { moves }),
+      dispatch("rebalanceSprint", { moves }),
     );
   }
 
@@ -240,7 +240,7 @@ export function WorkspacePage() {
     const form = event.currentTarget as HTMLFormElement;
     const values = new FormData(form);
     const success = await runCommand("Create task", () =>
-      execute("createTask", {
+      dispatch("createTask", {
         id: crypto.randomUUID(),
         projectId: project.id,
         title: String(values.get("title") ?? ""),
@@ -264,7 +264,7 @@ export function WorkspacePage() {
     const name = String(values.get("name") ?? "");
     const id = crypto.randomUUID();
     const success = await runCommand("Create project", () =>
-      execute("createProject", {
+      dispatch("createProject", {
         id,
         ownerId: auth.userId()!,
         name,
@@ -431,7 +431,7 @@ export function WorkspacePage() {
                         </button>
                         <button
                           class="primary-button"
-                          disabled={execute.isPending("createTask")}
+                          disabled={dispatch.isPending("createTask")}
                         >
                           Create task
                         </button>
@@ -476,7 +476,7 @@ export function WorkspacePage() {
                       </button>
                       <button
                         class="primary-button"
-                        disabled={execute.isPending("createProject")}
+                        disabled={dispatch.isPending("createProject")}
                       >
                         Create project
                       </button>

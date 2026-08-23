@@ -33,7 +33,7 @@ export interface GatewaySession<Commands extends GatewayCommands> {
     listener: (result: InferQueryResult<QueryValue>) => void,
   ): () => void;
 
-  execute<Name extends Extract<keyof Commands, string>>(
+  dispatch<Name extends Extract<keyof Commands, string>>(
     command: Name,
     input: InferCommandInput<Commands[Name]>,
   ): Promise<InferCommandResult<Commands[Name]>>;
@@ -75,7 +75,7 @@ class PrincipalGatewaySession<
     );
   }
 
-  execute<Name extends Extract<keyof Commands, string>>(
+  dispatch<Name extends Extract<keyof Commands, string>>(
     command: Name,
     input: InferCommandInput<Commands[Name]>,
   ): Promise<InferCommandResult<Commands[Name]>> {
