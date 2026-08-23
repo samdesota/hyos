@@ -13,8 +13,9 @@ The package now provides command factories, shared typed command registries,
 client/server command runtimes, a typed gateway client, a target-independent
 command compiler, an esbuild adapter, principal-bound gateways, and a shared
 HTTP adapter. The legacy `hydb.command` and `hydb.gateway` interfaces remain
-during migration. See [the command design](./docs/commands.md) for the interface
-and remaining migration sequence.
+during migration. See the [usage guide](./usage.md) for an end-to-end example or
+[the command design](./docs/commands.md) for the interface and remaining
+migration sequence.
 
 ## HTTP gateway adapter
 
@@ -59,21 +60,21 @@ JSON data loss.
 ## SolidJS helpers
 
 The optional `@hyos/hyapp/solid` entry point turns a gateway client into small
-reactive query state and a typed command executor:
+reactive query state and a typed command dispatcher:
 
 ```tsx
 const board = createGatewayQuery(client, boardQuery);
-const execute = createGatewayExecutor(client);
+const dispatch = createCommandDispatcher(client);
 
 <Show when={board.data()}>{(rows) => <Board rows={rows()} />}</Show>;
-<button disabled={execute.isPending("createTask")}>Create task</button>;
-await execute("createTask", { id, projectId, title });
+<button disabled={dispatch.isPending("createTask")}>Create task</button>;
+await dispatch("createTask", { id, projectId, title });
 ```
 
 `createGatewayQuery` owns the initial fetch, live subscription, race handling,
 cleanup, loading/error state, and explicit refetching. Both its client and query
 may be accessors, so changing authenticated gateway context replaces the active
-subscription. `createGatewayExecutor` preserves registry-derived command,
+subscription. `createCommandDispatcher` preserves registry-derived command,
 input, and result types. Its typed `isPending(command)` method reads reactive
 per-command state, so Solid dependents update automatically. Overlapping calls
 keep a command pending until its final execution settles. Solid is an optional

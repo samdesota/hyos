@@ -18,7 +18,7 @@ export type GatewayQueryState<Result> = Readonly<{
   refetch(): void;
 }>;
 
-export type GatewayExecutor<Registry extends CommandRegistry> = (<
+export type CommandDispatcher<Registry extends CommandRegistry> = (<
   Name extends RegistryCommandName<Registry>,
 >(
   command: Name,
@@ -104,9 +104,9 @@ export function createGatewayQuery<
   });
 }
 
-export function createGatewayExecutor<Registry extends CommandRegistry>(
+export function createCommandDispatcher<Registry extends CommandRegistry>(
   client: GatewaySource<GatewayClient<Registry>>,
-): GatewayExecutor<Registry> {
+): CommandDispatcher<Registry> {
   type CommandName = RegistryCommandName<Registry>;
   const inFlight = new Map<CommandName, number>();
   const [pendingCommands, setPendingCommands] = createSignal<
@@ -130,19 +130,19 @@ export function createGatewayExecutor<Registry extends CommandRegistry>(
     }
   }
 
-  const execute = async <Name extends CommandName>(
+  const dispatch = async <Name extends CommandName>(
     command: Name,
     input: RegistryCommandInput<Registry, Name>,
   ): Promise<RegistryCommandResult<Registry, Name>> => {
     adjustPending(command, 1);
     try {
-      return await sourceValue(client).execute(command, input);
+      return await sourceValue(client).dispatch(command, input);
     } finally {
       adjustPending(command, -1);
     }
   };
 
-  return Object.assign(execute, {
+  return Object.assign(dispatch, {
     isPending(command: CommandName) {
       return pendingCommands().has(command);
     },

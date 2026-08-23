@@ -71,6 +71,24 @@ test("server compilation retains authoritative behavior and policies", () => {
   assert.match(compiled.code, /async server/);
 });
 
+test("client compilation supports an optimistic-only void command", () => {
+  const compiled = compileCommandModule(
+    `
+      import { commandFactory } from "@hyos/hyapp";
+      const commands = commandFactory({ principal, defaultPolicy });
+      export const update = commands.define({
+        input,
+        async optimistic() {},
+      });
+    `,
+    { target: "client", filename: "commands.ts" },
+  );
+
+  assert.match(compiled.code, /createClientCommandFactory/);
+  assert.match(compiled.code, /optimistic/);
+  assert.doesNotMatch(compiled.code, /defaultPolicy/);
+});
+
 test("client compilation fails closed on opaque command definitions", () => {
   assert.throws(
     () =>
@@ -78,7 +96,7 @@ test("client compilation fails closed on opaque command definitions", () => {
         `
           import { commandFactory } from "@hyos/hyapp";
           const commands = commandFactory({ principal, defaultPolicy });
-          commands.define({ input, output, ...implementation });
+          commands.define({ input, async optimistic() {}, ...implementation });
         `,
         { target: "client", filename: "opaque.ts" },
       ),

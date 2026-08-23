@@ -150,7 +150,7 @@ export function createNodeGatewayHttpHandler<
         ) {
           throw new GatewayHttpError(400, "Invalid gateway command request");
         }
-        const result = await session.execute(
+        const result = await session.dispatch(
           commandName as Extract<keyof Commands, string>,
           (body as GatewayCommandRequest).input as never,
         );

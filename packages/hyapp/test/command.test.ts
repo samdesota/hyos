@@ -87,6 +87,39 @@ test("a command factory shares principal and policy configuration", async () => 
   }
 });
 
+test("an optimistic-only command is applied on the server by default", async () => {
+  const database = await setup();
+  const writes = hydb.writePolicy(principal);
+  const commands = hyapp.commandFactory({
+    principal,
+    defaultPolicy: [writes.allowAll(projects), writes.allowAll(tasks)],
+  });
+  const renameTask = commands.define({
+    input: z.object({ id: z.string(), title: z.string() }),
+    async optimistic({ transaction }, input) {
+      await transaction.update(tasks, [input.id], { title: input.title });
+    },
+  });
+
+  try {
+    assert.equal(
+      await executeServerCommand(
+        database,
+        renameTask,
+        { id: "task", title: "Default server behavior" },
+        { userId: "alice" },
+      ),
+      undefined,
+    );
+    assert.equal(
+      (await database.fetch(hydb.query(tasks).require())).title,
+      "Default server behavior",
+    );
+  } finally {
+    await database.close();
+  }
+});
+
 test("server output validation and duplicate optimistic application abort", async () => {
   const database = await setup();
   const writes = hydb.writePolicy(principal);

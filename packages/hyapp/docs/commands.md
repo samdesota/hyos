@@ -8,7 +8,7 @@ Hydb currently defines commands and executes them directly on `Database`. That
 was useful while proving the database transaction model, but commands now need
 application concerns that do not belong in a database package:
 
-- a server implementation and a frontend optimistic implementation;
+- optional server-specific behavior and a frontend optimistic implementation;
 - frontend and backend artifacts compiled from one source definition;
 - principal-aware write authorization;
 - registration and transport through gateways; and
@@ -28,8 +28,8 @@ hyapp selects and supplies the policies for an application operation.
 ## Goals
 
 1. Define a command once and produce safe frontend and backend artifacts.
-2. Make optimistic execution optional, asynchronous, and reusable by the
-   authoritative server implementation.
+2. Make optimistic execution optional, asynchronous, and authoritative by
+   default, while remaining reusable by custom server behavior.
 3. Enforce a command's default write-policy set on every database mutation.
 4. Permit exceptional writes only after an authorization assertion based on
    reads from the same transaction snapshot.
@@ -77,8 +77,12 @@ interface has one authoring method:
 
 ```ts
 interface CommandFactory<Principal> {
+  define<InputSchema>(
+    definition: VoidCommandDefinition<Principal, InputSchema>,
+  ): Command<InputSchema, void>;
+
   define<InputSchema, OutputSchema>(
-    definition: CommandDefinition<Principal, InputSchema, OutputSchema>,
+    definition: ResultCommandDefinition<Principal, InputSchema, OutputSchema>,
   ): Command<InputSchema, OutputSchema>;
 }
 ```
@@ -105,31 +109,27 @@ export const renameTask = projectCommands.define({
     name: z.string(),
   }),
 
-  output: z.object({
-    taskId: z.string(),
-  }),
-
   async optimistic({ transaction }, input) {
     await transaction.update(tasks, [input.taskId], {
       name: input.name,
     });
   },
-
-  async server({ transaction, applyOptimistic, principal }, input) {
-    await applyOptimistic();
-    return { taskId: input.taskId };
-  },
 });
 ```
 
-`input` and `output` are required. `server` is required for a server command.
-`optimistic` is optional so a command may deliberately wait for authoritative
-state. `principal` in the server context is inferred from the factory's Zod
-schema, while command input is inferred independently from its input schema.
+`input` is required. When `output` is omitted the result is `void`. When
+`server` is omitted, authoritative execution runs `optimistic` in the server
+transaction automatically. This is the default for ordinary mutations.
 
-Both methods are asynchronous. This gives frontend transactions room to
-persist an optimistic layer or resolve local indexes and gives both runtimes
-one mutation interface.
+`server` is required only for server-only behavior, a meaningful result, or a
+custom authorization scope. `optimistic` remains optional so a command may
+deliberately wait for authoritative state. `principal` in a custom server
+context is inferred from the factory's Zod schema, while command input is
+inferred independently from its input schema.
+
+Both methods are asynchronous when present. This gives frontend transactions
+room to persist an optimistic layer or resolve local indexes and gives both
+runtimes one mutation interface.
 
 The authoritative server context also receives the gateway-validated
 `principal`. The optimistic implementation must not make authorization
@@ -161,8 +161,8 @@ client fails immediately.
 
 ### Applying the optimistic implementation on the server
 
-The server context receives `applyOptimistic()` rather than reaching through
-the command value:
+When a custom server method is present, its context receives
+`applyOptimistic()` rather than reaching through the command value:
 
 ```ts
 async server({ transaction, applyOptimistic }, input) {
@@ -172,7 +172,6 @@ async server({ transaction, applyOptimistic }, input) {
     taskId: input.taskId,
   });
 
-  return { taskId: input.taskId };
 }
 ```
 
@@ -303,7 +302,6 @@ async server({ transaction, applyOptimistic, principal }, input) {
     await applyOptimistic();
   });
 
-  return { taskId: input.taskId };
 }
 ```
 
@@ -370,7 +368,6 @@ uses explicit constructors:
 ```ts
 const contract = createCommandContract({
   input,
-  output,
 });
 
 const clientCommands = createClientCommandFactory();
@@ -386,9 +383,8 @@ const serverCommands = createServerCommandFactory({
 });
 
 export const serverRenameTask = serverCommands.define({
-  contract,
+  input,
   optimistic,
-  server,
 });
 ```
 
@@ -412,11 +408,11 @@ implementations:
 
 ```ts
 const projectCommands = createClientCommandFactory();
-projectCommands.define({ input, output, optimistic });
+projectCommands.define({ input, optimistic });
 ```
 
 Backend output retains the factory configuration and each command's contract,
-optimistic implementation, and server implementation:
+optimistic implementation, and any custom server implementation:
 
 ```ts
 const projectCommands = createServerCommandFactory({
@@ -425,9 +421,8 @@ const projectCommands = createServerCommandFactory({
 });
 
 projectCommands.define({
-  contract,
+  input,
   optimistic,
-  server,
 });
 ```
 
@@ -448,8 +443,9 @@ The authoritative runner executes a command in this order:
 1. Validate and parse the principal context and command input.
 2. Deduplicate the invocation by its stable invocation ID.
 3. Open one database transaction and snapshot.
-4. Run `server`; for each mutation, materialize `before` and `after`, evaluate
-   its default policy or active admin scope, and stage it only when authorized.
+4. Run the custom `server`, or apply `optimistic` automatically when `server`
+   is absent. For each mutation, materialize `before` and `after`, evaluate its
+   default policy or active admin scope, and stage it only when authorized.
 5. Validate the command output while the transaction can still be aborted.
 6. Validate the transaction read set underlying policy checks and admin
    assertions.
@@ -527,7 +523,7 @@ const client = hyapp.gatewayClient({
   transport,
 });
 
-const renamed = await client.execute("renameTask", {
+await client.dispatch("renameTask", {
   taskId: "task-1",
   name: "New name",
 });

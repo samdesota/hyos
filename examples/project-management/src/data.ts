@@ -151,7 +151,6 @@ const commands = hyapp.commandFactory({
   principal: principalSchema,
   defaultPolicy: writePolicies,
 });
-const identifierResult = z.object({ id: z.string() });
 
 export const createProject = commands.define({
   input: z.object({
@@ -162,13 +161,8 @@ export const createProject = commands.define({
     color: z.string().regex(/^#[0-9a-f]{6}$/i),
     createdAt: z.date(),
   }),
-  output: identifierResult,
   async optimistic({ transaction }, input) {
     await transaction.insert(projects, input);
-  },
-  async server({ applyOptimistic }, input) {
-    await applyOptimistic();
-    return { id: input.id };
   },
 });
 
@@ -183,13 +177,8 @@ export const createTask = commands.define({
     assigneeId: z.string().nullable().default(null),
     createdAt: z.date(),
   }),
-  output: identifierResult,
   async optimistic({ transaction }, input) {
     await transaction.insert(tasks, input);
-  },
-  async server({ applyOptimistic }, input) {
-    await applyOptimistic();
-    return { id: input.id };
   },
 });
 
@@ -198,13 +187,8 @@ export const moveTask = commands.define({
     taskId: z.string().min(1),
     status: z.enum(taskStatuses),
   }),
-  output: identifierResult,
   async optimistic({ transaction }, input) {
     await transaction.update(tasks, [input.taskId], { status: input.status });
-  },
-  async server({ applyOptimistic }, input) {
-    await applyOptimistic();
-    return { id: input.taskId };
   },
 });
 
@@ -213,27 +197,17 @@ export const assignTask = commands.define({
     taskId: z.string().min(1),
     assigneeId: z.string().nullable(),
   }),
-  output: identifierResult,
   async optimistic({ transaction }, input) {
     await transaction.update(tasks, [input.taskId], {
       assigneeId: input.assigneeId,
     });
   },
-  async server({ applyOptimistic }, input) {
-    await applyOptimistic();
-    return { id: input.taskId };
-  },
 });
 
 export const deleteTask = commands.define({
   input: z.object({ taskId: z.string().min(1) }),
-  output: identifierResult,
   async optimistic({ transaction }, input) {
     await transaction.delete(tasks, [input.taskId]);
-  },
-  async server({ applyOptimistic }, input) {
-    await applyOptimistic();
-    return { id: input.taskId };
   },
 });
 
@@ -245,15 +219,10 @@ export const rebalanceSprint = commands.define({
       )
       .min(1),
   }),
-  output: z.object({ updated: z.number().int().nonnegative() }),
   async optimistic({ transaction }, input) {
     for (const move of input.moves) {
       await transaction.update(tasks, [move.taskId], { status: move.status });
     }
-  },
-  async server({ applyOptimistic }, input) {
-    await applyOptimistic();
-    return { updated: input.moves.length };
   },
 });
 

@@ -53,14 +53,14 @@ test("a hyapp gateway enforces reads and dispatches new commands", async () => {
       { id: "task", title: "Before" },
     ]);
     assert.deepEqual(
-      await session.execute("renameTask", { id: "task", title: "After" }),
+      await session.dispatch("renameTask", { id: "task", title: "After" }),
       { id: "task" },
     );
     assert.deepEqual(await session.fetch(hydb.query(tasks).many()), [
       { id: "task", title: "After" },
     ]);
     await assert.rejects(
-      session.execute("missing" as "renameTask", {
+      session.dispatch("missing" as "renameTask", {
         id: "task",
         title: "Ignored",
       }),

@@ -134,7 +134,7 @@ export function httpGatewayTransport(options: {
       return () => controller.abort();
     },
 
-    async execute(
+    async dispatch(
       request: GatewayCommandRequest,
     ): Promise<GatewayCommandResponse> {
       const response = await globalThis.fetch(

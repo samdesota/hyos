@@ -86,7 +86,7 @@ function recordingTransaction(updates: unknown[]): MutationTransaction {
   } as MutationTransaction;
 }
 
-test("a gateway client executes a typed registry through a direct transport", async () => {
+test("a gateway client dispatches a typed registry through a direct transport", async () => {
   const { database, gateway, clientRegistry } = await setup();
   const updates: unknown[] = [];
   const lifecycle: string[] = [];
@@ -122,7 +122,7 @@ test("a gateway client executes a typed registry through a direct transport", as
 
   try {
     assert.deepEqual(
-      await client.execute("renameTask", {
+      await client.dispatch("renameTask", {
         id: "task",
         title: "  After  ",
       }),
@@ -151,7 +151,7 @@ test("client validation failures reject optimistic layers", async () => {
     subscribe() {
       return () => undefined;
     },
-    async execute() {
+    async dispatch() {
       transportCalls += 1;
       return { result: { id: "task", title: 42 } };
     },
@@ -181,7 +181,7 @@ test("client validation failures reject optimistic layers", async () => {
 
   try {
     await assert.rejects(
-      client.execute("renameTask", { id: "task", title: "After" }),
+      client.dispatch("renameTask", { id: "task", title: "After" }),
       z.ZodError,
     );
     assert.equal(transportCalls, 1);
@@ -200,7 +200,7 @@ test("a gateway client rejects an uncompiled server registry", async () => {
     subscribe() {
       return () => undefined;
     },
-    async execute() {
+    async dispatch() {
       return { result: undefined };
     },
   };
