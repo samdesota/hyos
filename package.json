@@ -9,6 +9,7 @@
   "scripts": {
     "demo:project-management": "npm run dev --workspace @hyos/hydb-project-management-example",
     "dev": "npm run dev --workspace @hyos/components",
+    "dev:notes": "npm run dev --workspace @hyos/hy-notes",
     "build": "npm run build --workspace @hyos/components",
     "typecheck": "npm run typecheck --workspace @hyos/components",
     "test": "npm run test --workspaces --if-present",
