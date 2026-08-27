@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@hyos/hyapp": ["../hyapp/src/index.ts"],
+      "@hyos/hyapp/compiler": ["../hyapp/src/compiler.ts"],
+      "@hyos/hyapp/http": ["../hyapp/src/http.ts"],
+      "@hyos/hyapp/node": ["../hyapp/src/node/index.ts"],
+      "@hyos/hyapp/solid": ["../hyapp/src/solid.ts"],
+      "@hyos/components": ["../hyos-components/src/index.ts"],
+      "@hyos/hydb": ["../hydb/src/index.ts"],
+      "@hyos/hydb/node": ["../hydb/src/node/index.ts"]
+    },
+    "types": ["node", "vite/client"],
+    "noEmit": true
+  },
+  "include": ["src", "test", "vite.config.ts"]
+}
