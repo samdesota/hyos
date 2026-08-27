@@ -30,6 +30,12 @@ const selectionSchema = z.object({
     .optional(),
 });
 
+const screenshotSchema = z.object({
+  dataUrl: z.string().startsWith("data:image/").max(4_000_000),
+  width: z.number().positive().max(4_096),
+  height: z.number().positive().max(4_096),
+});
+
 export function createUiAgentRouter(agent: QuickIterationAgent) {
   return t.router({
     system: t.router({
@@ -45,6 +51,8 @@ export function createUiAgentRouter(agent: QuickIterationAgent) {
           z.object({
             instruction: z.string().min(1).max(4_000),
             selection: selectionSchema,
+            contextElements: z.array(selectionSchema).max(60).optional(),
+            screenshot: screenshotSchema.optional(),
             mode: z.enum(["preview", "apply"]).default("preview"),
           }),
         )

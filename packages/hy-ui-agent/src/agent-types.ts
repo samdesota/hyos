@@ -17,6 +17,12 @@ export interface ElementSelection {
 export interface QuickIterationRequest {
   instruction: string;
   selection: ElementSelection;
+  contextElements?: ElementSelection[];
+  screenshot?: {
+    dataUrl: string;
+    width: number;
+    height: number;
+  };
   mode?: "preview" | "apply";
 }
 

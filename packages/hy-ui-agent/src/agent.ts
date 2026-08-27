@@ -40,6 +40,35 @@ const inputSchema = z.object({
       })
       .optional(),
   }),
+  contextElements: z
+    .array(
+      z.object({
+        tagName: z.string().min(1),
+        text: z.string().max(8_000).optional(),
+        id: z.string().optional(),
+        classNames: z.array(z.string()).max(100).optional(),
+        attributes: z.record(z.string(), z.string()).optional(),
+        cssPath: z.string().optional(),
+        sourceHint: z.string().optional(),
+        boundingBox: z
+          .object({
+            x: z.number(),
+            y: z.number(),
+            width: z.number(),
+            height: z.number(),
+          })
+          .optional(),
+      }),
+    )
+    .max(60)
+    .optional(),
+  screenshot: z
+    .object({
+      dataUrl: z.string().startsWith("data:image/").max(4_000_000),
+      width: z.number().positive().max(4_096),
+      height: z.number().positive().max(4_096),
+    })
+    .optional(),
   mode: z.enum(["preview", "apply"]).optional(),
 });
 
@@ -122,12 +151,28 @@ export function createQuickIterationAgent(
       rawRequest: QuickIterationRequest,
     ): Promise<QuickIterationResult> {
       const request = inputSchema.parse(rawRequest);
-      const context = await retrieveLikelyContext(project, request.selection);
+      const selections = [
+        request.selection,
+        ...(request.contextElements ?? []),
+      ];
+      const context = await retrieveLikelyContext(project, selections);
+      const userPrompt = `Instruction:\n${request.instruction}\n\nPrimary selected element:\n${JSON.stringify(request.selection, null, 2)}\n\nOther elements intersecting the selected region:\n${JSON.stringify(request.contextElements ?? [], null, 2)}${context}`;
       const messages: GatewayMessage[] = [
         { role: "system", content: systemPrompt() },
         {
           role: "user",
-          content: `Instruction:\n${request.instruction}\n\nSelected element:\n${JSON.stringify(request.selection, null, 2)}${context}`,
+          content: request.screenshot
+            ? [
+                { type: "text", text: userPrompt },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: request.screenshot.dataUrl,
+                    detail: "high",
+                  },
+                },
+              ]
+            : userPrompt,
         },
       ];
 
@@ -193,11 +238,12 @@ export function createQuickIterationAgent(
 
 async function retrieveLikelyContext(
   project: ReturnType<typeof createProjectTools>,
-  selection: ElementSelection,
+  selections: ElementSelection[],
 ): Promise<string> {
-  const sourcePath = selection.sourceHint?.match(/^(.*):\d+:\d+$/)?.[1];
   const paths = new Set<string>();
-  if (sourcePath) {
+  for (const selection of selections) {
+    const sourcePath = selection.sourceHint?.match(/^(.*):\d+:\d+$/)?.[1];
+    if (!sourcePath) continue;
     try {
       await project.readFile(sourcePath);
       paths.add(sourcePath);
@@ -205,11 +251,13 @@ async function retrieveLikelyContext(
       // Stale browser markup should fall back to ordinary code search.
     }
   }
-  const anchors = [
-    selection.id,
-    ...(selection.classNames ?? []),
-    selection.text?.trim().slice(0, 120),
-  ].filter((value): value is string => Boolean(value?.trim()));
+  const anchors = selections
+    .flatMap((selection) => [
+      selection.id,
+      ...(selection.classNames ?? []),
+      selection.text?.trim().slice(0, 120),
+    ])
+    .filter((value): value is string => Boolean(value?.trim()));
 
   for (const anchor of anchors.slice(0, 6)) {
     for (const match of await project.searchCode(anchor)) {

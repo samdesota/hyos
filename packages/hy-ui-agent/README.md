@@ -73,9 +73,24 @@ different AI Gateway model. The agent can list, search, and read text files
 inside the Vite project root. In `apply` mode it only performs exact text
 replacements that uniquely match existing files inside that root.
 
+## Region iteration UI
+
+With the dev server running, press `Alt/Option + Shift + A` to enter region
+selection mode. Drag around part of the page, describe the change, and submit.
+The host-page script collects visible DOM elements intersecting the rectangle,
+including any `data-source-loc` values, and captures a cropped screenshot. The
+instruction, element context, relevant source files, and screenshot are sent to
+the configured AI Gateway model; a successful response is applied immediately.
+
+The iframe owns the selection and prompt UI, while the injected host script
+owns DOM inspection and screenshot capture. This keeps cross-origin iframe
+access out of the design and prevents the overlay itself from appearing in the
+captured image.
+
 Current routes:
 
 - `GET /health` — readiness check
 - `GET /client.js` — host-page iframe bootstrap
-- `GET /overlay` — placeholder overlay document
+- `GET /html2canvas.js` — local screenshot renderer used by the host script
+- `GET /overlay` — region-selection and instruction UI
 - `/trpc/*` — typed UI-agent API

@@ -8,6 +8,7 @@ import type { QuickIterationAgent } from "./agent-types.js";
 import { renderClientScript, renderOverlayHtml } from "./assets.js";
 import { createVercelGateway } from "./gateway.js";
 import { createUiAgentRouter } from "./trpc.js";
+import { renderHtml2CanvasScript } from "./vendor.js";
 
 export interface UiAgentServerOptions {
   host?: string;
@@ -119,6 +120,16 @@ export function createUiAgentServer(
         200,
         "text/javascript; charset=utf-8",
         renderClientScript(),
+      );
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/html2canvas.js") {
+      send(
+        response,
+        200,
+        "text/javascript; charset=utf-8",
+        renderHtml2CanvasScript(),
       );
       return;
     }

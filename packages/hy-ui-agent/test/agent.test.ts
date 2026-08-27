@@ -36,6 +36,12 @@ function toolCall(name: string, args: object): GatewayMessage {
   };
 }
 
+function contentText(message: GatewayMessage | undefined): string {
+  return typeof message?.content === "string"
+    ? message.content
+    : JSON.stringify(message?.content ?? "");
+}
+
 test("inspects the project and applies a submitted exact replacement", async () => {
   const root = await mkdtemp(join(tmpdir(), "hy-ui-agent-"));
   const file = join(root, "button.tsx");
@@ -69,11 +75,11 @@ test("inspects the project and applies a submitted exact replacement", async () 
   assert.equal(result.edits[0]?.path, "button.tsx");
   assert.match(await readFile(file, "utf8"), /class="large"/);
   assert.match(
-    gateway.requests[1]?.messages.at(-1)?.content ?? "",
+    contentText(gateway.requests[1]?.messages.at(-1)),
     /button\.tsx:1/,
   );
   assert.match(
-    gateway.requests[2]?.messages.at(-1)?.content ?? "",
+    contentText(gateway.requests[2]?.messages.at(-1)),
     /class=\\"small\\"/,
   );
 });
@@ -103,12 +109,22 @@ test("preview returns edits without changing files", async () => {
       classNames: ["card"],
       sourceHint: "styles.css:1:1",
     },
+    contextElements: [{ tagName: "span", text: "Card title" }],
+    screenshot: {
+      dataUrl: "data:image/png;base64,AA==",
+      width: 20,
+      height: 20,
+    },
   });
 
   assert.equal(result.applied, false);
   assert.equal(await readFile(file, "utf8"), ".card { padding: 8px; }\n");
   assert.match(
-    gateway.requests[0]?.messages.at(-1)?.content ?? "",
+    contentText(gateway.requests[0]?.messages.at(-1)),
     /--- styles\.css ---/,
+  );
+  assert.match(
+    contentText(gateway.requests[0]?.messages.at(-1)),
+    /data:image\/png;base64,AA==/,
   );
 });

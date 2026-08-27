@@ -6,9 +6,16 @@ export interface GatewayToolCall {
   };
 }
 
+export type GatewayContentPart =
+  | { type: "text"; text: string }
+  | {
+      type: "image_url";
+      image_url: { url: string; detail?: "auto" | "low" | "high" };
+    };
+
 export interface GatewayMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: string | GatewayContentPart[] | null;
   tool_call_id?: string;
   tool_calls?: GatewayToolCall[];
 }
