@@ -195,13 +195,21 @@ async function retrieveLikelyContext(
   project: ReturnType<typeof createProjectTools>,
   selection: ElementSelection,
 ): Promise<string> {
+  const sourcePath = selection.sourceHint?.match(/^(.*):\d+:\d+$/)?.[1];
+  const paths = new Set<string>();
+  if (sourcePath) {
+    try {
+      await project.readFile(sourcePath);
+      paths.add(sourcePath);
+    } catch {
+      // Stale browser markup should fall back to ordinary code search.
+    }
+  }
   const anchors = [
-    selection.sourceHint,
     selection.id,
     ...(selection.classNames ?? []),
     selection.text?.trim().slice(0, 120),
   ].filter((value): value is string => Boolean(value?.trim()));
-  const paths = new Set<string>();
 
   for (const anchor of anchors.slice(0, 6)) {
     for (const match of await project.searchCode(anchor)) {

@@ -9,6 +9,11 @@ import {
   type UiAgentServerOptions,
 } from "./server.js";
 
+export {
+  reactSourceLocations,
+  type ReactSourceLocationsOptions,
+} from "./react-source-locations.js";
+
 export interface UiAgentPluginOptions {
   /** Start a companion server with these options. */
   server?: UiAgentServerOptions;

@@ -98,9 +98,17 @@ test("preview returns edits without changing files", async () => {
 
   const result = await agent.run({
     instruction: "Add more space",
-    selection: { tagName: "div", classNames: ["card"] },
+    selection: {
+      tagName: "div",
+      classNames: ["card"],
+      sourceHint: "styles.css:1:1",
+    },
   });
 
   assert.equal(result.applied, false);
   assert.equal(await readFile(file, "utf8"), ".card { padding: 8px; }\n");
+  assert.match(
+    gateway.requests[0]?.messages.at(-1)?.content ?? "",
+    /--- styles\.css ---/,
+  );
 });

@@ -9,12 +9,19 @@ full-page iframe.
 ```ts
 // vite.config.ts
 import { defineConfig } from "vite";
-import { uiAgent } from "@hyos/ui-agent/vite";
+import { reactSourceLocations, uiAgent } from "@hyos/ui-agent/vite";
+import react from "@vitejs/plugin-react";
 
 export default defineConfig({
-  plugins: [uiAgent()],
+  plugins: [react(), reactSourceLocations(), uiAgent()],
 });
 ```
+
+`reactSourceLocations()` only transforms `.jsx` and `.tsx` modules inside the
+consuming app's `src` directory. It adds locations such as
+`data-source-loc="src/App.tsx:18:5"` to intrinsic DOM elements while leaving
+custom React components and all dependency code untouched. For a different
+layout, pass `reactSourceLocations({ sourceDir: "client" })`.
 
 The plugin chooses a free companion-server port automatically. The server API
 defaults to `http://127.0.0.1:4317` when it is run separately:

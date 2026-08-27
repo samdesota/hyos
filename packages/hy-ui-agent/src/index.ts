@@ -25,3 +25,7 @@ export type {
   QuickIterationResult,
   TextReplacement,
 } from "./agent-types.js";
+export {
+  reactSourceLocations,
+  type ReactSourceLocationsOptions,
+} from "./react-source-locations.js";
