@@ -44,6 +44,28 @@ const client = createUiAgentClient({
 const health = await client.system.health.query();
 ```
 
+Run a quick iteration in preview mode before allowing the server to write the
+exact replacements:
+
+```ts
+const preview = await client.iteration.run.mutate({
+  instruction: "Make this button feel less prominent",
+  selection: {
+    tagName: "button",
+    text: "Cancel",
+    classNames: ["secondary-action"],
+    cssPath: "main > form > button.secondary-action",
+  },
+  mode: "preview",
+});
+```
+
+The companion server reads `AI_GATEWAY_API_KEY` from the nearest `.env` file.
+It uses `zai/glm-5.3-flash` by default; set `UI_AGENT_MODEL` to test a
+different AI Gateway model. The agent can list, search, and read text files
+inside the Vite project root. In `apply` mode it only performs exact text
+replacements that uniquely match existing files inside that root.
+
 Current routes:
 
 - `GET /health` — readiness check

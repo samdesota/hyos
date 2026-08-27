@@ -3,12 +3,20 @@ import type { AddressInfo } from "node:net";
 
 import { createHTTPHandler } from "@trpc/server/adapters/standalone";
 
+import { createQuickIterationAgent } from "./agent.js";
+import type { QuickIterationAgent } from "./agent-types.js";
 import { renderClientScript, renderOverlayHtml } from "./assets.js";
-import { uiAgentRouter } from "./trpc.js";
+import { createVercelGateway } from "./gateway.js";
+import { createUiAgentRouter } from "./trpc.js";
 
 export interface UiAgentServerOptions {
   host?: string;
   port?: number;
+  projectRoot?: string;
+  apiKey?: string;
+  model?: string;
+  gatewayBaseUrl?: string;
+  agent?: QuickIterationAgent;
 }
 
 export interface UiAgentServer {
@@ -48,8 +56,30 @@ export function createUiAgentServer(
   const port = options.port ?? 4317;
   let serverUrl: string | undefined;
 
+  const apiKey = options.apiKey ?? process.env.AI_GATEWAY_API_KEY;
+  const unavailableAgent = {
+    run(): Promise<never> {
+      return Promise.reject(
+        new Error("AI_GATEWAY_API_KEY is required to run a quick iteration"),
+      );
+    },
+  };
+  const agent =
+    options.agent ??
+    (apiKey
+      ? createQuickIterationAgent({
+          projectRoot: options.projectRoot ?? process.cwd(),
+          gateway: createVercelGateway({
+            apiKey,
+            baseUrl: options.gatewayBaseUrl,
+          }),
+          model: options.model ?? process.env.UI_AGENT_MODEL,
+        })
+      : unavailableAgent);
+  const router = createUiAgentRouter(agent);
+
   const trpcHandler = createHTTPHandler({
-    router: uiAgentRouter,
+    router,
     basePath: "/trpc/",
     createContext({ req, res }) {
       return { request: req, response: res };

@@ -9,8 +9,19 @@ export {
   type UiAgentServerOptions,
 } from "./server.js";
 export {
-  uiAgentRouter,
+  createUiAgentRouter,
   type UiAgentContext,
   type UiAgentRouter,
 } from "./trpc.js";
 export { uiAgent, type UiAgentPluginOptions } from "./vite.js";
+export {
+  createQuickIterationAgent,
+  type CreateQuickIterationAgentOptions,
+} from "./agent.js";
+export type {
+  ElementSelection,
+  QuickIterationAgent,
+  QuickIterationRequest,
+  QuickIterationResult,
+  TextReplacement,
+} from "./agent-types.js";

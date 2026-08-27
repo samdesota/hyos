@@ -1,4 +1,7 @@
-import type { HtmlTagDescriptor, Plugin } from "vite";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+import { loadEnv, type HtmlTagDescriptor, type Plugin } from "vite";
 
 import {
   createUiAgentServer,
@@ -17,12 +20,24 @@ function normalizeServerUrl(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;
 }
 
+function findEnvDir(start: string): string {
+  let directory = start;
+  while (true) {
+    if (existsSync(join(directory, ".env"))) return directory;
+    const parent = dirname(directory);
+    if (parent === directory) return start;
+    directory = parent;
+  }
+}
+
 export function uiAgent(options: UiAgentPluginOptions = {}): Plugin {
   if (options.server !== undefined && options.serverUrl !== undefined) {
     throw new Error("uiAgent accepts either server or serverUrl, not both");
   }
 
   let companionServer: UiAgentServer | undefined;
+  let projectRoot: string | undefined;
+  let environment: Record<string, string> = {};
   let activeServerUrl = options.serverUrl
     ? normalizeServerUrl(options.serverUrl)
     : undefined;
@@ -30,9 +45,23 @@ export function uiAgent(options: UiAgentPluginOptions = {}): Plugin {
   return {
     name: "hyos-ui-agent",
     apply: "serve",
+    configResolved(config) {
+      projectRoot = config.root;
+      environment = loadEnv(
+        config.mode,
+        findEnvDir(config.envDir || config.root),
+        "",
+      );
+    },
     async configureServer(viteServer) {
       if (activeServerUrl === undefined) {
-        companionServer = createUiAgentServer(options.server ?? { port: 0 });
+        companionServer = createUiAgentServer({
+          port: 0,
+          projectRoot,
+          apiKey: environment.AI_GATEWAY_API_KEY,
+          model: environment.UI_AGENT_MODEL,
+          ...options.server,
+        });
         activeServerUrl = await companionServer.start();
         viteServer.config.logger.info(`  UI Agent: ${activeServerUrl}/overlay`);
       }
