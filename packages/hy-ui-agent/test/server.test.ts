@@ -12,11 +12,15 @@ test("serves the bootstrap script and iframe document", async () => {
   const telemetryDirectory = mkdtempSync(join(tmpdir(), "hy-ui-agent-test-"));
   const databasePath = join(telemetryDirectory, "telemetry.sqlite");
   let iterationRequest: unknown;
+  let runCount = 0;
+  let undoneId: string | undefined;
   const server = createUiAgentServer({
     port: 0,
+    model: "thinkingmachines/inkling-small",
     telemetry: { databasePath },
     agent: {
       run(request, report) {
+        runCount += 1;
         iterationRequest = request;
         report?.({ phase: "context", message: "Test context collected" });
         return Promise.resolve({
@@ -26,6 +30,10 @@ test("serves the bootstrap script and iframe document", async () => {
           edits: [],
           applied: false,
         });
+      },
+      undo(id) {
+        undoneId = id;
+        return Promise.resolve({ id, undone: true });
       },
     },
   });
@@ -44,10 +52,21 @@ test("serves the bootstrap script and iframe document", async () => {
       protocol: "trpc",
       version: 1,
     });
+    assert.deepEqual(await client.system.configuration.query(), {
+      defaultModel: "thinkingmachines/inkling-small",
+      models: [
+        { id: "zai/glm-5.3-flash", label: "GLM 5.3 Flash" },
+        { id: "thinkingmachines/inkling-small", label: "Inkling Small" },
+        { id: "google/gemini-3-flash", label: "Gemini 3 Flash" },
+        { id: "anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5" },
+        { id: "openai/gpt-5.4-mini-fast", label: "GPT-5.4 Mini Fast" },
+      ],
+    });
     assert.deepEqual(
       await client.iteration.run.mutate({
         requestId: "request-1",
         instruction: "Tighten the spacing",
+        model: "google/gemini-3-flash",
         selection: { tagName: "section", classNames: ["card"] },
         contextElements: [{ tagName: "h2", text: "Revenue" }],
         screenshot: {
@@ -93,6 +112,7 @@ test("serves the bootstrap script and iframe document", async () => {
     assert.equal(existsSync(databasePath), true);
     assert.deepEqual(iterationRequest, {
       instruction: "Tighten the spacing",
+      model: "google/gemini-3-flash",
       selection: { tagName: "section", classNames: ["card"] },
       contextElements: [{ tagName: "h2", text: "Revenue" }],
       screenshot: {
@@ -139,6 +159,21 @@ test("serves the bootstrap script and iframe document", async () => {
       result: { data: { id: string; applied: boolean } };
     };
     assert.equal(browserMutation.result.data.id, "iteration-1");
+    await client.iteration.run.mutate({
+      requestId: "request-2",
+      instruction: "This duplicate must not run",
+      selection: { tagName: "article" },
+      mode: "apply",
+    });
+    assert.equal(runCount, 2);
+    assert.deepEqual(
+      await client.iteration.undo.mutate({ id: "iteration-1" }),
+      {
+        id: "iteration-1",
+        undone: true,
+      },
+    );
+    assert.equal(undoneId, "iteration-1");
 
     const preflightResponse = await fetch(`${url}/trpc/system.health`, {
       method: "OPTIONS",
@@ -163,6 +198,9 @@ test("serves the bootstrap script and iframe document", async () => {
     assert.match(clientScript, /data-source-loc/);
     assert.match(clientScript, /html2canvas/);
     assert.match(clientScript, /contextElements/);
+    assert.match(clientScript, /sessionStorage/);
+    assert.match(clientScript, /restore-iteration/);
+    assert.match(clientScript, /continuationId/);
 
     const overlayResponse = await fetch(`${url}/overlay`);
     const overlayHtml = await overlayResponse.text();
@@ -178,6 +216,12 @@ test("serves the bootstrap script and iframe document", async () => {
     assert.match(overlayScript, /What should change in this region/);
     assert.match(overlayScript, /Agent activity/);
     assert.match(overlayScript, /iteration\.activity/);
+    assert.match(overlayScript, /Undo/);
+    assert.match(overlayScript, /Dismiss/);
+    assert.match(overlayScript, /What should change next/);
+    assert.match(overlayScript, /Make follow-up/);
+    assert.match(overlayScript, /Loading models/);
+    assert.match(overlayScript, /Last change used/);
 
     const overlayStylesResponse = await fetch(`${url}/overlay.css`);
     assert.equal(overlayStylesResponse.status, 200);
@@ -185,7 +229,9 @@ test("serves the bootstrap script and iframe document", async () => {
       overlayStylesResponse.headers.get("content-type") ?? "",
       /text\/css/,
     );
-    assert.match(await overlayStylesResponse.text(), /\.prompt-panel/);
+    const overlayStyles = await overlayStylesResponse.text();
+    assert.match(overlayStyles, /\.prompt-panel/);
+    assert.match(overlayStyles, /\.model-picker/);
 
     assert.equal((await fetch(`${url}/activity-client.js`)).status, 404);
     assert.equal((await fetch(`${url}/html2canvas.js`)).status, 404);

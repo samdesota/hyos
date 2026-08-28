@@ -15,6 +15,11 @@ export {
 } from "./trpc.js";
 export { uiAgent, type UiAgentPluginOptions } from "./vite.js";
 export {
+  DEFAULT_UI_AGENT_MODEL,
+  UI_AGENT_MODEL_OPTIONS,
+  type UiAgentModelOption,
+} from "./models.js";
+export {
   createQuickIterationAgent,
   type CreateQuickIterationAgentOptions,
 } from "./agent.js";

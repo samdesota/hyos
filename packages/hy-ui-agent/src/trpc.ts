@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { QuickIterationAgent } from "./agent-types.js";
 import { IterationActivityBus } from "./activity.js";
 import type { TelemetryStore } from "./telemetry.js";
+import type { UiAgentModelOption } from "./models.js";
 
 export interface UiAgentContext {}
 
@@ -37,7 +38,17 @@ export function createUiAgentRouter(
   agent: QuickIterationAgent,
   activity = new IterationActivityBus(),
   telemetry?: TelemetryStore,
+  configuration?: {
+    defaultModel: string;
+    models: UiAgentModelOption[];
+  },
 ) {
+  const runs = new Map<string, ReturnType<QuickIterationAgent["run"]>>();
+  const undos = new Map<
+    string,
+    ReturnType<NonNullable<QuickIterationAgent["undo"]>>
+  >();
+
   return t.router({
     system: t.router({
       health: t.procedure.query(() => ({
@@ -45,6 +56,7 @@ export function createUiAgentRouter(
         protocol: "trpc" as const,
         version: 1,
       })),
+      configuration: t.procedure.query(() => configuration),
     }),
     telemetry: t.router({
       ingest: t.procedure
@@ -77,6 +89,18 @@ export function createUiAgentRouter(
         .query(({ input }) => telemetry?.recent(input.limit) ?? []),
     }),
     iteration: t.router({
+      undo: t.procedure
+        .input(z.object({ id: z.string().min(1).max(200) }))
+        .mutation(({ input }) => {
+          const existing = undos.get(input.id);
+          if (existing) return existing;
+          if (!agent.undo)
+            throw new Error("Undo is not supported by this agent");
+          const undo = agent.undo(input.id);
+          undos.set(input.id, undo);
+          setTimeout(() => undos.delete(input.id), 5 * 60_000).unref();
+          return undo;
+        }),
       activity: t.procedure
         .input(z.object({ requestId: z.string().min(1).max(200) }))
         .subscription(({ input, signal }) =>
@@ -90,6 +114,8 @@ export function createUiAgentRouter(
           z.object({
             requestId: z.string().min(1).max(200),
             instruction: z.string().min(1).max(4_000),
+            model: z.string().min(1).max(200).optional(),
+            continuationId: z.string().min(1).max(200).optional(),
             selection: selectionSchema,
             contextElements: z.array(selectionSchema).max(60).optional(),
             screenshot: screenshotSchema.optional(),
@@ -98,67 +124,74 @@ export function createUiAgentRouter(
         )
         .mutation(async ({ input }) => {
           const { requestId, ...request } = input;
-          const startedAt = Date.now();
-          telemetry?.log({
-            source: "agent",
-            level: "info",
-            event: "iteration.started",
-            message: request.instruction,
-            requestId,
-            data: {
-              mode: request.mode,
-              selection: request.selection,
-              contextElementCount: request.contextElements?.length ?? 0,
-              hasScreenshot: Boolean(request.screenshot),
-            },
-          });
-          try {
-            const result = await agent.run(request, (event) => {
-              activity.publish(requestId, event);
-              telemetry?.log({
-                source: "agent",
-                level: "info",
-                event: `agent.${event.phase}`,
-                message: event.message,
-                requestId,
-                data: event.detail ? { detail: event.detail } : undefined,
-              });
-            });
-            activity.publish(requestId, {
-              phase: "complete",
-              message: "Iteration complete",
-            });
+          const existing = runs.get(requestId);
+          if (existing) return existing;
+          const run = (async () => {
+            const startedAt = Date.now();
             telemetry?.log({
               source: "agent",
               level: "info",
-              event: "iteration.completed",
-              message: result.summary,
+              event: "iteration.started",
+              message: request.instruction,
               requestId,
               data: {
-                durationMs: Date.now() - startedAt,
-                model: result.model,
-                editCount: result.edits.length,
-                applied: result.applied,
+                mode: request.mode,
+                selection: request.selection,
+                contextElementCount: request.contextElements?.length ?? 0,
+                hasScreenshot: Boolean(request.screenshot),
               },
             });
-            return result;
-          } catch (error) {
-            activity.publish(requestId, {
-              phase: "error",
-              message:
-                error instanceof Error ? error.message : "Iteration failed",
-            });
-            telemetry?.log({
-              source: "agent",
-              level: "error",
-              event: "iteration.failed",
-              message:
-                error instanceof Error ? error.message : "Iteration failed",
-              requestId,
-              data: { durationMs: Date.now() - startedAt },
-            });
-            throw error;
-          }
+            try {
+              const result = await agent.run(request, (event) => {
+                activity.publish(requestId, event);
+                telemetry?.log({
+                  source: "agent",
+                  level: "info",
+                  event: `agent.${event.phase}`,
+                  message: event.message,
+                  requestId,
+                  data: event.detail ? { detail: event.detail } : undefined,
+                });
+              });
+              activity.publish(requestId, {
+                phase: "complete",
+                message: "Iteration complete",
+              });
+              telemetry?.log({
+                source: "agent",
+                level: "info",
+                event: "iteration.completed",
+                message: result.summary,
+                requestId,
+                data: {
+                  durationMs: Date.now() - startedAt,
+                  model: result.model,
+                  editCount: result.edits.length,
+                  applied: result.applied,
+                },
+              });
+              return result;
+            } catch (error) {
+              activity.publish(requestId, {
+                phase: "error",
+                message:
+                  error instanceof Error ? error.message : "Iteration failed",
+              });
+              telemetry?.log({
+                source: "agent",
+                level: "error",
+                event: "iteration.failed",
+                message:
+                  error instanceof Error ? error.message : "Iteration failed",
+                requestId,
+                data: { durationMs: Date.now() - startedAt },
+              });
+              throw error;
+            }
+          })();
+          runs.set(requestId, run);
+          setTimeout(() => runs.delete(requestId), 5 * 60_000).unref();
+          return run;
         }),
     }),
   });

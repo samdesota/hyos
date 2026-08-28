@@ -9,14 +9,21 @@ import type {
   HostToOverlayMessage,
   HostMessagePayload,
   OverlayToHostMessage,
+  RestoredIteration,
   ScreenshotCapture,
   SelectionRegion,
 } from "./messages.js";
-import { ingestFrontendLogs, runIteration } from "./trpc-client.js";
+import { normalizeClonedDocumentColors } from "./normalize-colors.js";
+import {
+  ingestFrontendLogs,
+  runIteration,
+  undoIteration,
+} from "./trpc-client.js";
 
 const FRAME_ID = UI_AGENT_FRAME_ID;
 const LAUNCHER_ID = "hyos-ui-agent-launcher";
 const SOURCE_ATTRIBUTE = "data-source-loc";
+const SESSION_KEY = "hyos-ui-agent-iteration";
 const html2canvas = html2canvasModule as unknown as (
   element: HTMLElement,
   options: {
@@ -29,6 +36,7 @@ const html2canvas = html2canvasModule as unknown as (
     useCORS: boolean;
     backgroundColor: string;
     ignoreElements(element: Element): boolean;
+    onclone(document: Document): void;
   },
 ) => Promise<HTMLCanvasElement>;
 const scriptUrl = new URL(import.meta.url);
@@ -40,11 +48,36 @@ interface SelectionContext {
   screenshot?: ScreenshotCapture;
 }
 
+interface PersistedIteration extends RestoredIteration {
+  request: QuickIterationRequest;
+}
+
 type FrontendLog = Parameters<typeof ingestFrontendLogs>[0][number];
 
-let currentContext: SelectionContext | undefined;
+function readPersistedIteration(): PersistedIteration | undefined {
+  try {
+    const value = sessionStorage.getItem(SESSION_KEY);
+    return value ? (JSON.parse(value) as PersistedIteration) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function persistIteration(iteration: PersistedIteration | undefined): void {
+  try {
+    if (iteration)
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(iteration));
+    else sessionStorage.removeItem(SESSION_KEY);
+  } catch {
+    // The overlay still works when browser storage is unavailable.
+  }
+}
+
+let persistedIteration = readPersistedIteration();
+let currentContext: SelectionContext | undefined = persistedIteration?.context;
 let frontendLogs: FrontendLog[] = [];
 let flushingLogs = false;
+let resuming = false;
 
 function serializeLogValue(value: unknown): unknown {
   if (value instanceof Error) {
@@ -141,6 +174,8 @@ function setOverlayActive(active: boolean): void {
 }
 
 function beginQuickEdit(): void {
+  persistedIteration = undefined;
+  persistIteration(undefined);
   currentContext = undefined;
   setOverlayActive(true);
   postToOverlay({ type: "start-region-selection" });
@@ -192,6 +227,7 @@ function mountOverlay(): void {
     trigger.addEventListener("click", beginQuickEdit);
     document.documentElement.append(trigger);
   }
+  if (persistedIteration) setOverlayActive(true);
 }
 
 function round(value: number): number {
@@ -337,6 +373,7 @@ async function captureRegion(
     useCORS: true,
     backgroundColor:
       getComputedStyle(document.body).backgroundColor || "#ffffff",
+    onclone: normalizeClonedDocumentColors,
     ignoreElements: (element: Element) =>
       [FRAME_ID, LAUNCHER_ID].includes(element.id),
   });
@@ -367,6 +404,7 @@ async function prepareContext(region: SelectionRegion): Promise<void> {
     screenshot = await captureRegion(region);
   } catch (error) {
     captureError = error instanceof Error ? error.message : "Screenshot failed";
+    queueFrontendLog("warn", "selection.capture_failed", [captureError]);
   }
   currentContext = { region, elements, screenshot };
   queueFrontendLog("info", "selection.context_ready", [
@@ -385,6 +423,7 @@ async function prepareContext(region: SelectionRegion): Promise<void> {
 async function submitIteration(
   instruction: string,
   requestId: string,
+  model: string,
 ): Promise<void> {
   if (!currentContext) throw new Error("Select a region first");
   queueFrontendLog("info", "iteration.submitted", [instruction], requestId);
@@ -395,19 +434,80 @@ async function submitIteration(
   const [selection = fallback, ...contextElements] = currentContext.elements;
   const request: QuickIterationRequest = {
     instruction,
+    model,
+    continuationId: persistedIteration?.result?.id,
     selection,
     contextElements,
     screenshot: currentContext.screenshot,
     mode: "apply",
   };
-  const result = await runIteration(requestId, request);
+  persistedIteration = {
+    context: {
+      ...currentContext,
+      screenshot: undefined,
+    },
+    instruction,
+    model,
+    requestId,
+    request: { ...request, screenshot: undefined },
+    status: "submitting",
+  };
+  persistIteration(persistedIteration);
+  await completeIteration(persistedIteration, request);
+}
+
+async function completeIteration(
+  iteration: PersistedIteration,
+  request = iteration.request,
+): Promise<void> {
+  const result = await runIteration(iteration.requestId, request);
+  if (persistedIteration?.requestId !== iteration.requestId) return;
   queueFrontendLog(
     "info",
     "iteration.completed",
     ["UI update received"],
-    requestId,
+    iteration.requestId,
   );
+  persistedIteration = { ...iteration, status: "result", result };
+  persistIteration(persistedIteration);
   postToOverlay({ type: "iteration-complete", result });
+}
+
+async function resumeIteration(): Promise<void> {
+  if (!persistedIteration || resuming) return;
+  if (persistedIteration.status === "submitting") {
+    resuming = true;
+    try {
+      await completeIteration(persistedIteration);
+    } finally {
+      resuming = false;
+    }
+  } else if (
+    persistedIteration.status === "undoing" &&
+    persistedIteration.result
+  ) {
+    resuming = true;
+    try {
+      await undoCompletedIteration(persistedIteration.result.id);
+    } finally {
+      resuming = false;
+    }
+  }
+}
+
+async function undoCompletedIteration(id: string): Promise<void> {
+  const iteration = persistedIteration;
+  const result = iteration?.result;
+  if (!iteration || !result || result.id !== id) {
+    throw new Error("This change is no longer available to undo");
+  }
+  persistedIteration = { ...iteration, status: "undoing", result };
+  persistIteration(persistedIteration);
+  await undoIteration(id);
+  if (persistedIteration?.requestId !== iteration.requestId) return;
+  persistedIteration = { ...iteration, status: "undone", result };
+  persistIteration(persistedIteration);
+  postToOverlay({ type: "iteration-undone" });
 }
 
 window.addEventListener("keydown", (event) => {
@@ -444,21 +544,49 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
   }
   const message = event.data as OverlayToHostMessage;
   if (message.source !== "hyos-ui-agent") return;
-  if (message.type === "region-selected" && message.region) {
+  if (message.type === "overlay-ready") {
+    if (persistedIteration) {
+      postToOverlay({
+        type: "restore-iteration",
+        iteration: persistedIteration,
+      });
+      void resumeIteration().catch((error) =>
+        postToOverlay({
+          type:
+            persistedIteration?.status === "undoing"
+              ? "undo-error"
+              : "iteration-error",
+          message: error instanceof Error ? error.message : "Iteration failed",
+        }),
+      );
+    }
+  } else if (message.type === "region-selected" && message.region) {
     void prepareContext(message.region);
   } else if (
     message.type === "submit-iteration" &&
     message.instruction &&
     message.requestId
   ) {
-    void submitIteration(message.instruction, message.requestId).catch(
-      (error) =>
-        postToOverlay({
-          type: "iteration-error",
-          message: error instanceof Error ? error.message : "Iteration failed",
-        }),
+    void submitIteration(
+      message.instruction,
+      message.requestId,
+      message.model,
+    ).catch((error) =>
+      postToOverlay({
+        type: "iteration-error",
+        message: error instanceof Error ? error.message : "Iteration failed",
+      }),
+    );
+  } else if (message.type === "undo-iteration" && message.id) {
+    void undoCompletedIteration(message.id).catch((error) =>
+      postToOverlay({
+        type: "undo-error",
+        message: error instanceof Error ? error.message : "Undo failed",
+      }),
     );
   } else if (message.type === "close-overlay") {
+    persistedIteration = undefined;
+    persistIteration(undefined);
     currentContext = undefined;
     setOverlayActive(false);
   }
