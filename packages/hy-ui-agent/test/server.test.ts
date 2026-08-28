@@ -152,40 +152,43 @@ test("serves the bootstrap script and iframe document", async () => {
 
     const clientResponse = await fetch(`${url}/client.js`);
     const clientScript = await clientResponse.text();
-    assert.match(clientScript, /document\.createElement\("iframe"\)/);
+    assert.equal(clientResponse.status, 200);
+    assert.match(clientScript, /createElement\("iframe"\)/);
     assert.match(clientScript, /altKey/);
     assert.match(clientScript, /KeyE/);
-    assert.match(clientScript, /!event\.ctrlKey/);
-    assert.match(clientScript, /!event\.metaKey/);
+    assert.match(clientScript, /ctrlKey/);
+    assert.match(clientScript, /metaKey/);
     assert.match(clientScript, /hyos-ui-agent-launcher/);
-    assert.match(clientScript, /addEventListener\("click", beginQuickEdit\)/);
-    assert.match(clientScript, /event\.key === "Escape"/);
-    assert.match(clientScript, /type: "cancel-overlay"/);
-    assert.match(clientScript, /replace\(\/\\s\+\/g/);
-    assert.match(clientScript, /collectElements/);
-    assert.match(clientScript, /captureRegion/);
+    assert.match(clientScript, /cancel-overlay/);
+    assert.match(clientScript, /data-source-loc/);
+    assert.match(clientScript, /html2canvas/);
     assert.match(clientScript, /contextElements/);
 
     const overlayResponse = await fetch(`${url}/overlay`);
     const overlayHtml = await overlayResponse.text();
-    assert.match(overlayHtml, /Drag around what you want to change/);
-    assert.match(overlayHtml, /What should change in this region/);
-    assert.match(overlayHtml, /overlay-ready/);
-    assert.match(overlayHtml, /Agent activity/);
-    assert.match(overlayHtml, /Hyper E/);
-    assert.match(overlayHtml, /event\.data\.type === "cancel-overlay"/);
+    assert.match(overlayHtml, /id="root"/);
+    assert.match(overlayHtml, /src="\.\/overlay\.js"/);
+    assert.match(overlayHtml, /href="\.\/overlay\.css"/);
+    assert.doesNotMatch(overlayHtml, /Drag around what you want to change/);
 
-    const activityClientResponse = await fetch(`${url}/activity-client.js`);
-    assert.equal(activityClientResponse.status, 200);
-    assert.match(await activityClientResponse.text(), /iteration\.activity/);
+    const overlayScriptResponse = await fetch(`${url}/overlay.js`);
+    const overlayScript = await overlayScriptResponse.text();
+    assert.equal(overlayScriptResponse.status, 200);
+    assert.match(overlayScript, /Drag around what you want to change/);
+    assert.match(overlayScript, /What should change in this region/);
+    assert.match(overlayScript, /Agent activity/);
+    assert.match(overlayScript, /iteration\.activity/);
 
-    const screenshotLibraryResponse = await fetch(`${url}/html2canvas.js`);
-    assert.equal(screenshotLibraryResponse.status, 200);
+    const overlayStylesResponse = await fetch(`${url}/overlay.css`);
+    assert.equal(overlayStylesResponse.status, 200);
     assert.match(
-      screenshotLibraryResponse.headers.get("content-type") ?? "",
-      /text\/javascript/,
+      overlayStylesResponse.headers.get("content-type") ?? "",
+      /text\/css/,
     );
-    assert.match(await screenshotLibraryResponse.text(), /html2canvas/);
+    assert.match(await overlayStylesResponse.text(), /\.prompt-panel/);
+
+    assert.equal((await fetch(`${url}/activity-client.js`)).status, 404);
+    assert.equal((await fetch(`${url}/html2canvas.js`)).status, 404);
   } finally {
     await server.close();
     rmSync(telemetryDirectory, { recursive: true, force: true });

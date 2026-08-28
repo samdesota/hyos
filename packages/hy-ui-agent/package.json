@@ -38,6 +38,8 @@
     "esbuild": "^0.28.2",
     "html2canvas": "^1.4.1",
     "magic-string": "^1.2.3",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "ws": "^8.21.3",
     "zod": "^4.4.3"
   },
@@ -46,6 +48,8 @@
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
     "@types/ws": "^8.18.1",
     "typescript": "^7.0.2",
     "vite": "^8.2.1"

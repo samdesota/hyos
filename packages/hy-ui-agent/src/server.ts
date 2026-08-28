@@ -7,15 +7,18 @@ import { WebSocketServer } from "ws";
 
 import { createQuickIterationAgent } from "./agent.js";
 import type { QuickIterationAgent } from "./agent-types.js";
-import { renderClientScript, renderOverlayHtml } from "./assets.js";
+import { renderOverlayHtml } from "./assets.js";
+import {
+  renderHostClientScript,
+  renderOverlayScript,
+  renderOverlayStyles,
+} from "./browser-bundle.js";
 import {
   createVercelGateway,
   parseGatewayReasoningEffort,
   type GatewayReasoningEffort,
 } from "./gateway.js";
 import { createUiAgentRouter } from "./trpc.js";
-import { renderHtml2CanvasScript } from "./vendor.js";
-import { renderActivityClientScript } from "./browser-bundle.js";
 import {
   createDevelopmentTelemetry,
   type DevelopmentTelemetryOptions,
@@ -52,6 +55,23 @@ function send(
     "access-control-allow-origin": "*",
   });
   response.end(body);
+}
+
+function sendAsset(
+  response: ServerResponse,
+  contentType: string,
+  asset: Promise<string>,
+): void {
+  void asset
+    .then((body) => send(response, 200, contentType, body))
+    .catch((error) =>
+      send(
+        response,
+        500,
+        "text/plain; charset=utf-8",
+        error instanceof Error ? error.message : "Bundle failed",
+      ),
+    );
 }
 
 function setCorsHeaders(response: ServerResponse): void {
@@ -156,38 +176,25 @@ export function createUiAgentServer(
     }
 
     if (request.method === "GET" && url.pathname === "/client.js") {
-      send(
+      sendAsset(
         response,
-        200,
         "text/javascript; charset=utf-8",
-        renderClientScript(),
+        renderHostClientScript(),
       );
       return;
     }
 
-    if (request.method === "GET" && url.pathname === "/activity-client.js") {
-      void renderActivityClientScript()
-        .then((body) =>
-          send(response, 200, "text/javascript; charset=utf-8", body),
-        )
-        .catch((error) =>
-          send(
-            response,
-            500,
-            "text/plain; charset=utf-8",
-            error instanceof Error ? error.message : "Bundle failed",
-          ),
-        );
+    if (request.method === "GET" && url.pathname === "/overlay.js") {
+      sendAsset(
+        response,
+        "text/javascript; charset=utf-8",
+        renderOverlayScript(),
+      );
       return;
     }
 
-    if (request.method === "GET" && url.pathname === "/html2canvas.js") {
-      send(
-        response,
-        200,
-        "text/javascript; charset=utf-8",
-        renderHtml2CanvasScript(),
-      );
+    if (request.method === "GET" && url.pathname === "/overlay.css") {
+      sendAsset(response, "text/css; charset=utf-8", renderOverlayStyles());
       return;
     }
 

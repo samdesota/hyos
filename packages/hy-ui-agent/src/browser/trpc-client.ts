@@ -1,7 +1,7 @@
 import { createTRPCClient, createWSClient, wsLink } from "@trpc/client";
 
-import type { AgentActivity } from "./agent-types.js";
-import type { UiAgentRouter } from "./trpc.js";
+import type { AgentActivity, QuickIterationRequest } from "../agent-types.js";
+import type { UiAgentRouter } from "../trpc.js";
 
 const endpoint = new URL(import.meta.url);
 endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";
@@ -16,6 +16,13 @@ const wsClient = createWSClient({
 const client = createTRPCClient<UiAgentRouter>({
   links: [wsLink({ client: wsClient })],
 });
+
+export function runIteration(
+  requestId: string,
+  request: QuickIterationRequest,
+) {
+  return client.iteration.run.mutate({ requestId, ...request });
+}
 
 export function subscribeToIterationActivity(
   requestId: string,
