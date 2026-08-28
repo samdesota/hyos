@@ -52,7 +52,14 @@ export interface ProjectTools {
   listFiles(pattern?: string): Promise<string[]>;
   searchCode(query: string): Promise<string[]>;
   readFile(path: string): Promise<string>;
-  applyEdits(edits: TextReplacement[]): Promise<void>;
+  applyEdits(edits: TextReplacement[]): Promise<AppliedFileChange[]>;
+  undoEdits(changes: AppliedFileChange[]): Promise<void>;
+}
+
+export interface AppliedFileChange {
+  path: string;
+  before: string;
+  after: string;
 }
 
 export function createProjectTools(projectRoot: string): ProjectTools {
@@ -113,26 +120,52 @@ export function createProjectTools(projectRoot: string): ProjectTools {
     },
     readFile: readProjectFile,
     async applyEdits(edits) {
-      const updates = new Map<string, string>();
+      const updates = new Map<
+        string,
+        { path: string; before: string; after: string }
+      >();
       for (const edit of edits) {
         const path = await resolveFile(edit.path);
-        const original =
-          updates.get(path) ?? (await readProjectFile(edit.path));
+        const pending = updates.get(path);
+        const before = pending?.before ?? (await readProjectFile(edit.path));
+        const original = pending?.after ?? before;
         const first = original.indexOf(edit.find);
         if (first === -1)
           throw new Error(`Text to replace was not found in ${edit.path}`);
         if (original.indexOf(edit.find, first + edit.find.length) !== -1) {
           throw new Error(`Text to replace is not unique in ${edit.path}`);
         }
-        updates.set(
-          path,
-          original.slice(0, first) +
+        updates.set(path, {
+          path: edit.path,
+          before,
+          after:
+            original.slice(0, first) +
             edit.replace +
             original.slice(first + edit.find.length),
-        );
+        });
       }
       await Promise.all(
-        [...updates].map(([path, content]) => writeFile(path, content, "utf8")),
+        [...updates].map(([path, change]) =>
+          writeFile(path, change.after, "utf8"),
+        ),
+      );
+      return [...updates.values()];
+    },
+    async undoEdits(changes) {
+      const restores = await Promise.all(
+        changes.map(async (change) => {
+          const path = await resolveFile(change.path);
+          const current = await readFile(path, "utf8");
+          if (current !== change.after) {
+            throw new Error(
+              `Cannot undo ${change.path} because it changed after the agent edit`,
+            );
+          }
+          return { path, content: change.before };
+        }),
+      );
+      await Promise.all(
+        restores.map(({ path, content }) => writeFile(path, content, "utf8")),
       );
     },
   };

@@ -23,6 +23,11 @@ import {
   createDevelopmentTelemetry,
   type DevelopmentTelemetryOptions,
 } from "./telemetry.js";
+import {
+  availableModelOptions,
+  DEFAULT_UI_AGENT_MODEL,
+  type UiAgentModelOption,
+} from "./models.js";
 
 export interface UiAgentServerOptions {
   host?: string;
@@ -30,6 +35,7 @@ export interface UiAgentServerOptions {
   projectRoot?: string;
   apiKey?: string;
   model?: string;
+  models?: UiAgentModelOption[];
   reasoning?: GatewayReasoningEffort;
   providerOrder?: string[];
   gatewayBaseUrl?: string;
@@ -92,6 +98,9 @@ export function createUiAgentServer(
   const projectRoot = options.projectRoot ?? process.cwd();
   let serverUrl: string | undefined;
   const telemetry = createDevelopmentTelemetry(projectRoot, options.telemetry);
+  const defaultModel =
+    options.model ?? process.env.UI_AGENT_MODEL ?? DEFAULT_UI_AGENT_MODEL;
+  const models = availableModelOptions(defaultModel, options.models);
 
   const apiKey = options.apiKey ?? process.env.AI_GATEWAY_API_KEY;
   const unavailableAgent = {
@@ -110,7 +119,7 @@ export function createUiAgentServer(
             apiKey,
             baseUrl: options.gatewayBaseUrl,
           }),
-          model: options.model ?? process.env.UI_AGENT_MODEL,
+          model: defaultModel,
           reasoning: parseGatewayReasoningEffort(
             options.reasoning ?? process.env.UI_AGENT_REASONING,
           ),
@@ -121,7 +130,10 @@ export function createUiAgentServer(
               .filter(Boolean),
         })
       : unavailableAgent);
-  const router = createUiAgentRouter(agent, undefined, telemetry);
+  const router = createUiAgentRouter(agent, undefined, telemetry, {
+    defaultModel,
+    models,
+  });
 
   const trpcHandler = createHTTPHandler({
     router,

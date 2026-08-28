@@ -8,6 +8,7 @@ import type {
   QuickIterationAgent,
   QuickIterationRequest,
   QuickIterationResult,
+  QuickIterationUndoResult,
   TextReplacement,
 } from "./agent-types.js";
 import type {
@@ -16,7 +17,7 @@ import type {
   GatewayTransport,
 } from "./gateway.js";
 import { createProjectTools } from "./project-tools.js";
-import { dumpInitialGatewayRequest } from "./request-dump.js";
+import { DEFAULT_UI_AGENT_MODEL } from "./models.js";
 
 const editSchema = z.object({
   path: z.string().min(1),
@@ -29,6 +30,8 @@ const submissionSchema = z.object({
 });
 const inputSchema = z.object({
   instruction: z.string().min(1).max(4_000),
+  model: z.string().min(1).max(200).optional(),
+  continuationId: z.string().min(1).max(200).optional(),
   selection: z.object({
     tagName: z.string().min(1),
     text: z.string().max(8_000).optional(),
@@ -155,15 +158,34 @@ export function createQuickIterationAgent(
   options: CreateQuickIterationAgentOptions,
 ): QuickIterationAgent {
   const project = createProjectTools(options.projectRoot);
-  const model = options.model ?? "zai/glm-5.3-flash";
+  const defaultModel = options.model ?? DEFAULT_UI_AGENT_MODEL;
   const maxSteps = options.maxSteps ?? 10;
+  const undoHistory = new Map<
+    string,
+    Awaited<ReturnType<typeof project.applyEdits>>
+  >();
+  const conversations = new Map<string, GatewayMessage[]>();
 
   return {
+    async undo(id: string): Promise<QuickIterationUndoResult> {
+      const changes = undoHistory.get(id);
+      if (!changes)
+        throw new Error("This change is no longer available to undo");
+      await project.undoEdits(changes);
+      undoHistory.delete(id);
+      conversations.get(id)?.push({
+        role: "system",
+        content:
+          "The user undid the previous change. The project files were restored to their state before that change.",
+      });
+      return { id, undone: true };
+    },
     async run(
       rawRequest: QuickIterationRequest,
       report: AgentActivityReporter = () => undefined,
     ): Promise<QuickIterationResult> {
       const request = inputSchema.parse(rawRequest);
+      const model = request.model ?? defaultModel;
       const contextStartedAt = Date.now();
       report({ phase: "context", message: "Inspecting selected UI context" });
       const selections = [
@@ -176,25 +198,31 @@ export function createQuickIterationAgent(
         message: "Relevant source context collected",
         detail: `${Date.now() - contextStartedAt}ms`,
       });
-      const userPrompt = `Instruction:\n${request.instruction}\n\nPrimary selected element:\n${JSON.stringify(request.selection, null, 2)}\n\nOther elements intersecting the selected region:\n${JSON.stringify(request.contextElements ?? [], null, 2)}${context}`;
-      const messages: GatewayMessage[] = [
-        { role: "system", content: systemPrompt() },
-        {
-          role: "user",
-          content: request.screenshot
-            ? [
-                { type: "text", text: userPrompt },
-                {
-                  type: "image_url",
-                  image_url: {
-                    url: request.screenshot.dataUrl,
-                    detail: "high",
-                  },
+      const userPrompt = `${request.continuationId ? "Follow-up instruction" : "Instruction"}:\n${request.instruction}\n\nPrimary selected element:\n${JSON.stringify(request.selection, null, 2)}\n\nOther elements intersecting the selected region:\n${JSON.stringify(request.contextElements ?? [], null, 2)}${context}`;
+      const priorMessages = request.continuationId
+        ? conversations.get(request.continuationId)
+        : undefined;
+      if (request.continuationId && !priorMessages) {
+        throw new Error("The previous agent state is no longer available");
+      }
+      const messages: GatewayMessage[] = priorMessages
+        ? structuredClone(priorMessages)
+        : [{ role: "system", content: systemPrompt() }];
+      messages.push({
+        role: "user",
+        content: request.screenshot
+          ? [
+              { type: "text", text: userPrompt },
+              {
+                type: "image_url",
+                image_url: {
+                  url: request.screenshot.dataUrl,
+                  detail: "high",
                 },
-              ]
-            : userPrompt,
-        },
-      ];
+              },
+            ]
+          : userPrompt,
+      });
       const initialRequest = {
         model,
         messages,
@@ -213,18 +241,6 @@ export function createQuickIterationAgent(
             }
           : undefined,
       };
-      const dumpPath = await dumpInitialGatewayRequest(
-        options.projectRoot,
-        initialRequest,
-      );
-      if (dumpPath) {
-        report({
-          phase: "context",
-          message: "Initial request dump written",
-          detail: dumpPath,
-        });
-      }
-
       for (let step = 0; step < maxSteps; step += 1) {
         const modelStartedAt = Date.now();
         report({
@@ -253,15 +269,37 @@ export function createQuickIterationAgent(
           >;
           if (call.function.name === "submit_edits") {
             const submission = submissionSchema.parse(args);
+            const id = randomUUID();
             report({
               phase: "apply",
               message: `Validating ${submission.edits.length} proposed edit${submission.edits.length === 1 ? "" : "s"}`,
             });
             if ((request.mode ?? "preview") === "apply") {
-              await project.applyEdits(submission.edits);
+              const changes = await project.applyEdits(submission.edits);
+              undoHistory.set(id, changes);
+              while (undoHistory.size > 50) {
+                undoHistory.delete(undoHistory.keys().next().value!);
+              }
               report({ phase: "apply", message: "Source files updated" });
             }
+            messages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: JSON.stringify({
+                summary: submission.summary,
+                edits: submission.edits,
+                applied: request.mode === "apply",
+              }),
+            });
+            conversations.set(id, structuredClone(messages));
+            if (request.continuationId) {
+              conversations.delete(request.continuationId);
+            }
+            while (conversations.size > 50) {
+              conversations.delete(conversations.keys().next().value!);
+            }
             return result(
+              id,
               model,
               submission.summary,
               submission.edits,
@@ -357,10 +395,11 @@ async function retrieveLikelyContext(
 }
 
 function result(
+  id: string,
   model: string,
   summary: string,
   edits: TextReplacement[],
   applied: boolean,
 ): QuickIterationResult {
-  return { id: randomUUID(), model, summary, edits, applied };
+  return { id, model, summary, edits, applied };
 }

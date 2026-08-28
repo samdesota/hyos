@@ -24,6 +24,14 @@ export function runIteration(
   return client.iteration.run.mutate({ requestId, ...request });
 }
 
+export function getUiAgentConfiguration() {
+  return client.system.configuration.query();
+}
+
+export function undoIteration(id: string) {
+  return client.iteration.undo.mutate({ id });
+}
+
 export function subscribeToIterationActivity(
   requestId: string,
   handlers: {

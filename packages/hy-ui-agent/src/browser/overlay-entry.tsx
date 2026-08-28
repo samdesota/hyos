@@ -13,17 +13,29 @@ import type {
   ScreenshotCapture,
   SelectionRegion,
 } from "./messages.js";
-import { subscribeToIterationActivity } from "./trpc-client.js";
+import {
+  getUiAgentConfiguration,
+  subscribeToIterationActivity,
+} from "./trpc-client.js";
 import "./overlay.css";
 
 type Mode =
-  "idle" | "selecting" | "collecting" | "prompt" | "submitting" | "result";
+  | "idle"
+  | "selecting"
+  | "collecting"
+  | "prompt"
+  | "submitting"
+  | "result"
+  | "undoing"
+  | "undone";
 
 interface Context {
   elements: ElementSelection[];
   screenshot?: ScreenshotCapture;
   captureError?: string;
 }
+
+const MODEL_KEY = "hyos-ui-agent-model";
 
 function post(message: OverlayMessagePayload): void {
   window.parent.postMessage({ source: "hyos-ui-agent", ...message }, "*");
@@ -38,6 +50,10 @@ function App() {
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState("");
   const [result, setResult] = useState<QuickIterationResult>();
+  const [models, setModels] = useState<Array<{ id: string; label: string }>>(
+    [],
+  );
+  const [model, setModel] = useState("");
   const dragStart = useRef<{ x: number; y: number } | undefined>(undefined);
   const subscription = useRef<{ unsubscribe(): void } | undefined>(undefined);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -71,6 +87,38 @@ function App() {
     setResult(undefined);
   }
 
+  function watchActivity(requestId: string, restoring = false) {
+    stopActivity();
+    setActivities([
+      {
+        phase: "context",
+        message: restoring
+          ? "Reconnected after page reload"
+          : "Sending selected region to agent",
+        timestamp: Date.now(),
+      },
+    ]);
+    subscription.current = subscribeToIterationActivity(requestId, {
+      onData(activity) {
+        setActivities((current) => [...current, activity]);
+      },
+      onError(activityError) {
+        setActivities((current) => [
+          ...current,
+          {
+            phase: "error",
+            message:
+              activityError instanceof Error
+                ? activityError.message
+                : "Activity connection lost",
+            timestamp: Date.now(),
+          },
+        ]);
+      },
+      onComplete() {},
+    });
+  }
+
   useEffect(() => {
     const onMessage = (event: MessageEvent<unknown>) => {
       if (event.source !== window.parent) return;
@@ -78,6 +126,26 @@ function App() {
       if (message?.source !== "hyos-ui-agent-host") return;
       if (message.type === "start-region-selection") startSelection();
       if (message.type === "cancel-overlay") close();
+      if (message.type === "restore-iteration") {
+        setRegion(message.iteration.context.region);
+        setContext({
+          elements: message.iteration.context.elements,
+          screenshot: message.iteration.context.screenshot,
+        });
+        setInstruction(
+          message.iteration.status === "submitting"
+            ? message.iteration.instruction
+            : "",
+        );
+        setResult(message.iteration.result);
+        if (message.iteration.model) setModel(message.iteration.model);
+        setError("");
+        setMode(message.iteration.status);
+        if (message.iteration.status === "submitting") {
+          setElapsed(0);
+          watchActivity(message.iteration.requestId, true);
+        }
+      }
       if (message.type === "selection-context-ready") {
         setContext({
           elements: message.elements,
@@ -90,12 +158,21 @@ function App() {
       if (message.type === "iteration-complete") {
         stopActivity();
         setResult(message.result);
+        setInstruction("");
         setMode("result");
       }
       if (message.type === "iteration-error") {
         stopActivity();
         setError(message.message);
         setMode("prompt");
+      }
+      if (message.type === "iteration-undone") {
+        setError("");
+        setMode("undone");
+      }
+      if (message.type === "undo-error") {
+        setError(message.message);
+        setMode("result");
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
@@ -109,6 +186,27 @@ function App() {
       window.removeEventListener("keydown", onKeyDown);
       stopActivity();
     };
+  }, []);
+
+  useEffect(() => {
+    void getUiAgentConfiguration().then((configuration) => {
+      if (!configuration) return;
+      setModels(configuration.models);
+      let savedModel: string | null = null;
+      try {
+        savedModel = localStorage.getItem(MODEL_KEY);
+      } catch {
+        // Model selection still works when browser storage is unavailable.
+      }
+      setModel(
+        (current) =>
+          current ||
+          (savedModel &&
+          configuration.models.some((option) => option.id === savedModel)
+            ? savedModel
+            : configuration.defaultModel),
+      );
+    });
   }, []);
 
   useEffect(() => {
@@ -149,38 +247,25 @@ function App() {
 
   function submit() {
     const value = instruction.trim();
-    if (!value || mode !== "prompt") return;
+    if (
+      !value ||
+      !model ||
+      (mode !== "prompt" && mode !== "result" && mode !== "undone")
+    )
+      return;
     const requestId = crypto.randomUUID();
     setError("");
     setElapsed(0);
-    setActivities([
-      {
-        phase: "context",
-        message: "Sending selected region to agent",
-        timestamp: Date.now(),
-      },
-    ]);
     setMode("submitting");
-    subscription.current = subscribeToIterationActivity(requestId, {
-      onData(activity) {
-        setActivities((current) => [...current, activity]);
-      },
-      onError(activityError) {
-        setActivities((current) => [
-          ...current,
-          {
-            phase: "error",
-            message:
-              activityError instanceof Error
-                ? activityError.message
-                : "Activity connection lost",
-            timestamp: Date.now(),
-          },
-        ]);
-      },
-      onComplete() {},
-    });
-    post({ type: "submit-iteration", instruction: value, requestId });
+    watchActivity(requestId);
+    post({ type: "submit-iteration", instruction: value, requestId, model });
+  }
+
+  function undo() {
+    if (mode !== "result" || !result) return;
+    setError("");
+    setMode("undoing");
+    post({ type: "undo-iteration", id: result.id });
   }
 
   if (mode === "idle") return null;
@@ -227,7 +312,9 @@ function App() {
       {(mode === "collecting" ||
         mode === "prompt" ||
         mode === "submitting" ||
-        mode === "result") && (
+        mode === "result" ||
+        mode === "undoing" ||
+        mode === "undone") && (
         <form
           className="prompt-panel"
           onSubmit={(event) => {
@@ -263,20 +350,84 @@ function App() {
             </button>
           </div>
 
-          {mode === "result" ? (
+          <label className="model-picker">
+            <span>Model</span>
+            <select
+              value={model}
+              disabled={
+                mode === "collecting" ||
+                mode === "submitting" ||
+                mode === "undoing"
+              }
+              onChange={(event) => {
+                const value = event.target.value;
+                setModel(value);
+                try {
+                  localStorage.setItem(MODEL_KEY, value);
+                } catch {
+                  // Model selection still works when storage is unavailable.
+                }
+              }}
+            >
+              {models.length === 0 && <option value="">Loading models…</option>}
+              {models.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            {result && mode !== "submitting" && (
+              <small>Last change used {result.model}</small>
+            )}
+          </label>
+
+          {mode === "result" || mode === "undoing" || mode === "undone" ? (
             <div className="result">
-              <div className="result-mark">✓</div>
-              <h2>Change applied</h2>
-              <p>{result?.summary ?? "The selected UI was updated."}</p>
+              <div
+                className={`result-mark ${mode === "undone" ? "undone" : ""}`}
+              >
+                {mode === "undone" ? "↶" : "✓"}
+              </div>
+              <h2>{mode === "undone" ? "Change undone" : "Change applied"}</h2>
+              <p>
+                {mode === "undone"
+                  ? "The edited files were restored."
+                  : (result?.summary ?? "The selected UI was updated.")}
+              </p>
+              {error && <div className="error result-error">{error}</div>}
+              <textarea
+                ref={textarea}
+                className="follow-up-input"
+                value={instruction}
+                onChange={(event) => setInstruction(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    submit();
+                  }
+                }}
+                placeholder="What should change next?"
+              />
               <div className="prompt-actions">
-                <span>
-                  {result?.edits.length ?? 0}{" "}
-                  {(result?.edits.length ?? 0) === 1
-                    ? "file edit"
-                    : "file edits"}
-                </span>
+                <button
+                  className="follow-up-button"
+                  type="submit"
+                  disabled={!instruction.trim() || !model}
+                >
+                  Make follow-up ↗
+                </button>
+                {mode !== "undone" && (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={undo}
+                    disabled={mode === "undoing"}
+                  >
+                    {mode === "undoing" ? "Undoing…" : "Undo"}
+                  </button>
+                )}
                 <button className="apply-button" type="button" onClick={close}>
-                  Done
+                  Dismiss
                 </button>
               </div>
             </div>
@@ -328,7 +479,7 @@ function App() {
                 <button
                   className="apply-button"
                   type="submit"
-                  disabled={mode !== "prompt" || !instruction.trim()}
+                  disabled={mode !== "prompt" || !instruction.trim() || !model}
                 >
                   {mode === "submitting" ? (
                     <>

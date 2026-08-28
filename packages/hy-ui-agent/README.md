@@ -84,14 +84,17 @@ agent steps, tool calls, durations, and failures are written to
 single edit can be traced across the browser, server, and agent. Disable this
 with `uiAgent({ server: { telemetry: { enabled: false } } })`, or set a custom
 `databasePath` in the same option. The store retains the newest 50,000 events.
-The initial Gateway request from the latest run is written to
-`.hy-ui-agent/last-initial-request.json` with its screenshot removed.
 
 ## Region iteration UI
 
 With the dev server running, press `Hyper + E` or click the `Quick edit`
 launcher to enter region selection mode. Drag around part of the page, describe
 the change, and submit.
+The edit panel reconnects to an in-progress iteration after a Vite page reload.
+After a change is applied, it stays open until you undo the file changes or
+dismiss the result. You can also submit follow-up instructions against the same
+selected region; follow-ups continue the prior agent conversation, including
+its tool calls and applied or undone changes.
 The host-page script collects visible DOM elements intersecting the rectangle,
 including any `data-source-loc` values, and captures a cropped screenshot. The
 instruction, element context, relevant source files, and screenshot are sent to

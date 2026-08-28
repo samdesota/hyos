@@ -21,7 +21,8 @@ body,
   background: transparent;
 }
 button,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 button {
@@ -136,6 +137,39 @@ button {
   color: #fff;
   background: rgb(255 255 255 / 8%);
 }
+.model-picker {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 10px;
+  padding: 0 2px 9px;
+  color: #92929c;
+  font-size: 10px;
+}
+.model-picker select {
+  min-width: 0;
+  padding: 6px 28px 6px 9px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 8px;
+  outline: none;
+  color: #dedee4;
+  background: #29292e;
+  font-size: 11px;
+}
+.model-picker select:focus {
+  border-color: rgb(126 143 255 / 72%);
+  box-shadow: 0 0 0 3px rgb(99 119 255 / 12%);
+}
+.model-picker select:disabled {
+  opacity: 0.62;
+}
+.model-picker small {
+  grid-column: 2;
+  overflow: hidden;
+  color: #777781;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 textarea {
   display: block;
   width: 100%;
@@ -184,6 +218,27 @@ textarea:disabled {
   background: #7183f9;
 }
 .apply-button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+.secondary-button {
+  margin-left: auto;
+  padding: 8px 12px;
+  border: 1px solid rgb(255 255 255 / 13%);
+  border-radius: 9px;
+  color: #dedee4;
+  background: rgb(255 255 255 / 6%);
+  font-size: 11px;
+  font-weight: 700;
+}
+.secondary-button + .apply-button {
+  margin-left: 0;
+}
+.secondary-button:hover:not(:disabled) {
+  color: #fff;
+  background: rgb(255 255 255 / 11%);
+}
+.secondary-button:disabled {
   cursor: wait;
   opacity: 0.58;
 }
@@ -268,6 +323,10 @@ textarea:disabled {
   background: #aee5ae;
   font-weight: 800;
 }
+.result-mark.undone {
+  color: #202126;
+  background: #c8c8d0;
+}
 .result h2 {
   margin: 0 0 5px;
   font-size: 15px;
@@ -277,6 +336,27 @@ textarea:disabled {
   color: #a4a4ad;
   font-size: 12px;
   line-height: 1.45;
+}
+.follow-up-input {
+  min-height: 64px;
+}
+.follow-up-button {
+  padding: 8px 0;
+  border: 0;
+  color: #9da9ff;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 700;
+}
+.follow-up-button:hover:not(:disabled) {
+  color: #bdc5ff;
+}
+.follow-up-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.result-error {
+  padding: 0 0 8px;
 }
 @keyframes spin {
   to {

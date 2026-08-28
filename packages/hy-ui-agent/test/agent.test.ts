@@ -42,7 +42,7 @@ function contentText(message: GatewayMessage | undefined): string {
     : JSON.stringify(message?.content ?? "");
 }
 
-test("inspects the project and applies a submitted exact replacement", async () => {
+test("applies a submitted replacement and can undo it", async () => {
   const root = await mkdtemp(join(tmpdir(), "hy-ui-agent-"));
   const file = join(root, "button.tsx");
   await writeFile(
@@ -59,6 +59,16 @@ test("inspects the project and applies a submitted exact replacement", async () 
           path: "button.tsx",
           find: 'class="small"',
           replace: 'class="large"',
+        },
+      ],
+    }),
+    toolCall("submit_edits", {
+      summary: "Use a medium button instead",
+      edits: [
+        {
+          path: "button.tsx",
+          find: 'class="small"',
+          replace: 'class="medium"',
         },
       ],
     }),
@@ -82,6 +92,34 @@ test("inspects the project and applies a submitted exact replacement", async () 
     contentText(gateway.requests[2]?.messages.at(-1)),
     /class=\\"small\\"/,
   );
+
+  assert.deepEqual(await agent.undo?.(result.id), {
+    id: result.id,
+    undone: true,
+  });
+  assert.match(await readFile(file, "utf8"), /class="small"/);
+
+  const followUp = await agent.run({
+    instruction: "Actually, make it medium",
+    continuationId: result.id,
+    selection: { tagName: "button", text: "Save" },
+    mode: "apply",
+  });
+
+  assert.match(await readFile(file, "utf8"), /class="medium"/);
+  assert.match(
+    JSON.stringify(gateway.requests[3]?.messages),
+    /Make the Save button larger/,
+  );
+  assert.match(
+    JSON.stringify(gateway.requests[3]?.messages),
+    /user undid the previous change/,
+  );
+  assert.match(
+    contentText(gateway.requests[3]?.messages.at(-1)),
+    /Follow-up instruction.*Actually, make it medium/s,
+  );
+  assert.notEqual(followUp.id, result.id);
 });
 
 test("preview returns edits without changing files", async () => {
@@ -147,11 +185,4 @@ test("preview returns edits without changing files", async () => {
       only: ["parasail", "morph", "baseten"],
     },
   });
-  const requestDump = await readFile(
-    join(root, ".hy-ui-agent", "last-initial-request.json"),
-    "utf8",
-  );
-  assert.match(requestDump, /Likely relevant project files/);
-  assert.doesNotMatch(requestDump, /data:image/);
-  assert.doesNotMatch(requestDump, /image_url/);
 });

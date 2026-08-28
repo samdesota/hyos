@@ -16,6 +16,8 @@ export interface ElementSelection {
 
 export interface QuickIterationRequest {
   instruction: string;
+  model?: string;
+  continuationId?: string;
   selection: ElementSelection;
   contextElements?: ElementSelection[];
   screenshot?: {
@@ -40,6 +42,11 @@ export interface QuickIterationResult {
   applied: boolean;
 }
 
+export interface QuickIterationUndoResult {
+  id: string;
+  undone: boolean;
+}
+
 export interface AgentActivity {
   phase: "context" | "model" | "tool" | "apply" | "complete" | "error";
   message: string;
@@ -56,4 +63,5 @@ export interface QuickIterationAgent {
     request: QuickIterationRequest,
     report?: AgentActivityReporter,
   ): Promise<QuickIterationResult>;
+  undo?(id: string): Promise<QuickIterationUndoResult>;
 }
