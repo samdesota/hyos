@@ -4,4 +4,6 @@ limits:
   - paths:
       - "**/*.ts"
       - "**/*.tsx"
+      - "!**/*.test.ts"
+      - "!**/*.test.tsx"
     max_lines: 500
