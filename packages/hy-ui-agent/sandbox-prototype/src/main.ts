@@ -46,14 +46,14 @@ function dashboard(): string {
         </header>
 
         <div class="metric-grid">
-          <article class="metric-card accent"><span>Monthly revenue</span><strong>$84,280</strong><small>↑ 12.4% from last month</small></article>
+          <article class="metric-card accent"><span>Monthly revenue</span><strong>$85,000</strong><small>↑ 12.4% from last month</small></article>
           <article class="metric-card"><span>Active customers</span><strong>2,420</strong><small>196 joined this month</small></article>
           <article class="metric-card"><span>Conversion</span><strong>8.42%</strong><small>Target is 9.00%</small></article>
         </div>
 
         <div class="dashboard-grid">
           <article class="panel chart-panel">
-            <div class="panel-heading"><div><span class="eyebrow">Performance</span><h2>Revenue trend</h2></div><button class="icon-button">•••</button></div>
+            <div class="panel-heading"><div><h2>Revenue trend</h2></div><button class="icon-button">•••</button></div>
             <div class="chart" aria-label="Decorative revenue chart">
               <div style="height:32%"></div><div style="height:46%"></div><div style="height:38%"></div><div style="height:65%"></div><div style="height:57%"></div><div style="height:82%"></div><div style="height:73%"></div><div style="height:94%"></div>
             </div>
@@ -78,13 +78,13 @@ function projectBoard(): string {
     <main class="board-shell">
       <header class="board-header">
         <div class="board-brand"><div class="board-logo">T</div><strong>Thread</strong></div>
-        <label class="search"><span>⌕</span><input placeholder="Search anything" /></label>
+        <label class="search"><span>⌕</span><input placeholder="Search" /></label>
         <div class="board-actions"><button class="round-button">?</button><div class="avatar lavender">KS</div></div>
       </header>
 
       <section class="board-content">
         <div class="board-title-row">
-          <div><span class="crumb">Projects / Website refresh</span><h1>Website refresh</h1><p>Coordinate the final design and launch work.</p></div>
+          <div><span class="crumb">Projects / Website refresh</span><h1>Website rework</h1><p>Coordinate the final design and launch work.</p></div>
           <div class="collaborators"><span>AM</span><span>JV</span><span>KS</span><button>+ Invite</button></div>
         </div>
         <div class="board-toolbar">
@@ -121,7 +121,7 @@ function storefront(): string {
   return shell(`
     <main class="store-shell">
       <nav class="store-nav">
-        <a class="store-logo" href="#">FIELD / NOTE</a>
+        <a class="store-logo" href="#">FIELD / <span>NOTE</span></a>
         <div><a href="#">Objects</a><a href="#">Journal</a><a href="#">About</a></div>
         <button class="bag-button">Bag <span>2</span></button>
       </nav>
@@ -129,7 +129,7 @@ function storefront(): string {
       <section class="store-hero">
         <div class="hero-copy">
           <span class="collection-label">Edition No. 04 · Autumn 2026</span>
-          <h1>Objects for<br />considered days.</h1>
+          <h1>Objects for<br />slow days.</h1>
           <p>Useful pieces made slowly, chosen for texture, proportion, and the quiet pleasure of daily use.</p>
           <a class="shop-link" href="#products">Explore the collection <span>→</span></a>
         </div>

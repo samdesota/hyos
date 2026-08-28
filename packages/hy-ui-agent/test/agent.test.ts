@@ -100,7 +100,12 @@ test("preview returns edits without changing files", async () => {
       ],
     }),
   ]);
-  const agent = createQuickIterationAgent({ projectRoot: root, gateway });
+  const agent = createQuickIterationAgent({
+    projectRoot: root,
+    gateway,
+    reasoning: "minimal",
+    providerOrder: ["parasail", "morph", "baseten"],
+  });
 
   const result = await agent.run({
     instruction: "Add more space",
@@ -124,7 +129,29 @@ test("preview returns edits without changing files", async () => {
     /--- styles\.css ---/,
   );
   assert.match(
+    contentText(gateway.requests[0]?.messages[0]),
+    /Treat those files as already inspected/,
+  );
+  assert.match(
+    contentText(gateway.requests[0]?.messages[0]),
+    /submit_edits immediately as your first and only tool call/,
+  );
+  assert.match(
     contentText(gateway.requests[0]?.messages.at(-1)),
     /data:image\/png;base64,AA==/,
   );
+  assert.deepEqual(gateway.requests[0]?.reasoning, { effort: "minimal" });
+  assert.deepEqual(gateway.requests[0]?.providerOptions, {
+    gateway: {
+      order: ["parasail", "morph", "baseten"],
+      only: ["parasail", "morph", "baseten"],
+    },
+  });
+  const requestDump = await readFile(
+    join(root, ".hy-ui-agent", "last-initial-request.json"),
+    "utf8",
+  );
+  assert.match(requestDump, /Likely relevant project files/);
+  assert.doesNotMatch(requestDump, /data:image/);
+  assert.doesNotMatch(requestDump, /image_url/);
 });

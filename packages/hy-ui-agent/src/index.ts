@@ -19,12 +19,22 @@ export {
   type CreateQuickIterationAgentOptions,
 } from "./agent.js";
 export type {
+  AgentActivity,
+  AgentActivityReporter,
   ElementSelection,
   QuickIterationAgent,
   QuickIterationRequest,
   QuickIterationResult,
   TextReplacement,
 } from "./agent-types.js";
+export {
+  createDevelopmentTelemetry,
+  type DevelopmentTelemetryOptions,
+  type TelemetryEntry,
+  type TelemetryLevel,
+  type TelemetrySource,
+  type TelemetryStore,
+} from "./telemetry.js";
 export {
   reactSourceLocations,
   type ReactSourceLocationsOptions,

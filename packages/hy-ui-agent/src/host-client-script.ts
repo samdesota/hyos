@@ -3,17 +3,80 @@ import { UI_AGENT_FRAME_ID } from "./protocol.js";
 export function renderHostClientScript(): string {
   return `
 const FRAME_ID = ${JSON.stringify(UI_AGENT_FRAME_ID)};
+const LAUNCHER_ID = "hyos-ui-agent-launcher";
 const SOURCE_ATTRIBUTE = "data-source-loc";
 const scriptUrl = new URL(document.currentScript?.src ?? import.meta.url);
 const overlayUrl = new URL("./overlay", scriptUrl);
 const screenshotLibraryUrl = new URL("./html2canvas.js", scriptUrl);
 const iterationUrl = new URL("./trpc/iteration.run", scriptUrl);
+const telemetryClient = import(new URL("./activity-client.js", scriptUrl).href);
 let currentContext;
 let screenshotter;
+let frontendLogs = [];
+let flushingLogs = false;
+
+function serializeLogValue(value) {
+  if (value instanceof Error) return { name: value.name, message: value.message, stack: value.stack };
+  if (typeof value === "string") return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return String(value);
+  }
+}
+
+function queueFrontendLog(level, event, values, requestId) {
+  frontendLogs.push({
+    level,
+    event,
+    message: values.map((value) =>
+      typeof value === "string" ? value : JSON.stringify(serializeLogValue(value)),
+    ).join(" ").slice(0, 20000),
+    timestamp: Date.now(),
+    requestId,
+    data: { url: location.href },
+  });
+  if (frontendLogs.length > 500) frontendLogs = frontendLogs.slice(-500);
+}
+
+async function flushFrontendLogs() {
+  if (flushingLogs || frontendLogs.length === 0) return;
+  flushingLogs = true;
+  const entries = frontendLogs.splice(0, 100);
+  try {
+    const module = await telemetryClient;
+    await module.ingestFrontendLogs(entries);
+  } catch {
+    frontendLogs.unshift(...entries);
+  } finally {
+    flushingLogs = false;
+  }
+}
+
+for (const level of ["debug", "info", "warn", "error"]) {
+  const original = console[level].bind(console);
+  console[level] = (...values) => {
+    original(...values);
+    queueFrontendLog(level, "console." + level, values);
+  };
+}
+window.addEventListener("error", (event) => {
+  queueFrontendLog("error", "window.error", [event.error ?? event.message]);
+});
+window.addEventListener("unhandledrejection", (event) => {
+  queueFrontendLog("error", "window.unhandledrejection", [event.reason]);
+});
+setInterval(() => void flushFrontendLogs(), 1000);
+queueFrontendLog("info", "telemetry.started", ["Frontend telemetry connected"]);
 
 function frame() {
   const candidate = document.getElementById(FRAME_ID);
   return candidate instanceof HTMLIFrameElement ? candidate : undefined;
+}
+
+function launcher() {
+  const candidate = document.getElementById(LAUNCHER_ID);
+  return candidate instanceof HTMLButtonElement ? candidate : undefined;
 }
 
 function postToOverlay(message) {
@@ -28,26 +91,64 @@ function setOverlayActive(active) {
   if (!overlay) return;
   overlay.style.pointerEvents = active ? "auto" : "none";
   overlay.setAttribute("aria-hidden", String(!active));
+  const trigger = launcher();
+  if (trigger) {
+    trigger.hidden = active;
+    trigger.style.setProperty("display", active ? "none" : "flex", "important");
+  }
 }
 
 function mountOverlay() {
-  if (frame()) return;
-  const overlay = document.createElement("iframe");
-  overlay.id = FRAME_ID;
-  overlay.title = "HyOS UI agent";
-  overlay.src = overlayUrl.href;
-  overlay.setAttribute("aria-hidden", "true");
-  overlay.style.cssText = [
-    "position:fixed",
-    "inset:0",
-    "width:100vw",
-    "height:100vh",
-    "border:0",
-    "background:transparent",
-    "pointer-events:none",
-    "z-index:2147483647",
-  ].join(";");
-  document.documentElement.append(overlay);
+  if (!frame()) {
+    const overlay = document.createElement("iframe");
+    overlay.id = FRAME_ID;
+    overlay.title = "HyOS UI agent";
+    overlay.src = overlayUrl.href;
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.style.cssText = [
+      "position:fixed",
+      "inset:0",
+      "width:100vw",
+      "height:100vh",
+      "border:0",
+      "background:transparent",
+      "pointer-events:none",
+      "z-index:2147483647",
+    ].join(";");
+    document.documentElement.append(overlay);
+  }
+  if (!launcher()) {
+    const trigger = document.createElement("button");
+    trigger.id = LAUNCHER_ID;
+    trigger.type = "button";
+    trigger.setAttribute("aria-label", "Start quick edit (Hyper E)");
+    trigger.innerHTML = '<span>Quick edit</span><kbd style="padding:4px 7px;border:1px solid rgb(255 255 255 / 12%);border-radius:999px;color:#fff;background:rgb(255 255 255 / 9%);font:650 10px ui-sans-serif,system-ui">Hyper E</kbd>';
+    trigger.style.cssText = [
+      "position:fixed",
+      "right:16px",
+      "bottom:16px",
+      "display:flex",
+      "align-items:center",
+      "gap:8px",
+      "padding:7px 8px 7px 11px",
+      "border:1px solid rgb(255 255 255 / 14%)",
+      "border-radius:999px",
+      "color:rgb(255 255 255 / 72%)",
+      "background:rgb(17 17 19 / 88%)",
+      "box-shadow:0 8px 30px rgb(0 0 0 / 24%)",
+      "font:11px ui-sans-serif,system-ui",
+      "cursor:pointer",
+      "z-index:2147483646",
+    ].join(";");
+    trigger.addEventListener("click", beginQuickEdit);
+    document.documentElement.append(trigger);
+  }
+}
+
+function beginQuickEdit() {
+  currentContext = undefined;
+  setOverlayActive(true);
+  postToOverlay({ type: "start-region-selection" });
 }
 
 function round(value) {
@@ -119,7 +220,7 @@ function collectElements(region) {
   const regionArea = Math.max(1, region.width * region.height);
   return Array.from(document.querySelectorAll("body *"))
     .filter((element) => {
-      if (!(element instanceof HTMLElement) || element.id === FRAME_ID || ignored.has(element.tagName))
+      if (!(element instanceof HTMLElement) || [FRAME_ID, LAUNCHER_ID].includes(element.id) || ignored.has(element.tagName))
         return false;
       const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
@@ -159,7 +260,7 @@ async function captureRegion(region) {
     logging: false,
     useCORS: true,
     backgroundColor: getComputedStyle(document.body).backgroundColor || "#ffffff",
-    ignoreElements: (element) => element.id === FRAME_ID,
+    ignoreElements: (element) => [FRAME_ID, LAUNCHER_ID].includes(element.id),
   });
   let output = canvas;
   const maxDimension = 1_400;
@@ -176,6 +277,7 @@ async function captureRegion(region) {
 }
 
 async function prepareContext(region) {
+  queueFrontendLog("info", "selection.started", [region]);
   const elements = collectElements(region);
   let screenshot;
   let captureError;
@@ -185,6 +287,10 @@ async function prepareContext(region) {
     captureError = error instanceof Error ? error.message : "Screenshot failed";
   }
   currentContext = { region, elements, screenshot };
+  queueFrontendLog("info", "selection.context_ready", [
+    elements.length + " elements",
+    screenshot ? "screenshot ready" : "screenshot unavailable",
+  ]);
   postToOverlay({
     type: "selection-context-ready",
     region,
@@ -194,8 +300,9 @@ async function prepareContext(region) {
   });
 }
 
-async function submitIteration(instruction) {
+async function submitIteration(instruction, requestId) {
   if (!currentContext) throw new Error("Select a region first");
+  queueFrontendLog("info", "iteration.submitted", [instruction], requestId);
   const fallback = {
     tagName: "region",
     boundingBox: currentContext.region,
@@ -205,6 +312,7 @@ async function submitIteration(instruction) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
+      requestId,
       instruction,
       selection,
       contextElements,
@@ -216,15 +324,31 @@ async function submitIteration(instruction) {
   if (!response.ok || body.error) {
     throw new Error(body.error?.json?.message ?? body.error?.message ?? "Iteration failed");
   }
+  queueFrontendLog("info", "iteration.completed", ["UI update received"], requestId);
   return body.result?.data?.json ?? body.result?.data;
 }
 
 window.addEventListener("keydown", (event) => {
-  if (event.repeat || !event.altKey || !event.shiftKey || event.code !== "KeyA") return;
+  const overlay = frame();
+  if (
+    event.key === "Escape" &&
+    overlay?.getAttribute("aria-hidden") === "false"
+  ) {
+    event.preventDefault();
+    postToOverlay({ type: "cancel-overlay" });
+    return;
+  }
+  if (
+    event.repeat ||
+    !event.ctrlKey ||
+    !event.altKey ||
+    !event.shiftKey ||
+    !event.metaKey ||
+    event.code !== "KeyE"
+  )
+    return;
   event.preventDefault();
-  currentContext = undefined;
-  setOverlayActive(true);
-  postToOverlay({ type: "start-region-selection" });
+  beginQuickEdit();
 });
 
 window.addEventListener("message", (event) => {
@@ -237,7 +361,7 @@ window.addEventListener("message", (event) => {
     return;
   }
   if (event.data.type === "submit-iteration") {
-    void submitIteration(event.data.instruction)
+    void submitIteration(event.data.instruction, event.data.requestId)
       .then((result) => postToOverlay({ type: "iteration-complete", result }))
       .catch((error) =>
         postToOverlay({

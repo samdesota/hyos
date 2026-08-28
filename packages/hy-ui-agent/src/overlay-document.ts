@@ -160,6 +160,14 @@ export function renderIterationOverlayHtml(): string {
         animation: spin .7s linear infinite;
       }
       .error { padding: 7px 4px 0; color: #ff9292; font-size: 11px; }
+      .activity { margin-top: 9px; padding: 10px 12px; border: 1px solid rgb(255 255 255 / 8%); border-radius: 11px; background: #25252a; }
+      .activity-header { display: flex; justify-content: space-between; margin-bottom: 8px; color: #b9b9c1; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+      .activity-header time { color: #777781; font-variant-numeric: tabular-nums; }
+      .activity-list { display: grid; gap: 7px; max-height: 132px; overflow: auto; }
+      .activity-item { display: grid; grid-template-columns: 12px 1fr; gap: 7px; color: #d2d2d8; font-size: 11px; line-height: 1.3; }
+      .activity-dot { width: 7px; height: 7px; margin-top: 3px; border-radius: 50%; background: #6e7ff1; box-shadow: 0 0 0 3px rgb(110 127 241 / 13%); }
+      .activity-item:last-child .activity-dot { animation: pulse 1s ease-in-out infinite alternate; }
+      .activity-detail { display: block; margin-top: 2px; color: #777781; font-size: 9px; }
       .result { padding: 10px 9px 6px; }
       .result-mark {
         display: grid;
@@ -175,10 +183,11 @@ export function renderIterationOverlayHtml(): string {
       .result h2 { margin: 0 0 5px; font-size: 15px; }
       .result p { margin: 0 0 14px; color: #a4a4ad; font-size: 12px; line-height: 1.45; }
       @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes pulse { to { opacity: .35; } }
     </style>
   </head>
   <body>
-    <div class="shortcut-pill" id="shortcut-pill"><span>Quick edit</span><kbd>⌥ ⇧ A</kbd></div>
+    <div class="shortcut-pill" id="shortcut-pill" hidden><span>Quick edit</span><kbd>Hyper E</kbd></div>
 
     <div class="selection-surface" id="selection-surface" hidden>
       <div class="selection-tip" id="selection-tip">Drag around what you want to change <span>Esc to cancel</span></div>
@@ -199,6 +208,10 @@ export function renderIterationOverlayHtml(): string {
       <div id="prompt-content">
         <textarea id="instruction" placeholder="What should change in this region?" required></textarea>
         <div class="error" id="error" hidden></div>
+        <section class="activity" id="activity" aria-live="polite" hidden>
+          <div class="activity-header"><span>Agent activity</span><time id="activity-time">0.0s</time></div>
+          <div class="activity-list" id="activity-list"></div>
+        </section>
         <div class="prompt-actions">
           <span>Enter to apply · Shift Enter for a new line</span>
           <button class="apply-button" id="apply-button" type="submit">Make change ↗</button>
@@ -229,10 +242,64 @@ export function renderIterationOverlayHtml(): string {
       const applyButton = document.querySelector("#apply-button");
       const errorBox = document.querySelector("#error");
       const promptContent = document.querySelector("#prompt-content");
+      const activity = document.querySelector("#activity");
+      const activityList = document.querySelector("#activity-list");
+      const activityTime = document.querySelector("#activity-time");
       const result = document.querySelector("#result");
       let start;
       let region;
       let selecting = false;
+      let activitySubscription;
+      let activityTimer;
+
+      function stopActivity() {
+        activitySubscription?.unsubscribe?.();
+        activitySubscription = undefined;
+        clearInterval(activityTimer);
+        activityTimer = undefined;
+      }
+
+      function addActivity(item) {
+        const row = document.createElement("div");
+        row.className = "activity-item";
+        const dot = document.createElement("span");
+        dot.className = "activity-dot";
+        const copy = document.createElement("span");
+        copy.textContent = item.message;
+        if (item.detail) {
+          const detail = document.createElement("small");
+          detail.className = "activity-detail";
+          detail.textContent = item.detail;
+          copy.append(detail);
+        }
+        row.append(dot, copy);
+        activityList.append(row);
+        activityList.scrollTop = activityList.scrollHeight;
+      }
+
+      async function startActivity(requestId) {
+        stopActivity();
+        activity.hidden = false;
+        activityList.replaceChildren();
+        const started = performance.now();
+        activityTime.textContent = "0.0s";
+        activityTimer = setInterval(() => {
+          activityTime.textContent = ((performance.now() - started) / 1000).toFixed(1) + "s";
+        }, 100);
+        addActivity({ message: "Sending selected region to agent" });
+        try {
+          const module = await import("./activity-client.js");
+          activitySubscription = module.subscribeToIterationActivity(requestId, {
+            onData: addActivity,
+            onError(error) {
+              addActivity({ message: error?.message ?? "Activity connection lost" });
+            },
+            onComplete() {},
+          });
+        } catch (error) {
+          addActivity({ message: error?.message ?? "Could not connect activity feed" });
+        }
+      }
 
       function post(message) {
         window.parent.postMessage({ source: "hyos-ui-agent", ...message }, "*");
@@ -249,6 +316,7 @@ export function renderIterationOverlayHtml(): string {
       }
 
       function close() {
+        stopActivity();
         selecting = false;
         start = undefined;
         region = undefined;
@@ -257,7 +325,8 @@ export function renderIterationOverlayHtml(): string {
         tip.hidden = false;
         box.hidden = true;
         panel.hidden = true;
-        pill.hidden = false;
+        activity.hidden = true;
+        pill.hidden = true;
         instruction.value = "";
         post({ type: "close-overlay" });
       }
@@ -274,6 +343,7 @@ export function renderIterationOverlayHtml(): string {
         tip.hidden = false;
         errorBox.hidden = true;
         result.hidden = true;
+        activity.hidden = true;
         promptContent.hidden = false;
       }
 
@@ -319,7 +389,9 @@ export function renderIterationOverlayHtml(): string {
         applyButton.disabled = true;
         applyButton.innerHTML = '<span class="spinner"></span>Applying';
         errorBox.hidden = true;
-        post({ type: "submit-iteration", instruction: value });
+        const requestId = crypto.randomUUID();
+        void startActivity(requestId);
+        post({ type: "submit-iteration", instruction: value, requestId });
       });
 
       instruction.addEventListener("keydown", (event) => {
@@ -342,6 +414,10 @@ export function renderIterationOverlayHtml(): string {
           startSelection();
           return;
         }
+        if (event.data.type === "cancel-overlay") {
+          close();
+          return;
+        }
         if (event.data.type === "selection-context-ready") {
           const elements = event.data.elements ?? [];
           const sources = new Set(elements.map((item) => item.sourceHint).filter(Boolean));
@@ -361,6 +437,7 @@ export function renderIterationOverlayHtml(): string {
           return;
         }
         if (event.data.type === "iteration-complete") {
+          stopActivity();
           promptContent.hidden = true;
           result.hidden = false;
           document.querySelector("#result-summary").textContent =
@@ -371,6 +448,7 @@ export function renderIterationOverlayHtml(): string {
           return;
         }
         if (event.data.type === "iteration-error") {
+          stopActivity();
           instruction.disabled = false;
           applyButton.disabled = false;
           applyButton.textContent = "Try again ↗";

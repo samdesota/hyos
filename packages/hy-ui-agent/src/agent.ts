@@ -4,13 +4,19 @@ import { z } from "zod";
 
 import type {
   ElementSelection,
+  AgentActivityReporter,
   QuickIterationAgent,
   QuickIterationRequest,
   QuickIterationResult,
   TextReplacement,
 } from "./agent-types.js";
-import type { GatewayMessage, GatewayTransport } from "./gateway.js";
+import type {
+  GatewayMessage,
+  GatewayReasoningEffort,
+  GatewayTransport,
+} from "./gateway.js";
 import { createProjectTools } from "./project-tools.js";
+import { dumpInitialGatewayRequest } from "./request-dump.js";
 
 const editSchema = z.object({
   path: z.string().min(1),
@@ -125,7 +131,11 @@ function tool(name: string, description: string, parameters: object) {
 function systemPrompt(): string {
   return `You are a fast UI code iteration agent working inside a development project.
 Make the smallest correct code change for the requested visual adjustment.
-Use the selected DOM details to locate the implementation. Inspect files before editing.
+Use the selected DOM details to locate the implementation.
+The initial user message may include likely relevant project files. Treat those files as already inspected.
+If the supplied source contains everything needed for the change, call submit_edits immediately as your first and only tool call.
+For a localized request, prefer one minimal replacement. Do not call read_file or search_code merely to confirm source already present in the prompt.
+Use discovery tools only when the supplied source genuinely lacks code required to make the change safely.
 Do not alter generated files, dependencies, lockfiles, or unrelated behavior.
 Preserve the project's framework and style conventions.
 Every find string must be copied exactly from a file and must uniquely identify the replacement.
@@ -137,6 +147,8 @@ export interface CreateQuickIterationAgentOptions {
   gateway: GatewayTransport;
   model?: string;
   maxSteps?: number;
+  reasoning?: GatewayReasoningEffort;
+  providerOrder?: string[];
 }
 
 export function createQuickIterationAgent(
@@ -149,13 +161,21 @@ export function createQuickIterationAgent(
   return {
     async run(
       rawRequest: QuickIterationRequest,
+      report: AgentActivityReporter = () => undefined,
     ): Promise<QuickIterationResult> {
       const request = inputSchema.parse(rawRequest);
+      const contextStartedAt = Date.now();
+      report({ phase: "context", message: "Inspecting selected UI context" });
       const selections = [
         request.selection,
         ...(request.contextElements ?? []),
       ];
       const context = await retrieveLikelyContext(project, selections);
+      report({
+        phase: "context",
+        message: "Relevant source context collected",
+        detail: `${Date.now() - contextStartedAt}ms`,
+      });
       const userPrompt = `Instruction:\n${request.instruction}\n\nPrimary selected element:\n${JSON.stringify(request.selection, null, 2)}\n\nOther elements intersecting the selected region:\n${JSON.stringify(request.contextElements ?? [], null, 2)}${context}`;
       const messages: GatewayMessage[] = [
         { role: "system", content: systemPrompt() },
@@ -175,14 +195,51 @@ export function createQuickIterationAgent(
             : userPrompt,
         },
       ];
+      const initialRequest = {
+        model,
+        messages,
+        tools,
+        tool_choice: "auto" as const,
+        stream: false as const,
+        reasoning: options.reasoning
+          ? { effort: options.reasoning }
+          : undefined,
+        providerOptions: options.providerOrder?.length
+          ? {
+              gateway: {
+                order: options.providerOrder,
+                only: options.providerOrder,
+              },
+            }
+          : undefined,
+      };
+      const dumpPath = await dumpInitialGatewayRequest(
+        options.projectRoot,
+        initialRequest,
+      );
+      if (dumpPath) {
+        report({
+          phase: "context",
+          message: "Initial request dump written",
+          detail: dumpPath,
+        });
+      }
 
       for (let step = 0; step < maxSteps; step += 1) {
+        const modelStartedAt = Date.now();
+        report({
+          phase: "model",
+          message: `Waiting for ${model}`,
+          detail: `Model step ${step + 1}${options.reasoning ? ` · reasoning ${options.reasoning}` : ""}`,
+        });
         const response = await options.gateway.complete({
-          model,
+          ...initialRequest,
           messages,
-          tools,
-          tool_choice: "auto",
-          stream: false,
+        });
+        report({
+          phase: "model",
+          message: `${model} responded`,
+          detail: `${Date.now() - modelStartedAt}ms · model step ${step + 1}${options.reasoning ? ` · reasoning ${options.reasoning}` : ""}`,
         });
         messages.push(response);
         const calls = response.tool_calls ?? [];
@@ -196,8 +253,14 @@ export function createQuickIterationAgent(
           >;
           if (call.function.name === "submit_edits") {
             const submission = submissionSchema.parse(args);
-            if ((request.mode ?? "preview") === "apply")
+            report({
+              phase: "apply",
+              message: `Validating ${submission.edits.length} proposed edit${submission.edits.length === 1 ? "" : "s"}`,
+            });
+            if ((request.mode ?? "preview") === "apply") {
               await project.applyEdits(submission.edits);
+              report({ phase: "apply", message: "Source files updated" });
+            }
             return result(
               model,
               submission.summary,
@@ -207,7 +270,9 @@ export function createQuickIterationAgent(
           }
 
           let output: unknown;
+          const toolStartedAt = Date.now();
           if (call.function.name === "list_files") {
+            report({ phase: "tool", message: "Listing project files" });
             output = await project.listFiles(
               typeof args.pattern === "string" ? args.pattern : undefined,
             );
@@ -215,15 +280,25 @@ export function createQuickIterationAgent(
             call.function.name === "search_code" &&
             typeof args.query === "string"
           ) {
+            report({
+              phase: "tool",
+              message: `Searching code for “${args.query}”`,
+            });
             output = await project.searchCode(args.query);
           } else if (
             call.function.name === "read_file" &&
             typeof args.path === "string"
           ) {
+            report({ phase: "tool", message: `Reading ${args.path}` });
             output = await project.readFile(args.path);
           } else {
             output = { error: `Invalid tool call: ${call.function.name}` };
           }
+          report({
+            phase: "tool",
+            message: `Finished ${call.function.name}`,
+            detail: `${Date.now() - toolStartedAt}ms`,
+          });
           messages.push({
             role: "tool",
             tool_call_id: call.id,

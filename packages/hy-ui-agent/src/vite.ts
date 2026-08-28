@@ -8,6 +8,7 @@ import {
   type UiAgentServer,
   type UiAgentServerOptions,
 } from "./server.js";
+import { parseGatewayReasoningEffort } from "./gateway.js";
 
 export {
   reactSourceLocations,
@@ -65,6 +66,12 @@ export function uiAgent(options: UiAgentPluginOptions = {}): Plugin {
           projectRoot,
           apiKey: environment.AI_GATEWAY_API_KEY,
           model: environment.UI_AGENT_MODEL,
+          reasoning: parseGatewayReasoningEffort(
+            environment.UI_AGENT_REASONING,
+          ),
+          providerOrder: environment.UI_AGENT_PROVIDER_ORDER?.split(",")
+            .map((provider) => provider.trim())
+            .filter(Boolean),
           ...options.server,
         });
         activeServerUrl = await companionServer.start();

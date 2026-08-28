@@ -26,6 +26,26 @@ export interface GatewayRequest {
   tools: unknown[];
   tool_choice: "auto";
   stream: false;
+  reasoning?: { effort: GatewayReasoningEffort };
+  providerOptions?: {
+    gateway: {
+      order: string[];
+      only: string[];
+    };
+  };
+}
+
+export type GatewayReasoningEffort =
+  "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+export function parseGatewayReasoningEffort(
+  value: string | undefined,
+): GatewayReasoningEffort | undefined {
+  if (value === undefined || value === "") return undefined;
+  if (["none", "minimal", "low", "medium", "high", "xhigh"].includes(value)) {
+    return value as GatewayReasoningEffort;
+  }
+  throw new Error(`Unsupported UI agent reasoning effort: ${value}`);
 }
 
 export interface GatewayTransport {

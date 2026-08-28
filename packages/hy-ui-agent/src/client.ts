@@ -1,9 +1,16 @@
-import { createTRPCClient, httpBatchLink } from "@trpc/client";
+import {
+  createTRPCClient,
+  createWSClient,
+  httpBatchLink,
+  splitLink,
+  wsLink,
+} from "@trpc/client";
 
 import type { UiAgentRouter } from "./trpc.js";
 
 export interface UiAgentClientOptions {
   serverUrl: string;
+  WebSocket?: typeof WebSocket;
 }
 
 function normalizeServerUrl(value: string): string {
@@ -11,10 +18,18 @@ function normalizeServerUrl(value: string): string {
 }
 
 export function createUiAgentClient(options: UiAgentClientOptions) {
+  const serverUrl = normalizeServerUrl(options.serverUrl);
+  const wsClient = createWSClient({
+    url: `${serverUrl.replace(/^http/, "ws")}/`,
+    WebSocket: options.WebSocket,
+    lazy: { enabled: true, closeMs: 1_000 },
+  });
   return createTRPCClient<UiAgentRouter>({
     links: [
-      httpBatchLink({
-        url: `${normalizeServerUrl(options.serverUrl)}/trpc`,
+      splitLink({
+        condition: (operation) => operation.type === "subscription",
+        true: wsLink({ client: wsClient }),
+        false: httpBatchLink({ url: `${serverUrl}/trpc` }),
       }),
     ],
   });

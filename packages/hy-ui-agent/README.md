@@ -56,6 +56,7 @@ exact replacements:
 
 ```ts
 const preview = await client.iteration.run.mutate({
+  requestId: crypto.randomUUID(),
   instruction: "Make this button feel less prominent",
   selection: {
     tagName: "button",
@@ -72,11 +73,25 @@ It uses `zai/glm-5.3-flash` by default; set `UI_AGENT_MODEL` to test a
 different AI Gateway model. The agent can list, search, and read text files
 inside the Vite project root. In `apply` mode it only performs exact text
 replacements that uniquely match existing files inside that root.
+Set `UI_AGENT_REASONING` to `none`, `minimal`, `low`, `medium`, `high`, or
+`xhigh` to control reasoning-capable models.
+Set `UI_AGENT_PROVIDER_ORDER` to a comma-separated provider preference such as
+`parasail,morph,baseten`.
+
+In development, frontend console messages, browser errors, backend requests,
+agent steps, tool calls, durations, and failures are written to
+`.hy-ui-agent/development.sqlite`. Events share the iteration `requestId`, so a
+single edit can be traced across the browser, server, and agent. Disable this
+with `uiAgent({ server: { telemetry: { enabled: false } } })`, or set a custom
+`databasePath` in the same option. The store retains the newest 50,000 events.
+The initial Gateway request from the latest run is written to
+`.hy-ui-agent/last-initial-request.json` with its screenshot removed.
 
 ## Region iteration UI
 
-With the dev server running, press `Alt/Option + Shift + A` to enter region
-selection mode. Drag around part of the page, describe the change, and submit.
+With the dev server running, press `Hyper + E` or click the `Quick edit`
+launcher to enter region selection mode. Drag around part of the page, describe
+the change, and submit.
 The host-page script collects visible DOM elements intersecting the rectangle,
 including any `data-source-loc` values, and captures a cropped screenshot. The
 instruction, element context, relevant source files, and screenshot are sent to

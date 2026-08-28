@@ -681,6 +681,9 @@ a {
   font-weight: 700;
   letter-spacing: 0.16em;
 }
+.store-logo span {
+  color: #5c7457;
+}
 .store-nav > div {
   display: flex;
   gap: 32px;

@@ -40,6 +40,20 @@ export interface QuickIterationResult {
   applied: boolean;
 }
 
+export interface AgentActivity {
+  phase: "context" | "model" | "tool" | "apply" | "complete" | "error";
+  message: string;
+  detail?: string;
+  timestamp: number;
+}
+
+export type AgentActivityReporter = (
+  activity: Omit<AgentActivity, "timestamp">,
+) => void;
+
 export interface QuickIterationAgent {
-  run(request: QuickIterationRequest): Promise<QuickIterationResult>;
+  run(
+    request: QuickIterationRequest,
+    report?: AgentActivityReporter,
+  ): Promise<QuickIterationResult>;
 }
