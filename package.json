@@ -8,10 +8,11 @@
   ],
   "scripts": {
     "demo:project-management": "npm run dev --workspace @hyos/hydb-project-management-example",
-    "dev": "npm run dev --workspace @hyos/components",
+    "dev": "npm run build --workspace @hyos/ui-agent && npm run dev --workspace @hyos/components",
+    "dev:ui-agent": "npm run sandbox --workspace @hyos/ui-agent",
     "dev:notes": "npm run dev --workspace @hyos/hy-notes",
-    "build": "npm run build --workspace @hyos/components",
-    "typecheck": "npm run typecheck --workspace @hyos/components",
+    "build": "npm run build --workspace @hyos/ui-agent && npm run build --workspace @hyos/components",
+    "typecheck": "npm run typecheck --workspace @hyos/ui-agent && npm run typecheck --workspace @hyos/components",
     "test": "npm run test --workspaces --if-present",
     "prepare": "husky"
   },

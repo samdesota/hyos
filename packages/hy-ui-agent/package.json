@@ -1,0 +1,57 @@
+{
+  "name": "@hyos/ui-agent",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./server": {
+      "types": "./dist/src/server.d.ts",
+      "import": "./dist/src/server.js"
+    },
+    "./client": {
+      "types": "./dist/src/client.d.ts",
+      "import": "./dist/src/client.js"
+    },
+    "./trpc": {
+      "types": "./dist/src/trpc.d.ts",
+      "import": "./dist/src/trpc.js"
+    },
+    "./vite": {
+      "types": "./dist/src/vite.d.ts",
+      "import": "./dist/src/vite.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "sandbox": "vite sandbox-prototype --host 127.0.0.1",
+    "test": "npm run typecheck && tsc && node --test dist/test/*.test.js",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p sandbox-prototype/tsconfig.json"
+  },
+  "dependencies": {
+    "@babel/parser": "^8.0.4",
+    "@trpc/client": "^11.18.0",
+    "@trpc/server": "^11.18.0",
+    "esbuild": "^0.28.2",
+    "html2canvas": "^1.4.1",
+    "magic-string": "^1.2.3",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "ws": "^8.21.3",
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "vite": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@types/ws": "^8.18.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1"
+  }
+}
