@@ -16,6 +16,7 @@ import {
 import { messages, revisions, sessions } from "./model.js";
 
 const WORKSPACE_MESSAGE_PREFIX = "HYAGENT_WORKSPACE:";
+const SOURCE_REPOSITORIES_MESSAGE_PREFIX = "HYAGENT_SOURCE_REPOSITORIES:";
 const ARCHIVED_MESSAGE = "HYAGENT_ARCHIVED";
 
 const createSessionCommand = hydb.command({
@@ -120,7 +121,12 @@ export interface HyagentStore {
   ): AsyncIterable<SessionSnapshot>;
   latestUnfinishedSession(): Promise<SessionSnapshot | null>;
   getWorkspace(id: string): Promise<WorkspaceRepository[]>;
+  recentRepositories(): Promise<WorkspaceRepository[]>;
   saveWorkspace(
+    id: string,
+    repositories: readonly WorkspaceRepository[],
+  ): Promise<void>;
+  saveSourceRepositories(
     id: string,
     repositories: readonly WorkspaceRepository[],
   ): Promise<void>;
@@ -173,6 +179,7 @@ export function createHyagentStore(database: Database): HyagentStore {
         .filter(
           (message) =>
             !message.content.startsWith(WORKSPACE_MESSAGE_PREFIX) &&
+            !message.content.startsWith(SOURCE_REPOSITORIES_MESSAGE_PREFIX) &&
             message.content !== ARCHIVED_MESSAGE,
         )
         .map(({ sessionId: _sessionId, ...message }) => message),
@@ -317,6 +324,52 @@ export function createHyagentStore(database: Database): HyagentStore {
           JSON.parse(saved.content.slice(WORKSPACE_MESSAGE_PREFIX.length)),
         );
     },
+    async recentRepositories() {
+      const rows = await database.fetch(
+        hydb
+          .query(messages)
+          .orderBy((row) => [row.createdAt.desc(), row.id.asc()])
+          .many(),
+      );
+      const recent: WorkspaceRepository[] = [];
+      const seen = new Set<string>();
+      const sessionsWithSources = new Set(
+        rows
+          .filter((row) =>
+            row.content.startsWith(SOURCE_REPOSITORIES_MESSAGE_PREFIX),
+          )
+          .map((row) => row.sessionId),
+      );
+      for (const row of rows) {
+        const prefix = row.content.startsWith(
+          SOURCE_REPOSITORIES_MESSAGE_PREFIX,
+        )
+          ? SOURCE_REPOSITORIES_MESSAGE_PREFIX
+          : row.content.startsWith(WORKSPACE_MESSAGE_PREFIX)
+            ? WORKSPACE_MESSAGE_PREFIX
+            : null;
+        if (!prefix) continue;
+        if (
+          prefix === WORKSPACE_MESSAGE_PREFIX &&
+          sessionsWithSources.has(row.sessionId)
+        ) {
+          continue;
+        }
+        try {
+          const repositories = z
+            .array(workspaceRepositorySchema)
+            .parse(JSON.parse(row.content.slice(prefix.length)));
+          for (const repository of repositories) {
+            if (seen.has(repository.root)) continue;
+            seen.add(repository.root);
+            recent.push(repository);
+          }
+        } catch {
+          // Ignore malformed internal history while preserving other choices.
+        }
+      }
+      return recent.slice(0, 20);
+    },
     async saveWorkspace(id, repositories) {
       const parsed = z
         .array(workspaceRepositorySchema)
@@ -328,6 +381,20 @@ export function createHyagentStore(database: Database): HyagentStore {
         sessionId: id,
         role: "system",
         content: `${WORKSPACE_MESSAGE_PREFIX}${JSON.stringify(parsed)}`,
+        now: nextWriteTime(),
+      });
+    },
+    async saveSourceRepositories(id, repositories) {
+      const parsed = z
+        .array(workspaceRepositorySchema)
+        .min(1)
+        .max(20)
+        .parse(repositories);
+      await database.execute(appendMessageCommand, {
+        id: randomUUID(),
+        sessionId: id,
+        role: "system",
+        content: `${SOURCE_REPOSITORIES_MESSAGE_PREFIX}${JSON.stringify(parsed)}`,
         now: nextWriteTime(),
       });
     },

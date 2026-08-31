@@ -480,12 +480,14 @@ function Composer(props: WorkspaceProps) {
 
 function NewThreadPage(props: {
   repositories: WorkspaceRepository[];
+  recentRepositories: WorkspaceRepository[];
   busy: boolean;
   error: string;
   chooseFolder(): void;
   addPath(path: string): void;
   updateName(index: number, name: string): void;
   remove(index: number): void;
+  selectRecent(repository: WorkspaceRepository): void;
   start(prompt: string, mode: "checkout" | "worktree"): void;
 }) {
   const [path, setPath] = createSignal("");
@@ -511,6 +513,30 @@ function NewThreadPage(props: {
           <h1>New agent task</h1>
           <p>Choose the code, isolation mode, and the first instruction.</p>
         </header>
+        <label class="recent-checkout">
+          <span>Recent checkout</span>
+          <select
+            value={props.repositories[0]?.root ?? ""}
+            disabled={props.busy || props.recentRepositories.length === 0}
+            onChange={(event) => {
+              const repository = props.recentRepositories.find(
+                (candidate) => candidate.root === event.currentTarget.value,
+              );
+              if (repository) props.selectRecent(repository);
+            }}
+          >
+            <Show
+              when={props.recentRepositories.length > 0}
+              fallback={<option value="">No recent checkouts</option>}
+            >
+              <For each={props.recentRepositories}>
+                {(repository) => (
+                  <option value={repository.root}>{repository.root}</option>
+                )}
+              </For>
+            </Show>
+          </select>
+        </label>
         <div class="workspace-actions">
           <button
             class="choose-folder"
@@ -1041,6 +1067,9 @@ function App() {
   const [repositories, setRepositories] = createSignal<WorkspaceRepository[]>(
     [],
   );
+  const [recentRepositories, setRecentRepositories] = createSignal<
+    WorkspaceRepository[]
+  >([]);
   const [feedback, setFeedback] = createSignal("");
   const [operationBusy, setOperationBusy] = createSignal(false);
   const [agentStarting, setAgentStarting] = createSignal(false);
@@ -1076,7 +1105,7 @@ function App() {
   function showNewThread(mode: "push" | "replace") {
     setAgentStarting(false);
     setCreatingNew(true);
-    setRepositories([]);
+    setRepositories(recentRepositories().slice(0, 1));
     setComments([]);
     setError("");
     setNewThreadUrl(mode);
@@ -1113,7 +1142,7 @@ function App() {
       const url = new URL(location.href);
       if (url.searchParams.get("new") === "1") {
         setCreatingNew(true);
-        setRepositories([]);
+        setRepositories(recentRepositories().slice(0, 1));
         return;
       }
       const id = url.searchParams.get("session");
@@ -1127,11 +1156,16 @@ function App() {
 
     void (async () => {
       try {
-        const health = await client.health.query();
+        const [health, recent] = await Promise.all([
+          client.health.query(),
+          client.workspace.recent.query(),
+        ]);
+        setRecentRepositories([...recent]);
         const url = new URL(location.href);
         const requested = url.searchParams.get("session");
         if (url.searchParams.get("new") === "1") {
           setCreatingNew(true);
+          setRepositories(recent.slice(0, 1));
           setAgentConfigured(health.agentConfigured);
           return;
         }
@@ -1148,6 +1182,7 @@ function App() {
         }
         if (!initial) {
           setCreatingNew(true);
+          setRepositories(recent.slice(0, 1));
           setNewThreadUrl("replace");
           setAgentConfigured(health.agentConfigured);
           return;
@@ -1268,12 +1303,24 @@ function App() {
     setAgentStarting(true);
     setError("");
     try {
+      const sourceRepositories = [...repositories()];
       const started = await client.session.start.mutate({
-        repositories: repositories(),
+        repositories: sourceRepositories,
         mode,
         prompt,
       });
       setRepositories([...started.repositories]);
+      setRecentRepositories((current) => {
+        return [
+          ...sourceRepositories,
+          ...current.filter(
+            (recent) =>
+              !sourceRepositories.some(
+                (repository) => repository.root === recent.root,
+              ),
+          ),
+        ].slice(0, 20);
+      });
       setSession(started.session);
       setCreatingNew(false);
       setComments([]);
@@ -1305,7 +1352,7 @@ function App() {
         setSessionUrl(next.id, "replace");
       } else {
         setSession(undefined);
-        setRepositories([]);
+        setRepositories(recentRepositories().slice(0, 1));
         setCreatingNew(true);
         setComments([]);
         setNewThreadUrl("replace");
@@ -1341,6 +1388,7 @@ function App() {
               <Match when={creatingNew() || !session()}>
                 <NewThreadPage
                   repositories={repositories()}
+                  recentRepositories={recentRepositories()}
                   busy={busy()}
                   error={error()}
                   chooseFolder={() => void chooseFolder()}
@@ -1361,6 +1409,7 @@ function App() {
                       ),
                     )
                   }
+                  selectRecent={(repository) => setRepositories([repository])}
                   start={(prompt, mode) => void startNewSession(prompt, mode)}
                 />
               </Match>

@@ -1898,6 +1898,36 @@ body {
   border-bottom: 1px solid #282e36;
 }
 
+.recent-checkout {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.recent-checkout > span {
+  color: #8d96a1;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.recent-checkout select {
+  width: 100%;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid #303740;
+  border-radius: 4px;
+  outline: none;
+  background: #0d1115;
+  color: #dfe3e8;
+  font:
+    11px "DM Mono",
+    monospace;
+}
+
+.recent-checkout select:focus {
+  border-color: #687946;
+}
+
 .workspace-actions > span {
   color: #626c77;
   font-size: 11px;

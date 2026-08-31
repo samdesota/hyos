@@ -70,6 +70,7 @@ export function createHyagentRouter(options: {
       agentConfigured: options.agentConfigured ?? true,
     })),
     workspace: t.router({
+      recent: t.procedure.query(() => options.store.recentRepositories()),
       current: t.procedure.query(async () => {
         await bootstrap();
         return options.project.repositorySpecs();
@@ -112,6 +113,10 @@ export function createHyagentRouter(options: {
           await options.store.saveWorkspace(
             session.id,
             options.project.repositorySpecs(),
+          );
+          await options.store.saveSourceRepositories(
+            session.id,
+            input.repositories,
           );
           await options.store.appendMessage(
             session.id,
@@ -167,6 +172,10 @@ export function createHyagentRouter(options: {
             input.prompt.split("\n")[0]!.slice(0, 100),
           );
           await options.store.saveWorkspace(session.id, repositories);
+          await options.store.saveSourceRepositories(
+            session.id,
+            input.repositories,
+          );
           await options.store.appendMessage(
             session.id,
             "system",

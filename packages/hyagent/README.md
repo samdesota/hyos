@@ -19,6 +19,10 @@ or more Git repositories, decide whether to use the selected checkouts or create
 isolated worktrees, enter the initial prompt, and press Enter to start. The session is
 persisted only after workspace preparation succeeds.
 
+The new-task page remembers source repository folders from previous tasks, selects the
+most recently used checkout by default, and exposes the rest in a dropdown. Managed
+worktree paths are not added to this source-folder history.
+
 Worktree mode creates a `hyagent/...` branch under `.data/hyagent-worktrees`. Files
 listed in a repository's `.worktreeinclude` are copied into the new worktree.
 

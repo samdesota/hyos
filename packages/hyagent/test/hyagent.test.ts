@@ -357,6 +357,32 @@ test("the session index streams creation and title changes", async () => {
   }
 });
 
+test("recent repositories prefer source checkouts over generated worktrees", async () => {
+  const { database, store } = await setup();
+  try {
+    const first = await store.createSession("First task");
+    await store.saveWorkspace(first.id, [
+      { name: "project", root: "/managed/project-worktree" },
+    ]);
+    await store.saveSourceRepositories(first.id, [
+      { name: "project", root: "/code/project" },
+    ]);
+    const second = await store.createSession("Second task");
+    await store.saveSourceRepositories(second.id, [
+      { name: "other", root: "/code/other" },
+      { name: "project", root: "/code/project" },
+    ]);
+
+    assert.deepEqual(await store.recentRepositories(), [
+      { name: "other", root: "/code/other" },
+      { name: "project", root: "/code/project" },
+    ]);
+    assert.deepEqual((await store.getSession(second.id)).messages, []);
+  } finally {
+    await database.close();
+  }
+});
+
 test("the custom loop replaces stale consistency warnings", async () => {
   const { database, store } = await setup();
   let gatewayMessages: GatewayMessage[] = [];
@@ -794,6 +820,9 @@ test("a task is persisted only after workspace preparation succeeds", async () =
     });
     assert.equal(started.session.title, "Build the first change");
     assert.equal((await caller.session.list()).length, 1);
+    assert.deepEqual(await caller.workspace.recent(), [
+      { name: "project", root: "/code/project" },
+    ]);
   } finally {
     await database.close();
   }
