@@ -468,7 +468,7 @@ export function createLiterateAgent(options: {
         const snapshot = await options.store.getSession(sessionId);
         document = documentFromSnapshot(snapshot.revision);
         let appliedThrough = snapshot.appliedThrough;
-        const initialRevisionNumber = snapshot.revision?.number ?? 0;
+        const initialRevisionNumber = snapshot.latestRevisionNumber;
         let savedRevisions = 0;
         let cursorChanges = 0;
         const initialWarnings = await options.project.checkConsistency(

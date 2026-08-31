@@ -21,7 +21,7 @@ import type { GatewayMessage, GatewayTransport } from "../src/gateway.js";
 import { hyagentSchema } from "../src/model.js";
 import { renderAgentMarkdown } from "../src/markdown.js";
 import { createProjectTools, type ProjectTools } from "../src/project-tools.js";
-import { createHyagentStore } from "../src/store.js";
+import { createHyagentStore, type HyagentStore } from "../src/store.js";
 import { createHyagentRouter } from "../src/trpc.js";
 import { shouldShowWorkspacePicker } from "../src/workspace-state.js";
 import { createParallelWebTools } from "../src/web-tools.js";
@@ -267,6 +267,94 @@ test("hydb stores every incremental literate-diff revision", async () => {
     assert.equal(snapshot.appliedThrough, "change");
     await store.setAppliedThrough(session.id, null);
     assert.equal((await store.getSession(session.id)).appliedThrough, null);
+  } finally {
+    await database.close();
+  }
+});
+
+test("a session keeps committed diffs while a new active diff starts", async () => {
+  const { database, store } = await setup();
+  try {
+    const session = await store.createSession("Iterate after commit");
+    await store.saveRevision(session.id, proposedDocument, "change");
+    const first = await store.getSession(session.id);
+    await store.commitDiff(
+      session.id,
+      first.revision!.id,
+      first.appliedThrough,
+    );
+
+    const committed = await store.getSession(session.id);
+    assert.equal(committed.status, "committed");
+    assert.deepEqual(
+      committed.diffs.map(({ id, status, revision }) => ({
+        id,
+        status,
+        summary: revision?.summary,
+      })),
+      [
+        {
+          id: session.id,
+          status: "committed",
+          summary: proposedDocument.summary,
+        },
+      ],
+    );
+
+    const next = await store.startDiff(session.id);
+    assert.notEqual(next.activeDiffId, session.id);
+    assert.equal(next.revision, null);
+    assert.equal(next.appliedThrough, null);
+    assert.deepEqual(
+      next.diffs.map(({ status, revision }) => ({
+        status,
+        summary: revision?.summary ?? null,
+      })),
+      [
+        { status: "committed", summary: proposedDocument.summary },
+        { status: "active", summary: null },
+      ],
+    );
+
+    await store.saveRevision(next.id, {
+      summary: "Follow-up change",
+      blocks: [proposedDocument.blocks[0]!],
+      generatedIgnores: [],
+    });
+    const updated = await store.getSession(session.id);
+    assert.equal(updated.revision?.summary, "Follow-up change");
+    assert.equal(updated.latestRevisionNumber, 2);
+    assert.equal(updated.diffs[0]?.revision?.summary, proposedDocument.summary);
+    assert.equal(updated.diffs[1]?.revision?.summary, "Follow-up change");
+  } finally {
+    await database.close();
+  }
+});
+
+test("a legacy committed session becomes the first tab when work resumes", async () => {
+  const { database, store } = await setup();
+  try {
+    const session = await store.createSession("Legacy committed task");
+    await store.saveRevision(session.id, proposedDocument, "change");
+    await store.setStatus(session.id, "committed");
+
+    const next = await store.startDiff(session.id);
+
+    assert.deepEqual(
+      next.diffs.map(({ id, status, revision }) => ({
+        id,
+        status,
+        summary: revision?.summary ?? null,
+      })),
+      [
+        {
+          id: session.id,
+          status: "committed",
+          summary: proposedDocument.summary,
+        },
+        { id: next.activeDiffId, status: "active", summary: null },
+      ],
+    );
   } finally {
     await database.close();
   }
@@ -1815,7 +1903,19 @@ test("commit messages are generated before an editable message is committed", as
       ];
     },
   });
-  const agent = fakeAgent();
+  let startedSnapshot:
+    Awaited<ReturnType<HyagentStore["getSession"]>> | undefined;
+  let resolveStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    resolveStarted = resolve;
+  });
+  const agent = fakeAgent({
+    async run(sessionId) {
+      startedSnapshot = await store.getSession(sessionId);
+      resolveStarted();
+      return null;
+    },
+  });
   try {
     const router = createHyagentRouter({ store, project, agent });
     const caller = router.createCaller({});
@@ -1837,6 +1937,19 @@ test("commit messages are generated before an editable message is committed", as
     assert.equal(checks, 2);
     assert.equal(committedMessage, "feat: edited by reviewer");
     assert.equal(committed.status, "committed");
+
+    assert.deepEqual(
+      await caller.session.feedback({
+        id: session.id,
+        feedback: "Start the next change",
+        agent: "anthropic/claude-sonnet-4.5",
+      }),
+      { accepted: true },
+    );
+    await started;
+    assert.equal(startedSnapshot?.revision, null);
+    assert.equal(startedSnapshot?.diffs[0]?.status, "committed");
+    assert.equal(startedSnapshot?.diffs[1]?.status, "active");
   } finally {
     await database.close();
   }

@@ -1638,6 +1638,41 @@ body {
   background: #14171b;
 }
 
+.diff-tabs {
+  display: flex;
+  gap: 3px;
+  max-width: 920px;
+  margin: 0 auto 18px;
+  border-bottom: 1px solid #30353d;
+}
+
+.diff-tabs button {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: -1px;
+  padding: 8px 11px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: #777f8b;
+  font:
+    10px "DM Mono",
+    monospace;
+}
+
+.diff-tabs button.active {
+  border-bottom-color: #b9c0ca;
+  color: #e3e6eb;
+}
+
+.diff-tabs button i {
+  color: #626a76;
+  font-size: 8px;
+  font-style: normal;
+  text-transform: uppercase;
+}
+
 .diff-heading {
   max-width: 920px;
   gap: 24px;

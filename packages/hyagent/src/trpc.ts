@@ -58,7 +58,7 @@ export function createHyagentRouter(options: {
     }
     await options.project.configureRepositories(opened.repositories);
     await options.project.prepareBaseline(
-      id,
+      opened.session.activeDiffId,
       opened.session.revision ? "head" : "worktree",
     );
     return opened.session;
@@ -92,6 +92,7 @@ export function createHyagentRouter(options: {
     }
     return {
       revision,
+      appliedThrough: session.appliedThrough,
       document: {
         summary: revision.summary,
         blocks: revision.blocks,
@@ -306,9 +307,13 @@ export function createHyagentRouter(options: {
           if (activeRuns.size > 0) {
             throw new Error("The agent is already working on another task");
           }
-          const session = await activateSession(input.id);
+          let session = await activateSession(input.id);
           if (session.status === "committed") {
-            throw new Error("This literate diff is already committed");
+            session = await options.store.startDiff(input.id);
+            await options.project.prepareBaseline(
+              session.activeDiffId,
+              "worktree",
+            );
           }
           if (session.status === "running") {
             throw new Error("The agent is already working on this task");
@@ -348,12 +353,13 @@ export function createHyagentRouter(options: {
           }),
         )
         .mutation(async ({ input }) => {
-          const { revision, document } = await committableDocument(input.id);
+          const { revision, appliedThrough, document } =
+            await committableDocument(input.id);
           const commits = await options.project.commit(
             document,
             input.messages,
           );
-          await options.store.setStatus(input.id, "committed");
+          await options.store.commitDiff(input.id, revision.id, appliedThrough);
           await options.store.appendMessage(
             input.id,
             "system",

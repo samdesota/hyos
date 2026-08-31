@@ -81,12 +81,21 @@ export interface LiterateRevision extends LiterateDiff {
   createdAt: Date;
 }
 
+export interface SessionDiff {
+  id: string;
+  status: "active" | "committed";
+  revision: LiterateRevision | null;
+}
+
 export interface SessionSnapshot {
   id: string;
   title: string;
   status: SessionStatus;
   messages: AgentMessage[];
   revision: LiterateRevision | null;
+  diffs: SessionDiff[];
+  activeDiffId: string;
+  latestRevisionNumber: number;
   appliedThrough: string | null;
   createdAt: Date;
   updatedAt: Date;

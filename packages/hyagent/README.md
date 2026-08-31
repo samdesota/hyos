@@ -70,6 +70,10 @@ document. The Commit control verifies consistency, generates repository-specific
 messages, lets the reviewer edit them, and creates real Git commits for the paths
 represented by the document.
 
+Committing closes only the current literate diff, not the thread. New feedback in a
+committed thread starts a fresh diff from the committed worktree state; earlier diffs
+remain available as read-only document tabs.
+
 Repositories may provide an executable root-level `yeet.sh` for their own merge or
 delivery workflow. Yeet is disabled when no selected repository has the script;
 otherwise it runs each available hook from that repository's root.

@@ -176,6 +176,7 @@ interface WorkspaceProps {
   commitMessages: CommitMessages;
   yeetRepositories: readonly string[];
   yeeting: boolean;
+  selectedDiffId: string;
   setFeedback(value: string): void;
   setSelectedAgent(value: string): void;
   addComment(target: string, body: string): void;
@@ -187,6 +188,7 @@ interface WorkspaceProps {
   updateCommitMessage(repository: string, message: string): void;
   confirmCommit(): void;
   yeet(): void;
+  selectDiff(id: string): void;
 }
 
 function syntaxTokens(code: string) {
@@ -463,6 +465,7 @@ function CommitControls(props: WorkspaceProps) {
           class="commit"
           disabled={
             props.busy ||
+            props.selectedDiffId !== props.session.activeDiffId ||
             props.session.status === "committed" ||
             !props.session.revision
           }
@@ -837,6 +840,15 @@ function NewThreadPage(props: {
 
 function VariantA(props: WorkspaceProps) {
   const timeline = () => threadTimeline(props.session.messages);
+  const selectedDiff = () =>
+    props.session.diffs.find((diff) => diff.id === props.selectedDiffId) ??
+    props.session.diffs.find(
+      (diff) => diff.id === props.session.activeDiffId,
+    ) ??
+    props.session.diffs.at(-1);
+  const revision = () => selectedDiff()?.revision ?? null;
+  const viewingActiveDiff = () =>
+    selectedDiff()?.id === props.session.activeDiffId;
   const hasWorkingActivity = () =>
     timeline().some(
       (item) =>
@@ -909,14 +921,31 @@ function VariantA(props: WorkspaceProps) {
         <Composer {...props} />
       </section>
       <section class="diff-column paper">
+        <Show
+          when={
+            props.session.diffs.length > 1 ||
+            props.session.diffs[0]?.status === "committed"
+          }
+        >
+          <nav class="diff-tabs" aria-label="Literate diffs">
+            <For each={props.session.diffs}>
+              {(diff, index) => (
+                <button
+                  class={diff.id === selectedDiff()?.id ? "active" : ""}
+                  title={diff.revision?.summary ?? "New diff"}
+                  onClick={() => props.selectDiff(diff.id)}
+                >
+                  <span>Change {index() + 1}</span>
+                  <i>{diff.status === "committed" ? "Committed" : "Active"}</i>
+                </button>
+              )}
+            </For>
+          </nav>
+        </Show>
         <header class="diff-heading">
           <div>
-            <span class="eyebrow">
-              Revision {props.session.revision?.number ?? 0}
-            </span>
-            <h2>
-              {props.session.revision?.summary ?? "Waiting for the first draft"}
-            </h2>
+            <span class="eyebrow">Revision {revision()?.number ?? 0}</span>
+            <h2>{revision()?.summary ?? "Waiting for the first draft"}</h2>
           </div>
           <div class="document-actions">
             <FollowButton {...props} />
@@ -924,7 +953,7 @@ function VariantA(props: WorkspaceProps) {
           </div>
         </header>
         <div class="document-flow">
-          <Show when={!props.session.revision}>
+          <Show when={!revision()}>
             <section class="empty-document">
               <span>Empty document</span>
               <h3>The agent’s first overview will appear here.</h3>
@@ -934,21 +963,19 @@ function VariantA(props: WorkspaceProps) {
               </p>
             </section>
           </Show>
-          <For each={props.session.revision?.blocks ?? []}>
+          <For each={revision()?.blocks ?? []}>
             {(block) => (
               <Block
                 block={block}
-                editing={props.busy}
+                editing={props.busy && viewingActiveDiff()}
                 onComment={props.addComment}
               />
             )}
           </For>
-          <Show
-            when={(props.session.revision?.generatedIgnores.length ?? 0) > 0}
-          >
+          <Show when={(revision()?.generatedIgnores.length ?? 0) > 0}>
             <section class="generated-ignores">
               <h3>Generated artifacts not included</h3>
-              <For each={props.session.revision?.generatedIgnores ?? []}>
+              <For each={revision()?.generatedIgnores ?? []}>
                 {(entry) => (
                   <div>
                     <code>
@@ -1239,6 +1266,7 @@ function App() {
   const [commitMessages, setCommitMessages] = createSignal<CommitMessages>({});
   const [yeetRepositories, setYeetRepositories] = createSignal<string[]>([]);
   const [yeeting, setYeeting] = createSignal(false);
+  const [selectedDiffId, setSelectedDiffId] = createSignal("");
   const busy = createMemo(
     () =>
       operationBusy() ||
@@ -1274,6 +1302,7 @@ function App() {
     setCommitOpen(false);
     setCommitMessages({});
     setYeetRepositories([]);
+    setSelectedDiffId("");
     setError("");
     setNewThreadUrl(mode);
   }
@@ -1292,6 +1321,7 @@ function App() {
       setAgentStarting(false);
       setCreatingNew(false);
       setSession(opened.session);
+      setSelectedDiffId(opened.session.activeDiffId);
       setRepositories([...opened.repositories]);
       setComments([]);
       setCommitOpen(false);
@@ -1368,6 +1398,7 @@ function App() {
         }
         const loaded = await client.session.open.query({ id: initial.id });
         setSession(loaded.session);
+        setSelectedDiffId(loaded.session.activeDiffId);
         setRepositories([...loaded.repositories]);
         void refreshYeetStatus(loaded.session.id);
         setAgentConfigured(health.agentConfigured);
@@ -1390,7 +1421,16 @@ function App() {
       {
         onData(next) {
           const previousStatus = session()?.status;
+          const previousActiveDiffId = session()?.activeDiffId;
+          const wasViewingActiveDiff =
+            !selectedDiffId() || selectedDiffId() === previousActiveDiffId;
           setSession(next);
+          if (
+            wasViewingActiveDiff ||
+            !next.diffs.some((diff) => diff.id === selectedDiffId())
+          ) {
+            setSelectedDiffId(next.activeDiffId);
+          }
           if (previousStatus === "running" && next.status !== "running") {
             void refreshYeetStatus(next.id);
           }
@@ -1573,6 +1613,7 @@ function App() {
         ].slice(0, 20);
       });
       setSession(started.session);
+      setSelectedDiffId(started.session.activeDiffId);
       setCreatingNew(false);
       setComments([]);
       setCommitOpen(false);
@@ -1601,6 +1642,7 @@ function App() {
         const opened = await client.session.open.query({ id: next.id });
         setCreatingNew(false);
         setSession(opened.session);
+        setSelectedDiffId(opened.session.activeDiffId);
         setRepositories([...opened.repositories]);
         setComments([]);
         setCommitOpen(false);
@@ -1609,6 +1651,7 @@ function App() {
         setSessionUrl(next.id, "replace");
       } else {
         setSession(undefined);
+        setSelectedDiffId("");
         setRepositories(recentRepositories().slice(0, 1));
         setCreatingNew(true);
         setComments([]);
@@ -1698,6 +1741,7 @@ function App() {
                     commitMessages={commitMessages()}
                     yeetRepositories={yeetRepositories()}
                     yeeting={yeeting()}
+                    selectedDiffId={selectedDiffId()}
                     setFeedback={setFeedback}
                     setSelectedAgent={setSelectedAgent}
                     addComment={(target, body) =>
@@ -1719,6 +1763,7 @@ function App() {
                     }
                     confirmCommit={() => void confirmCommit()}
                     yeet={() => void yeet()}
+                    selectDiff={setSelectedDiffId}
                   />
                 )}
               </Match>

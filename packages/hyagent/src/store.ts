@@ -8,6 +8,7 @@ import {
   workspaceRepositorySchema,
   type LiterateDiff,
   type MessageRole,
+  type SessionDiff,
   type SessionSnapshot,
   type SessionListItem,
   type SessionStatus,
@@ -19,6 +20,8 @@ const WORKSPACE_MESSAGE_PREFIX = "HYAGENT_WORKSPACE:";
 const SOURCE_REPOSITORIES_MESSAGE_PREFIX = "HYAGENT_SOURCE_REPOSITORIES:";
 const ARCHIVED_MESSAGE = "HYAGENT_ARCHIVED";
 const PATCH_CURSOR_MESSAGE_PREFIX = "HYAGENT_PATCH_CURSOR:";
+const DIFF_STARTED_MESSAGE_PREFIX = "HYAGENT_DIFF_STARTED:";
+const DIFF_COMMITTED_MESSAGE_PREFIX = "HYAGENT_DIFF_COMMITTED:";
 
 const createSessionCommand = hydb.command({
   input: z.object({ id: z.string(), title: z.string(), now: z.date() }),
@@ -137,6 +140,12 @@ export interface HyagentStore {
     document: LiterateDiff,
     appliedThrough?: string | null,
   ): Promise<void>;
+  startDiff(id: string): Promise<SessionSnapshot>;
+  commitDiff(
+    id: string,
+    revisionId: string,
+    appliedThrough: string | null,
+  ): Promise<SessionSnapshot>;
   setAppliedThrough(id: string, appliedThrough: string | null): Promise<void>;
   setStatus(id: string, status: SessionStatus): Promise<void>;
   setTitle(id: string, title: string): Promise<void>;
@@ -170,15 +179,53 @@ export function createHyagentStore(database: Database): HyagentStore {
       hydb
         .query(revisions)
         .where((row) => row.sessionId.eq(id))
-        .orderBy((row) => [row.number.desc()])
-        .limit(1)
+        .orderBy((row) => [row.number.asc()])
         .many(),
     );
-    const revision = revisionRows[0];
+    const startedDiffs = messageRows.flatMap((message) => {
+      if (!message.content.startsWith(DIFF_STARTED_MESSAGE_PREFIX)) return [];
+      const parsed = z
+        .object({ id: z.string().min(1) })
+        .safeParse(
+          JSON.parse(message.content.slice(DIFF_STARTED_MESSAGE_PREFIX.length)),
+        );
+      return parsed.success
+        ? [{ ...parsed.data, createdAt: message.createdAt }]
+        : [];
+    });
+    const committedDiffs = messageRows.flatMap((message) => {
+      if (!message.content.startsWith(DIFF_COMMITTED_MESSAGE_PREFIX)) return [];
+      const parsed = z
+        .object({
+          id: z.string().min(1),
+          revisionId: z.string().min(1),
+          appliedThrough: z.string().min(1).nullable(),
+        })
+        .safeParse(
+          JSON.parse(
+            message.content.slice(DIFF_COMMITTED_MESSAGE_PREFIX.length),
+          ),
+        );
+      return parsed.success
+        ? [{ ...parsed.data, createdAt: message.createdAt }]
+        : [];
+    });
+    const activeStart = startedDiffs.at(-1);
+    const activeDiffId = activeStart?.id ?? id;
+    const activeRevisionRows = activeStart
+      ? revisionRows.filter(
+          (revision) =>
+            revision.createdAt.getTime() > activeStart.createdAt.getTime(),
+        )
+      : revisionRows;
+    const revision = activeRevisionRows.at(-1);
     const cursorMessage = [...messageRows]
       .reverse()
-      .find((message) =>
-        message.content.startsWith(PATCH_CURSOR_MESSAGE_PREFIX),
+      .find(
+        (message) =>
+          message.content.startsWith(PATCH_CURSOR_MESSAGE_PREFIX) &&
+          (!activeStart ||
+            message.createdAt.getTime() > activeStart.createdAt.getTime()),
       );
     const defaultAppliedThrough =
       [...(revision?.blocks ?? [])]
@@ -195,6 +242,55 @@ export function createHyagentStore(database: Database): HyagentStore {
         );
       if (parsed.success) appliedThrough = parsed.data.appliedThrough;
     }
+    const revisionById = new Map(
+      revisionRows.map((storedRevision) => [storedRevision.id, storedRevision]),
+    );
+    const toRevision = (storedRevision: (typeof revisionRows)[number]) => ({
+      id: storedRevision.id,
+      number: storedRevision.number,
+      summary: storedRevision.summary,
+      blocks: [...storedRevision.blocks],
+      generatedIgnores: [...storedRevision.generatedIgnores],
+      createdAt: storedRevision.createdAt,
+    });
+    const diffs: SessionDiff[] = committedDiffs.flatMap((committed) => {
+      const storedRevision = revisionById.get(committed.revisionId);
+      return storedRevision
+        ? [
+            {
+              id: committed.id,
+              status: "committed" as const,
+              revision: toRevision(storedRevision),
+            },
+          ]
+        : [];
+    });
+    const firstStart = startedDiffs[0];
+    const legacyRevision = firstStart
+      ? revisionRows
+          .filter(
+            (storedRevision) =>
+              storedRevision.createdAt.getTime() <
+              firstStart.createdAt.getTime(),
+          )
+          .at(-1)
+      : session.status === "committed" && committedDiffs.length === 0
+        ? revisionRows.at(-1)
+        : undefined;
+    if (legacyRevision && !diffs.some((diff) => diff.id === id)) {
+      diffs.unshift({
+        id,
+        status: "committed" as const,
+        revision: toRevision(legacyRevision),
+      });
+    }
+    if (!diffs.some((diff) => diff.id === activeDiffId)) {
+      diffs.push({
+        id: activeDiffId,
+        status: "active" as const,
+        revision: revision ? toRevision(revision) : null,
+      });
+    }
     observeTime(session.updatedAt);
     for (const message of messageRows) observeTime(message.createdAt);
     for (const storedRevision of revisionRows)
@@ -207,19 +303,15 @@ export function createHyagentStore(database: Database): HyagentStore {
             !message.content.startsWith(WORKSPACE_MESSAGE_PREFIX) &&
             !message.content.startsWith(SOURCE_REPOSITORIES_MESSAGE_PREFIX) &&
             !message.content.startsWith(PATCH_CURSOR_MESSAGE_PREFIX) &&
+            !message.content.startsWith(DIFF_STARTED_MESSAGE_PREFIX) &&
+            !message.content.startsWith(DIFF_COMMITTED_MESSAGE_PREFIX) &&
             message.content !== ARCHIVED_MESSAGE,
         )
         .map(({ sessionId: _sessionId, ...message }) => message),
-      revision: revision
-        ? {
-            id: revision.id,
-            number: revision.number,
-            summary: revision.summary,
-            blocks: [...revision.blocks],
-            generatedIgnores: [...revision.generatedIgnores],
-            createdAt: revision.createdAt,
-          }
-        : null,
+      revision: revision ? toRevision(revision) : null,
+      diffs,
+      activeDiffId,
+      latestRevisionNumber: revisionRows.at(-1)?.number ?? 0,
       appliedThrough,
     };
   }
@@ -467,6 +559,48 @@ export function createHyagentStore(database: Database): HyagentStore {
         content: `${PATCH_CURSOR_MESSAGE_PREFIX}${JSON.stringify({ appliedThrough })}`,
         now: nextWriteTime(),
       });
+    },
+    async startDiff(id) {
+      const session = await getSession(id);
+      if (session.status !== "committed") {
+        throw new Error("Only a committed diff can start a new diff");
+      }
+      await database.execute(appendMessageCommand, {
+        id: randomUUID(),
+        sessionId: id,
+        role: "system",
+        content: `${DIFF_STARTED_MESSAGE_PREFIX}${JSON.stringify({ id: randomUUID() })}`,
+        now: nextWriteTime(),
+      });
+      await database.execute(setStatusCommand, {
+        sessionId: id,
+        status: "draft",
+        now: nextWriteTime(),
+      });
+      return getSession(id);
+    },
+    async commitDiff(id, revisionId, appliedThrough) {
+      const session = await getSession(id);
+      if (session.revision?.id !== revisionId) {
+        throw new Error("Only the active literate diff can be committed");
+      }
+      await database.execute(appendMessageCommand, {
+        id: randomUUID(),
+        sessionId: id,
+        role: "system",
+        content: `${DIFF_COMMITTED_MESSAGE_PREFIX}${JSON.stringify({
+          id: session.activeDiffId,
+          revisionId,
+          appliedThrough,
+        })}`,
+        now: nextWriteTime(),
+      });
+      await database.execute(setStatusCommand, {
+        sessionId: id,
+        status: "committed",
+        now: nextWriteTime(),
+      });
+      return getSession(id);
     },
     async setAppliedThrough(id, rawAppliedThrough) {
       const appliedThrough = z
