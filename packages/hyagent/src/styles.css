@@ -1409,6 +1409,7 @@ button:disabled {
 body {
   color: #e6e9ee;
   background: #0d0f12;
+  font-size: 13px;
 }
 
 .eyebrow {
@@ -1557,6 +1558,7 @@ body {
 
 .message {
   padding: 10px 0;
+  font-size: 13px;
 }
 
 .message + .message {
@@ -1567,7 +1569,12 @@ body {
 .message.system p {
   margin-top: 5px;
   color: #9ba3ae;
-  font-size: 10px;
+  font-size: inherit;
+}
+
+.message-markdown {
+  color: #b7bec8;
+  font-size: inherit;
 }
 
 .message.agent header span {
