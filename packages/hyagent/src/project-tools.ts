@@ -33,14 +33,13 @@ export interface CommitResult {
   message: string;
 }
 
-export class PatchReplayError extends Error {
-  constructor(
-    readonly direction: "reversing" | "applying",
-    message: string,
-  ) {
-    super(message);
-    this.name = "PatchReplayError";
-  }
+export interface PatchCursorResult {
+  appliedThrough: string | null;
+  failed?: {
+    stepId: string;
+    direction: "rewind" | "replay";
+    error: string;
+  };
 }
 
 type PatchBlock = Extract<LiterateBlock, { kind: "apply_patch" }>;
@@ -305,8 +304,8 @@ async function takeSnapshot(root: string): Promise<Snapshot> {
 async function applyPatch(
   root: string,
   patch: string,
-  options: { reverse?: boolean; allowAlreadyApplied?: boolean } = {},
-): Promise<"applied" | "already_applied"> {
+  options: { reverse?: boolean } = {},
+): Promise<void> {
   const reverse = options.reverse ? ["--reverse"] : [];
   const check = await runProcess(
     "git",
@@ -315,15 +314,6 @@ async function applyPatch(
     patch,
   );
   if (check.exitCode !== 0) {
-    if (!options.reverse && options.allowAlreadyApplied) {
-      const already = await runProcess(
-        "git",
-        ["apply", "--reverse", "--check", "-"],
-        root,
-        patch,
-      );
-      if (already.exitCode === 0) return "already_applied";
-    }
     throw new Error(patchFailureMessage(patch, check.stderr));
   }
   const result = await runProcess(
@@ -335,7 +325,6 @@ async function applyPatch(
   if (result.exitCode !== 0) {
     throw new Error(result.stderr || "Could not apply patch");
   }
-  return "applied";
 }
 
 export interface ProjectTools {
@@ -355,8 +344,17 @@ export interface ProjectTools {
     args: readonly string[],
     signal?: AbortSignal,
   ): Promise<string>;
-  syncPatches(previous: LiterateDiff | null, next: LiterateDiff): Promise<void>;
   reanchorPatches(document: LiterateDiff): Promise<void>;
+  validateDocumentEdit(
+    previous: LiterateDiff | null,
+    next: LiterateDiff,
+    appliedThrough: string | null,
+  ): Promise<void>;
+  movePatchCursor(
+    document: LiterateDiff,
+    appliedThrough: string | null,
+    target: string | null,
+  ): Promise<PatchCursorResult>;
   checkConsistency(
     ignores: readonly GeneratedIgnore[],
   ): Promise<WorktreeWarning[]>;
@@ -571,62 +569,34 @@ export function createProjectTools(
     return [...repositories].map(([name, root]) => ({ name, root }));
   }
 
-  async function transition(
-    repository: string,
-    previous: readonly PatchRef[],
-    next: readonly PatchRef[],
-  ) {
-    const root = rootFor(repository);
-    let prefix = 0;
-    while (
-      prefix < previous.length &&
-      prefix < next.length &&
-      samePatch(previous[prefix]!, next[prefix]!)
-    ) {
-      prefix += 1;
+  function patchIndex(
+    patches: readonly PatchRef[],
+    stepId: string | null,
+    label: string,
+  ): number {
+    if (stepId === null) return -1;
+    const index = patches.findIndex((patch) => patch.id === stepId);
+    if (index < 0) {
+      throw new Error(`${label} patch step does not exist: ${stepId}`);
     }
-    if (prefix === previous.length && prefix === next.length) return;
+    return index;
+  }
 
-    const removed = previous.slice(prefix);
-    const added = next.slice(prefix);
-    const reversed: PatchRef[] = [];
-    const applied: PatchRef[] = [];
-    let failed:
-      { patch: PatchRef; direction: "reversing" | "applying" } | undefined;
-    try {
-      for (const patch of [...removed].reverse()) {
-        failed = { patch, direction: "reversing" };
-        await applyPatch(root, patch.patch, { reverse: true });
-        reversed.push(patch);
+  async function recordPatchState(patches: readonly PatchRef[]) {
+    const repositoryPaths = new Map<string, Set<string>>();
+    for (const patch of patches) {
+      const paths = repositoryPaths.get(patch.repository) ?? new Set<string>();
+      for (const path of patchFilePaths(patch.patch)) paths.add(path);
+      repositoryPaths.set(patch.repository, paths);
+    }
+    for (const [repository, paths] of repositoryPaths) {
+      const root = rootFor(repository);
+      const baseline = expected.get(repository)!;
+      for (const path of paths) {
+        const fingerprint = await fileFingerprint(root, path);
+        if (fingerprint === "deleted") baseline.delete(path);
+        else baseline.set(path, fingerprint);
       }
-      for (const patch of added) {
-        failed = { patch, direction: "applying" };
-        const result = await applyPatch(root, patch.patch, {
-          allowAlreadyApplied: removed.length === 0,
-        });
-        if (result === "applied") applied.push(patch);
-      }
-      failed = undefined;
-    } catch (error) {
-      let rollbackError: unknown;
-      for (const patch of [...applied].reverse()) {
-        try {
-          await applyPatch(root, patch.patch, { reverse: true });
-        } catch (cause) {
-          rollbackError ??= cause;
-        }
-      }
-      for (const patch of [...reversed].reverse()) {
-        try {
-          await applyPatch(root, patch.patch);
-        } catch (cause) {
-          rollbackError ??= cause;
-        }
-      }
-      throw new PatchReplayError(
-        failed?.direction ?? "applying",
-        `Replay stopped in ${repository}${failed ? ` while ${failed.direction} block ${failed.patch.id}` : ""}: ${error instanceof Error ? error.message : String(error)}${rollbackError ? ` Rollback also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}` : ""}`,
-      );
     }
   }
 
@@ -656,60 +626,82 @@ export function createProjectTools(
         await runProcess(command, args, rootFor(repository), undefined, signal),
       );
     },
-    async syncPatches(previous, next) {
+    async validateDocumentEdit(previous, next, appliedThrough) {
       await initialize();
       assertGeneratedIgnoresDoNotHidePatches(next);
       const oldPatches = patchBlocks(previous);
       const newPatches = patchBlocks(next);
-      for (const patch of newPatches) rootFor(patch.repository);
-
-      const changedRepositories = [...repositories.keys()].filter(
-        (repository) => {
-          const before = oldPatches.filter(
-            (patch) => patch.repository === repository,
-          );
-          const after = newPatches.filter(
-            (patch) => patch.repository === repository,
-          );
-          return (
-            before.length !== after.length ||
-            before.some((patch, index) => !samePatch(patch, after[index]!))
-          );
-        },
+      const appliedIndex = patchIndex(
+        oldPatches,
+        appliedThrough,
+        "Currently applied",
       );
-      const completed: string[] = [];
-      try {
-        for (const repository of changedRepositories) {
-          await transition(
-            repository,
-            oldPatches.filter((patch) => patch.repository === repository),
-            newPatches.filter((patch) => patch.repository === repository),
-          );
-          completed.push(repository);
-        }
-      } catch (error) {
-        for (const repository of completed.reverse()) {
-          await transition(
-            repository,
-            newPatches.filter((patch) => patch.repository === repository),
-            oldPatches.filter((patch) => patch.repository === repository),
+      for (let index = 0; index <= appliedIndex; index += 1) {
+        const before = oldPatches[index]!;
+        const after = newPatches[index];
+        if (!after || !samePatch(before, after)) {
+          const previousStep = oldPatches[index - 1]?.id ?? null;
+          throw new Error(
+            `Patch step ${before.id} is currently applied. Rewind to ${previousStep ?? "the beginning"} before editing, removing, or reordering it.`,
           );
         }
-        throw error;
       }
+      for (const patch of newPatches) rootFor(patch.repository);
+    },
+    async movePatchCursor(document, appliedThrough, target) {
+      await initialize();
+      assertGeneratedIgnoresDoNotHidePatches(document);
+      const patches = patchBlocks(document);
+      const currentIndex = patchIndex(
+        patches,
+        appliedThrough,
+        "Currently applied",
+      );
+      const targetIndex = patchIndex(patches, target, "Target");
+      if (currentIndex === targetIndex) return { appliedThrough };
 
-      for (const repository of changedRepositories) {
-        const current = await takeSnapshot(rootFor(repository));
-        const touched = [...oldPatches, ...newPatches]
-          .filter((patch) => patch.repository === repository)
-          .flatMap((patch) => patchFilePaths(patch.patch));
-        const baseline = expected.get(repository)!;
-        for (const path of touched) {
-          const fingerprint = current.get(path);
-          if (fingerprint === undefined) baseline.delete(path);
-          else baseline.set(path, fingerprint);
+      const moved: PatchRef[] = [];
+      if (targetIndex < currentIndex) {
+        for (let index = currentIndex; index > targetIndex; index -= 1) {
+          const patch = patches[index]!;
+          try {
+            await applyPatch(rootFor(patch.repository), patch.patch, {
+              reverse: true,
+            });
+            moved.push(patch);
+          } catch (error) {
+            await recordPatchState(moved);
+            return {
+              appliedThrough: patch.id,
+              failed: {
+                stepId: patch.id,
+                direction: "rewind",
+                error: error instanceof Error ? error.message : String(error),
+              },
+            };
+          }
+        }
+      } else {
+        for (let index = currentIndex + 1; index <= targetIndex; index += 1) {
+          const patch = patches[index]!;
+          try {
+            await applyPatch(rootFor(patch.repository), patch.patch);
+            moved.push(patch);
+          } catch (error) {
+            await recordPatchState(moved);
+            return {
+              appliedThrough: patches[index - 1]?.id ?? null,
+              failed: {
+                stepId: patch.id,
+                direction: "replay",
+                error: error instanceof Error ? error.message : String(error),
+              },
+            };
+          }
         }
       }
+      await recordPatchState(moved);
+      return { appliedThrough: target };
     },
     async reanchorPatches(document) {
       await initialize();

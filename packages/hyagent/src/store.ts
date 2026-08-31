@@ -18,6 +18,7 @@ import { messages, revisions, sessions } from "./model.js";
 const WORKSPACE_MESSAGE_PREFIX = "HYAGENT_WORKSPACE:";
 const SOURCE_REPOSITORIES_MESSAGE_PREFIX = "HYAGENT_SOURCE_REPOSITORIES:";
 const ARCHIVED_MESSAGE = "HYAGENT_ARCHIVED";
+const PATCH_CURSOR_MESSAGE_PREFIX = "HYAGENT_PATCH_CURSOR:";
 
 const createSessionCommand = hydb.command({
   input: z.object({ id: z.string(), title: z.string(), now: z.date() }),
@@ -131,7 +132,12 @@ export interface HyagentStore {
     repositories: readonly WorkspaceRepository[],
   ): Promise<void>;
   appendMessage(id: string, role: MessageRole, content: string): Promise<void>;
-  saveRevision(id: string, document: LiterateDiff): Promise<void>;
+  saveRevision(
+    id: string,
+    document: LiterateDiff,
+    appliedThrough?: string | null,
+  ): Promise<void>;
+  setAppliedThrough(id: string, appliedThrough: string | null): Promise<void>;
   setStatus(id: string, status: SessionStatus): Promise<void>;
   setTitle(id: string, title: string): Promise<void>;
 }
@@ -169,6 +175,26 @@ export function createHyagentStore(database: Database): HyagentStore {
         .many(),
     );
     const revision = revisionRows[0];
+    const cursorMessage = [...messageRows]
+      .reverse()
+      .find((message) =>
+        message.content.startsWith(PATCH_CURSOR_MESSAGE_PREFIX),
+      );
+    const defaultAppliedThrough =
+      [...(revision?.blocks ?? [])]
+        .reverse()
+        .find((block) => block.kind === "apply_patch")?.id ?? null;
+    let appliedThrough = defaultAppliedThrough;
+    if (cursorMessage) {
+      const parsed = z
+        .object({ appliedThrough: z.string().min(1).nullable() })
+        .safeParse(
+          JSON.parse(
+            cursorMessage.content.slice(PATCH_CURSOR_MESSAGE_PREFIX.length),
+          ),
+        );
+      if (parsed.success) appliedThrough = parsed.data.appliedThrough;
+    }
     observeTime(session.updatedAt);
     for (const message of messageRows) observeTime(message.createdAt);
     for (const storedRevision of revisionRows)
@@ -180,6 +206,7 @@ export function createHyagentStore(database: Database): HyagentStore {
           (message) =>
             !message.content.startsWith(WORKSPACE_MESSAGE_PREFIX) &&
             !message.content.startsWith(SOURCE_REPOSITORIES_MESSAGE_PREFIX) &&
+            !message.content.startsWith(PATCH_CURSOR_MESSAGE_PREFIX) &&
             message.content !== ARCHIVED_MESSAGE,
         )
         .map(({ sessionId: _sessionId, ...message }) => message),
@@ -193,6 +220,7 @@ export function createHyagentStore(database: Database): HyagentStore {
             createdAt: revision.createdAt,
           }
         : null,
+      appliedThrough,
     };
   }
 
@@ -407,8 +435,14 @@ export function createHyagentStore(database: Database): HyagentStore {
         now: nextWriteTime(),
       });
     },
-    async saveRevision(id, rawDocument) {
+    async saveRevision(id, rawDocument, rawAppliedThrough) {
       const document = literateDiffSchema.parse(rawDocument);
+      const appliedThrough =
+        rawAppliedThrough === undefined
+          ? ([...document.blocks]
+              .reverse()
+              .find((block) => block.kind === "apply_patch")?.id ?? null)
+          : z.string().min(1).nullable().parse(rawAppliedThrough);
       const existing = await database.fetch(
         hydb
           .query(revisions)
@@ -424,6 +458,27 @@ export function createHyagentStore(database: Database): HyagentStore {
         summary: document.summary,
         blocks: document.blocks,
         generatedIgnores: document.generatedIgnores,
+        now: nextWriteTime(),
+      });
+      await database.execute(appendMessageCommand, {
+        id: randomUUID(),
+        sessionId: id,
+        role: "system",
+        content: `${PATCH_CURSOR_MESSAGE_PREFIX}${JSON.stringify({ appliedThrough })}`,
+        now: nextWriteTime(),
+      });
+    },
+    async setAppliedThrough(id, rawAppliedThrough) {
+      const appliedThrough = z
+        .string()
+        .min(1)
+        .nullable()
+        .parse(rawAppliedThrough);
+      await database.execute(appendMessageCommand, {
+        id: randomUUID(),
+        sessionId: id,
+        role: "system",
+        content: `${PATCH_CURSOR_MESSAGE_PREFIX}${JSON.stringify({ appliedThrough })}`,
         now: nextWriteTime(),
       });
     },

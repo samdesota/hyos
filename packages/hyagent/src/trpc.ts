@@ -299,6 +299,14 @@ export function createHyagentRouter(options: {
           if (!session.revision)
             throw new Error("There is no literate diff to commit");
           if (session.status === "committed") return session;
+          const finalPatchId = [...session.revision.blocks]
+            .reverse()
+            .find((block) => block.kind === "apply_patch")?.id;
+          if ((finalPatchId ?? null) !== session.appliedThrough) {
+            throw new Error(
+              `Replay every patch step before accepting changes. Currently applied through ${session.appliedThrough ?? "the beginning"}; final step is ${finalPatchId ?? "none"}.`,
+            );
+          }
           const warnings = await options.project.checkConsistency(
             session.revision.generatedIgnores,
           );

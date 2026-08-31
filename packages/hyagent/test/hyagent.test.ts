@@ -15,11 +15,7 @@ import type { LiterateDiff, SessionListItem } from "../src/domain.js";
 import type { GatewayMessage, GatewayTransport } from "../src/gateway.js";
 import { hyagentSchema } from "../src/model.js";
 import { renderAgentMarkdown } from "../src/markdown.js";
-import {
-  createProjectTools,
-  PatchReplayError,
-  type ProjectTools,
-} from "../src/project-tools.js";
+import { createProjectTools, type ProjectTools } from "../src/project-tools.js";
 import { createHyagentStore } from "../src/store.js";
 import { createHyagentRouter } from "../src/trpc.js";
 import { shouldShowWorkspacePicker } from "../src/workspace-state.js";
@@ -65,8 +61,11 @@ function fakeProject(overrides: Partial<ProjectTools> = {}): ProjectTools {
     initialize: async () => undefined,
     readFile: async () => "",
     runCommand: async () => "",
-    syncPatches: async () => undefined,
     reanchorPatches: async () => undefined,
+    validateDocumentEdit: async () => undefined,
+    movePatchCursor: async (_document, _appliedThrough, target) => ({
+      appliedThrough: target,
+    }),
     checkConsistency: async () => [],
     commit: async () => [],
     enrichDocument: async (document) => document,
@@ -225,6 +224,9 @@ test("hydb stores every incremental literate-diff revision", async () => {
     assert.equal(snapshot.status, "ready");
     assert.equal(snapshot.revision?.number, 2);
     assert.equal(snapshot.revision?.blocks.length, 2);
+    assert.equal(snapshot.appliedThrough, "change");
+    await store.setAppliedThrough(session.id, null);
+    assert.equal((await store.getSession(session.id)).appliedThrough, null);
   } finally {
     await database.close();
   }
@@ -276,6 +278,19 @@ test("the custom loop publishes document edits before it finishes", async () => 
         },
       ],
     },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "replay",
+          function: {
+            name: "replay_literate_diff",
+            arguments: JSON.stringify({}),
+          },
+        },
+      ],
+    },
     finishRun("The first pass is ready."),
   ];
   const gateway: GatewayTransport = {
@@ -285,10 +300,15 @@ test("the custom loop publishes document edits before it finishes", async () => 
       return response;
     },
   };
-  const synchronized: number[] = [];
+  const validated: number[] = [];
+  const cursorTargets: Array<string | null> = [];
   const project = fakeProject({
-    async syncPatches(_previous, next) {
-      synchronized.push(next.blocks.length);
+    async validateDocumentEdit(_previous, next) {
+      validated.push(next.blocks.length);
+    },
+    async movePatchCursor(_document, _appliedThrough, target) {
+      cursorTargets.push(target);
+      return { appliedThrough: target };
     },
   });
   try {
@@ -297,7 +317,9 @@ test("the custom loop publishes document edits before it finishes", async () => 
     await agent.run(session.id, "Make the change understandable");
 
     const snapshot = await store.getSession(session.id);
-    assert.deepEqual(synchronized, [1, 2]);
+    assert.deepEqual(validated, [1, 2]);
+    assert.deepEqual(cursorTargets, ["change"]);
+    assert.equal(snapshot.appliedThrough, "change");
     assert.equal(snapshot.revision?.number, 2);
     assert.equal(snapshot.status, "ready");
     assert.equal(
@@ -309,7 +331,15 @@ test("the custom loop publishes document edits before it finishes", async () => 
       snapshot.messages
         .map((message) => decodeActivityEvent(message.content)?.status)
         .filter(Boolean),
-      ["working", "working", "working", "working", "working", "complete"],
+      [
+        "working",
+        "working",
+        "working",
+        "working",
+        "working",
+        "working",
+        "complete",
+      ],
     );
   } finally {
     await database.close();
@@ -411,6 +441,19 @@ test("a rejected patch returns a repairable error to the agent tool call", async
         },
       ],
     },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "apply-bad-patch",
+          function: {
+            name: "replay_literate_diff",
+            arguments: JSON.stringify({}),
+          },
+        },
+      ],
+    },
     finishRun("I need to regenerate that patch.", "blocked"),
   ];
   const requests: GatewayMessage[][] = [];
@@ -437,7 +480,7 @@ test("a rejected patch returns a repairable error to the agent tool call", async
       .at(-1)
       ?.find(
         (message) =>
-          message.role === "tool" && message.tool_call_id === "bad-patch",
+          message.role === "tool" && message.tool_call_id === "apply-bad-patch",
       )?.content;
     assert.match(
       toolError ?? "",
@@ -445,7 +488,11 @@ test("a rejected patch returns a repairable error to the agent tool call", async
     );
     const snapshot = await store.getSession(session.id);
     assert.equal(snapshot.revision?.summary, "Visible first pass");
-    assert.deepEqual(snapshot.revision?.blocks, []);
+    assert.deepEqual(
+      snapshot.revision?.blocks.map((block) => block.id),
+      ["contextless"],
+    );
+    assert.equal(snapshot.appliedThrough, null);
     assert.match(
       snapshot.messages
         .map((message) => decodeActivityEvent(message.content)?.detail ?? "")
@@ -461,33 +508,42 @@ test("a rejected patch returns a repairable error to the agent tool call", async
   }
 });
 
-test("an unreplayable saved diff switches the run to explicit recovery", async () => {
+test("the agent can rewind to a stable step id before editing history", async () => {
   const { database, store } = await setup();
-  const edit = (id: string): GatewayMessage => ({
-    role: "assistant",
-    content: null,
-    tool_calls: [
-      {
-        id,
-        function: {
-          name: "edit_literate_diff",
-          arguments: JSON.stringify({
-            operations: [{ type: "remove_block", id: "change" }],
-          }),
+  const responses: GatewayMessage[] = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "rewind-before-change",
+          function: {
+            name: "rewind_literate_diff",
+            arguments: JSON.stringify({ to_step_id: null }),
+          },
         },
-      },
-    ],
-  });
-  const responses = [
-    edit("first-cleanup"),
-    edit("repeated-cleanup"),
-    finishRun("The saved diff needs to be re-anchored.", "blocked"),
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "remove-change",
+          function: {
+            name: "edit_literate_diff",
+            arguments: JSON.stringify({
+              operations: [{ type: "remove_block", id: "change" }],
+            }),
+          },
+        },
+      ],
+    },
+    finishRun("The applied step is removed."),
   ];
-  const requests: GatewayMessage[][] = [];
-  let replayAttempts = 0;
+  const moves: Array<{ from: string | null; to: string | null }> = [];
   const gateway: GatewayTransport = {
-    async complete(request) {
-      requests.push([...request.messages]);
+    async complete() {
       const response = responses.shift();
       if (!response) throw new Error("Unexpected model step");
       return response;
@@ -495,36 +551,89 @@ test("an unreplayable saved diff switches the run to explicit recovery", async (
   };
 
   try {
-    const session = await store.createSession("Recover a legacy diff");
+    const session = await store.createSession("Edit applied history");
     await store.saveRevision(session.id, proposedDocument);
     const agent = createLiterateAgent({
       store,
       project: fakeProject({
-        async syncPatches() {
-          replayAttempts += 1;
-          throw new PatchReplayError(
-            "reversing",
-            "Replay stopped in workspace while reversing block cleanup: file already exists",
-          );
+        async movePatchCursor(_document, from, to) {
+          moves.push({ from, to });
+          return { appliedThrough: to };
         },
       }),
       gateway,
     });
 
-    await agent.run(session.id, "Clean up the saved document");
+    await agent.run(session.id, "Remove the applied change");
 
-    assert.equal(replayAttempts, 1);
-    for (const request of requests.slice(1)) {
-      const failure = request.find(
-        (message) =>
-          message.role === "tool" &&
-          ["first-cleanup", "repeated-cleanup"].includes(
-            message.tool_call_id ?? "",
-          ),
-      );
-      if (failure)
-        assert.match(failure.content ?? "", /reanchor_literate_diff/);
-    }
+    assert.deepEqual(moves, [{ from: "change", to: null }]);
+    const snapshot = await store.getSession(session.id);
+    assert.equal(snapshot.appliedThrough, null);
+    assert.deepEqual(
+      snapshot.revision?.blocks.map((block) => block.id),
+      ["intent"],
+    );
+  } finally {
+    await database.close();
+  }
+});
+
+test("re-anchor atomically replaces a corrupt document instead of editing it", async () => {
+  const { database, store } = await setup();
+  const replacement: LiterateDiff = {
+    summary: "Canonical replacement",
+    blocks: [proposedDocument.blocks[0]!],
+    generatedIgnores: [],
+  };
+  const responses: GatewayMessage[] = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "replace-corrupt-history",
+          function: {
+            name: "reanchor_literate_diff",
+            arguments: JSON.stringify({ document: replacement }),
+          },
+        },
+      ],
+    },
+    finishRun("The corrupt history was replaced."),
+  ];
+  let adopted: LiterateDiff | undefined;
+  const gateway: GatewayTransport = {
+    async complete() {
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+
+  try {
+    const session = await store.createSession("Replace corrupt history");
+    await store.saveRevision(session.id, proposedDocument);
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject({
+        async reanchorPatches(document) {
+          adopted = document;
+        },
+      }),
+      gateway,
+    });
+
+    await agent.run(session.id, "Replace the broken document");
+
+    assert.deepEqual(adopted, replacement);
+    const snapshot = await store.getSession(session.id);
+    assert.equal(snapshot.revision?.number, 2);
+    assert.equal(snapshot.revision?.summary, "Canonical replacement");
+    assert.deepEqual(
+      snapshot.revision?.blocks.map((block) => block.id),
+      ["intent"],
+    );
+    assert.equal(snapshot.appliedThrough, null);
   } finally {
     await database.close();
   }
@@ -864,6 +973,19 @@ test("the agent cannot claim a document change without saving a revision", async
       content: null,
       tool_calls: [
         {
+          id: "rewind-change",
+          function: {
+            name: "rewind_literate_diff",
+            arguments: JSON.stringify({ to_step_id: null }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
           id: "remove-noise",
           function: {
             name: "edit_literate_diff",
@@ -896,7 +1018,7 @@ test("the agent cannot claim a document change without saving a revision", async
 
     await agent.run(session.id, "Remove the noisy change block");
 
-    assert.equal(requests.length, 4);
+    assert.equal(requests.length, 5);
     assert.match(
       requests[1]?.at(-1)?.content ?? "",
       /must finish with finish_run/,
@@ -906,7 +1028,7 @@ test("the agent cannot claim a document change without saving a revision", async
         (message) =>
           message.role === "tool" && message.tool_call_id === "finish",
       )?.content ?? "",
-      /no literate-diff revision was saved/,
+      /neither the document nor its applied cursor changed/,
     );
     const snapshot = await store.getSession(session.id);
     assert.equal(snapshot.revision?.number, 2);
@@ -1183,8 +1305,9 @@ test("patch errors identify modification hunks without context", async () => {
       blocks: [patchBlock("contextless", "project", "@@ -1 +1 @@\n-one\n+ONE")],
     };
 
-    await assert.rejects(
-      () => project.syncPatches(null, document),
+    const result = await project.movePatchCursor(document, null, "contextless");
+    assert.match(
+      result.failed?.error ?? "",
       /modification hunk with no unchanged surrounding context/,
     );
     assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
@@ -1206,8 +1329,9 @@ test("patch errors identify context that no longer matches", async () => {
       ],
     };
 
-    await assert.rejects(
-      () => project.syncPatches(null, document),
+    const result = await project.movePatchCursor(document, null, "stale");
+    assert.match(
+      result.failed?.error ?? "",
       /context does not match the current file/,
     );
     assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
@@ -1236,62 +1360,10 @@ test("generated ignores cannot hide patch-controlled files", async () => {
     };
 
     await assert.rejects(
-      () => project.syncPatches(null, document),
+      () => project.validateDocumentEdit(null, document, null),
       /overlaps patch-controlled file project:state\.txt in block state/,
     );
     assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("failed rewind restores only patches that were actually reversed", async () => {
-  const root = await createRepository("rewind-rollback");
-  try {
-    await writeFile(join(root, "a.txt"), "a0\ncontext\n");
-    await writeFile(join(root, "b.txt"), "b0\ncontext\n");
-    await git(root, "add", "a.txt", "b.txt");
-    await git(root, "commit", "-qm", "add rewind fixtures");
-    const project = createProjectTools([{ name: "project", root }]);
-    await project.initialize();
-    const block = (
-      id: string,
-      path: string,
-      before: string,
-      after: string,
-    ) => ({
-      id,
-      kind: "apply_patch" as const,
-      repository: "project",
-      title: id,
-      rationale: id,
-      patch: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1,2 +1,2 @@\n-${before}\n+${after}\n context\n`,
-    });
-    const previous: LiterateDiff = {
-      summary: "Two changes",
-      blocks: [
-        block("change-a", "a.txt", "a0", "a1"),
-        block("change-b", "b.txt", "b0", "b1"),
-      ],
-      generatedIgnores: [],
-    };
-    await project.syncPatches(null, previous);
-    await writeFile(join(root, "a.txt"), "outside the diff\n");
-
-    await assert.rejects(
-      () =>
-        project.syncPatches(previous, {
-          summary: "Remove both",
-          blocks: [],
-          generatedIgnores: [],
-        }),
-      /while reversing block change-a/,
-    );
-    assert.equal(
-      await readFile(join(root, "a.txt"), "utf8"),
-      "outside the diff\n",
-    );
-    assert.equal(await readFile(join(root, "b.txt"), "utf8"), "b1\ncontext\n");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1391,37 +1463,38 @@ function patchBlock(
   };
 }
 
-test("patch replay and consistency are scoped across repositories", async () => {
-  const firstRoot = await createRepository("first");
-  const secondRoot = await createRepository("second");
+test("the patch cursor rewinds and replays stable step ids across repositories", async () => {
+  const firstRoot = await createRepository("cursor-first");
+  const secondRoot = await createRepository("cursor-second");
   try {
     const project = createProjectTools([
       { name: "first", root: firstRoot },
       { name: "second", root: secondRoot },
     ]);
-    await project.initialize();
-
     const patchA = patchBlock(
       "a",
       "first",
       "@@ -1,2 +1,2 @@\n-one\n+ONE\n two",
-    );
-    const patchB = patchBlock(
-      "b",
-      "first",
-      "@@ -1,2 +1,2 @@\n ONE\n-two\n+TWO",
     );
     const patchOther = patchBlock(
       "other",
       "second",
       "@@ -1,2 +1,2 @@\n-one\n+OTHER\n two",
     );
-    const first: LiterateDiff = {
-      summary: "Cross-repository change",
+    const patchB = patchBlock(
+      "b",
+      "first",
+      "@@ -1,2 +1,2 @@\n ONE\n-two\n+TWO",
+    );
+    const document: LiterateDiff = {
+      summary: "Cursor history",
       blocks: [patchA, patchOther, patchB],
       generatedIgnores: [],
     };
-    await project.syncPatches(null, first);
+
+    assert.deepEqual(await project.movePatchCursor(document, null, "b"), {
+      appliedThrough: "b",
+    });
     assert.equal(
       await readFile(join(firstRoot, "state.txt"), "utf8"),
       "ONE\nTWO\n",
@@ -1431,54 +1504,54 @@ test("patch replay and consistency are scoped across repositories", async () => 
       "OTHER\ntwo\n",
     );
 
-    const revisedA = patchBlock(
-      "a",
-      "first",
-      "@@ -1,2 +1,2 @@\n-one\n+UNO\n two",
+    assert.deepEqual(await project.movePatchCursor(document, "b", "a"), {
+      appliedThrough: "a",
+    });
+    assert.equal(
+      await readFile(join(firstRoot, "state.txt"), "utf8"),
+      "ONE\ntwo\n",
     );
-    const broken: LiterateDiff = {
-      ...first,
-      blocks: [revisedA, patchOther, patchB],
-    };
+    assert.equal(
+      await readFile(join(secondRoot, "state.txt"), "utf8"),
+      "one\ntwo\n",
+    );
     await assert.rejects(
-      () => project.syncPatches(first, broken),
-      /while applying block b/,
-    );
-    assert.equal(
-      await readFile(join(firstRoot, "state.txt"), "utf8"),
-      "ONE\nTWO\n",
+      () =>
+        project.validateDocumentEdit(
+          document,
+          { ...document, blocks: [patchOther, patchB] },
+          "a",
+        ),
+      /Patch step a is currently applied.*Rewind to the beginning/,
     );
 
-    const revisedB = patchBlock(
-      "b",
-      "first",
-      "@@ -1,2 +1,2 @@\n UNO\n-two\n+TWO",
-    );
-    const repaired: LiterateDiff = {
-      ...first,
-      blocks: [revisedA, patchOther, revisedB],
+    const revised: LiterateDiff = {
+      ...document,
+      blocks: [
+        patchA,
+        patchBlock("other", "second", "@@ -1,2 +1,2 @@\n-one\n+OTHER2\n two"),
+        patchBlock("b", "first", "@@ -1,2 +1,2 @@\n WRONG\n-two\n+TWO"),
+      ],
     };
-    await project.syncPatches(first, repaired);
+    await project.validateDocumentEdit(document, revised, "a");
+    assert.deepEqual(await project.movePatchCursor(revised, "a", "other"), {
+      appliedThrough: "other",
+    });
+    const failed = await project.movePatchCursor(revised, "other", "b");
+    assert.equal(failed.appliedThrough, "other");
+    assert.equal(failed.failed?.stepId, "b");
+    assert.equal(failed.failed?.direction, "replay");
     assert.equal(
-      await readFile(join(firstRoot, "state.txt"), "utf8"),
-      "UNO\nTWO\n",
+      await readFile(join(secondRoot, "state.txt"), "utf8"),
+      "OTHER2\ntwo\n",
     );
-
     await writeFile(join(secondRoot, "coverage.txt"), "generated\n");
-    const warnings = await project.checkConsistency([]);
     assert.deepEqual(
-      warnings.map(({ repository, path }) => ({ repository, path })),
+      (await project.checkConsistency([])).map(({ repository, path }) => ({
+        repository,
+        path,
+      })),
       [{ repository: "second", path: "coverage.txt" }],
-    );
-    assert.deepEqual(
-      await project.checkConsistency([
-        {
-          repository: "second",
-          path: "coverage.txt",
-          reason: "Generated by validation",
-        },
-      ]),
-      [],
     );
   } finally {
     await Promise.all([
@@ -1506,7 +1579,7 @@ test("project commits only literate-diff paths with the supplied message", async
         },
       ],
     };
-    await project.syncPatches(null, document);
+    await project.movePatchCursor(document, null, "state");
     await writeFile(join(root, "generated.txt"), "generated\n");
     await git(root, "add", "generated.txt");
 
@@ -1682,7 +1755,12 @@ test("acceptance verifies consistency without reapplying patches", async () => {
     const caller = router.createCaller({});
     const session = await caller.session.bootstrap();
     assert.equal(session.revision, null);
-    await store.saveRevision(session.id, proposedDocument);
+    await store.saveRevision(session.id, proposedDocument, null);
+    await assert.rejects(
+      () => caller.session.commit({ id: session.id }),
+      /Replay every patch step before accepting changes/,
+    );
+    await store.setAppliedThrough(session.id, "change");
     const committed = await caller.session.commit({ id: session.id });
     assert.equal(checks, 1);
     assert.equal(committedMessage, "feat: apply literate change");

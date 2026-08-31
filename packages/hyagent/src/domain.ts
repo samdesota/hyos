@@ -87,6 +87,7 @@ export interface SessionSnapshot {
   status: SessionStatus;
   messages: AgentMessage[];
   revision: LiterateRevision | null;
+  appliedThrough: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
