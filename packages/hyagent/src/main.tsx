@@ -20,6 +20,7 @@ import {
 import { render } from "solid-js/web";
 
 import { decodeActivityEvent, type AgentActivityEvent } from "./activity.js";
+import type { AgentOption } from "./agent-options.js";
 import type { LiterateBlock } from "./domain.js";
 import { renderAgentMarkdown } from "./markdown.js";
 import type { HyagentRouter } from "./trpc.js";
@@ -155,10 +156,13 @@ interface WorkspaceProps {
   feedback: string;
   busy: boolean;
   agentConfigured: boolean;
+  agents: readonly AgentOption[];
+  selectedAgent: string;
   error: string;
   comments: ReviewComment[];
   following: boolean;
   setFeedback(value: string): void;
+  setSelectedAgent(value: string): void;
   addComment(target: string, body: string): void;
   submitComments(): void;
   toggleFollowing(): void;
@@ -465,6 +469,29 @@ function FollowButton(props: WorkspaceProps) {
   );
 }
 
+function AgentSelector(props: {
+  agents: readonly AgentOption[];
+  value: string;
+  disabled?: boolean;
+  select(value: string): void;
+}) {
+  return (
+    <label class="agent-selector">
+      <span>Agent</span>
+      <select
+        aria-label="Agent"
+        value={props.value}
+        disabled={props.disabled}
+        onChange={(event) => props.select(event.currentTarget.value)}
+      >
+        <For each={props.agents}>
+          {(agent) => <option value={agent.id}>{agent.label}</option>}
+        </For>
+      </select>
+    </label>
+  );
+}
+
 function Composer(props: WorkspaceProps) {
   return (
     <div class="composer">
@@ -479,7 +506,15 @@ function Composer(props: WorkspaceProps) {
         placeholder="Challenge a decision, request evidence, or redirect the change…"
       />
       <div>
-        <span>⌘ ↵ to send</span>
+        <div class="composer-options">
+          <AgentSelector
+            agents={props.agents}
+            value={props.selectedAgent}
+            disabled={props.busy}
+            select={props.setSelectedAgent}
+          />
+          <span>⌘ ↵ to send</span>
+        </div>
         <button
           disabled={
             !props.agentConfigured || props.busy || !props.feedback.trim()
@@ -498,15 +533,19 @@ function NewThreadPage(props: {
   recentRepositories: WorkspaceRepository[];
   busy: boolean;
   error: string;
+  agents: readonly AgentOption[];
+  selectedAgent: string;
   chooseFolder(): void;
   addPath(path: string): void;
   updateName(index: number, name: string): void;
   remove(index: number): void;
   selectRecent(repository: WorkspaceRepository): void;
+  setSelectedAgent(value: string): void;
   start(
     prompt: string,
     mode: "checkout" | "worktree",
     baseOnLatestRemoteMain: boolean,
+    agent: string,
   ): void;
 }) {
   const [path, setPath] = createSignal("");
@@ -548,7 +587,12 @@ function NewThreadPage(props: {
   };
   const start = () => {
     if (!prompt().trim() || props.repositories.length === 0) return;
-    props.start(prompt().trim(), mode(), baseOnLatestRemoteMain());
+    props.start(
+      prompt().trim(),
+      mode(),
+      baseOnLatestRemoteMain(),
+      props.selectedAgent,
+    );
   };
   return (
     <main class="workspace-start">
@@ -679,9 +723,10 @@ function NewThreadPage(props: {
             </span>
           </label>
         </Show>
-        <label class="initial-prompt">
-          <span>Initial prompt</span>
+        <div class="initial-prompt">
+          <label for="initial-prompt">Initial prompt</label>
           <textarea
+            id="initial-prompt"
             autofocus
             value={prompt()}
             onInput={(event) => setPrompt(event.currentTarget.value)}
@@ -693,8 +738,16 @@ function NewThreadPage(props: {
             }}
             placeholder="Describe the change you want the agent to make…"
           />
-          <small>Enter to start · Shift Enter for a new line</small>
-        </label>
+          <div class="initial-prompt-options">
+            <AgentSelector
+              agents={props.agents}
+              value={props.selectedAgent}
+              disabled={props.busy}
+              select={props.setSelectedAgent}
+            />
+            <small>Enter to start · Shift Enter for a new line</small>
+          </div>
+        </div>
         <Show when={props.error}>
           <p class="start-error">{props.error}</p>
         </Show>
@@ -1147,6 +1200,8 @@ function App() {
   const [comments, setComments] = createSignal<ReviewComment[]>([]);
   const [following, setFollowing] = createSignal(true);
   const [agentConfigured, setAgentConfigured] = createSignal(true);
+  const [agents, setAgents] = createSignal<AgentOption[]>([]);
+  const [selectedAgent, setSelectedAgent] = createSignal("");
   const [creatingNew, setCreatingNew] = createSignal(false);
   const [initialized, setInitialized] = createSignal(false);
   const busy = createMemo(
@@ -1230,6 +1285,8 @@ function App() {
           client.health.query(),
           client.workspace.recent.query(),
         ]);
+        setAgents([...health.agents]);
+        setSelectedAgent(health.defaultAgent);
         setRecentRepositories([...recent]);
         const url = new URL(location.href);
         const requested = url.searchParams.get("session");
@@ -1305,6 +1362,7 @@ function App() {
       await client.session.feedback.mutate({
         id: current.id,
         feedback: text,
+        agent: selectedAgent(),
       });
       onSuccess?.();
     } catch (cause) {
@@ -1364,6 +1422,7 @@ function App() {
     prompt: string,
     mode: "checkout" | "worktree",
     baseOnLatestRemoteMain: boolean,
+    agent: string,
   ) => {
     if (busy() || repositories().length === 0 || !prompt.trim()) return;
     if (!agentConfigured()) {
@@ -1380,6 +1439,7 @@ function App() {
         mode,
         baseOnLatestRemoteMain,
         prompt,
+        agent,
       });
       setRepositories([...started.repositories]);
       setRecentRepositories((current) => {
@@ -1463,6 +1523,8 @@ function App() {
                   recentRepositories={recentRepositories()}
                   busy={busy()}
                   error={error()}
+                  agents={agents()}
+                  selectedAgent={selectedAgent()}
                   chooseFolder={() => void chooseFolder()}
                   addPath={addPath}
                   updateName={(index, name) =>
@@ -1482,8 +1544,14 @@ function App() {
                     )
                   }
                   selectRecent={(repository) => setRepositories([repository])}
-                  start={(prompt, mode, baseOnLatestRemoteMain) =>
-                    void startNewSession(prompt, mode, baseOnLatestRemoteMain)
+                  setSelectedAgent={setSelectedAgent}
+                  start={(prompt, mode, baseOnLatestRemoteMain, agent) =>
+                    void startNewSession(
+                      prompt,
+                      mode,
+                      baseOnLatestRemoteMain,
+                      agent,
+                    )
                   }
                 />
               </Match>
@@ -1494,10 +1562,13 @@ function App() {
                     feedback={feedback()}
                     busy={busy()}
                     agentConfigured={agentConfigured()}
+                    agents={agents()}
+                    selectedAgent={selectedAgent()}
                     error={error()}
                     comments={comments()}
                     following={following()}
                     setFeedback={setFeedback}
+                    setSelectedAgent={setSelectedAgent}
                     addComment={(target, body) =>
                       setComments((current) => [
                         ...current,

@@ -5,6 +5,7 @@ import {
   encodeActivityEvent,
   type AgentActivityEvent,
 } from "./activity.js";
+import { DEFAULT_AGENT } from "./agent-options.js";
 import { documentOperationsSchema, editLiterateDiff } from "./document.js";
 import type { LiterateDiff } from "./domain.js";
 import type { GatewayMessage, GatewayTransport } from "./gateway.js";
@@ -270,7 +271,11 @@ function toolActivity(name: string, args: Record<string, unknown>): string {
 }
 
 export interface LiterateAgent {
-  run(sessionId: string, feedback: string): Promise<LiterateDiff | null>;
+  run(
+    sessionId: string,
+    feedback: string,
+    agent?: string,
+  ): Promise<LiterateDiff | null>;
   writeCommitMessages(document: LiterateDiff): Promise<Record<string, string>>;
 }
 
@@ -292,7 +297,7 @@ export function createLiterateAgent(options: {
   model?: string;
   maxSteps?: number;
 }): LiterateAgent {
-  const model = options.model ?? "anthropic/claude-sonnet-4.5";
+  const model = options.model ?? DEFAULT_AGENT;
   const maxSteps = options.maxSteps ?? 24;
   return {
     async writeCommitMessages(document) {
@@ -344,7 +349,7 @@ export function createLiterateAgent(options: {
       );
       return Object.fromEntries(entries);
     },
-    async run(sessionId, feedback) {
+    async run(sessionId, feedback, selectedAgent = model) {
       const runId = randomUUID();
       const activity = (
         status: AgentActivityEvent["status"],
@@ -403,7 +408,7 @@ export function createLiterateAgent(options: {
             step === 0 ? "Planning the first pass" : "Reviewing tool results",
           );
           const response = await options.gateway.complete({
-            model,
+            model: selectedAgent,
             messages,
             tools,
             tool_choice: "auto",

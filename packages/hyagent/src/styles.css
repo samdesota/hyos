@@ -106,6 +106,51 @@ button:disabled {
 .composer button b {
   padding-left: 8px;
 }
+
+.composer-options,
+.agent-selector,
+.initial-prompt-options {
+  display: flex;
+  align-items: center;
+}
+
+.composer-options {
+  gap: 10px;
+}
+
+.composer-options > span {
+  color: #727b86;
+  font:
+    9px "DM Mono",
+    monospace;
+}
+
+.agent-selector {
+  gap: 5px;
+}
+
+.agent-selector > span {
+  color: #727b86;
+  font:
+    9px "DM Mono",
+    monospace;
+  text-transform: uppercase;
+}
+
+.agent-selector select {
+  max-width: 180px;
+  padding: 4px 22px 4px 6px;
+  border: 1px solid #323a44;
+  border-radius: 4px;
+  outline: none;
+  background: #101419;
+  color: #b9c1cb;
+  font-size: 10px;
+}
+
+.agent-selector select:focus {
+  border-color: #718346;
+}
 .diff-block {
   position: relative;
 }
@@ -2123,7 +2168,7 @@ body {
 }
 
 .workspace-mode legend,
-.initial-prompt > span {
+.initial-prompt > label {
   margin-bottom: 8px;
   color: #8d96a1;
   font-size: 11px;
@@ -2223,8 +2268,13 @@ body {
   border-color: #718346;
 }
 
-.initial-prompt > small {
+.initial-prompt-options {
+  justify-content: space-between;
+  gap: 12px;
   margin-top: 6px;
+}
+
+.initial-prompt-options > small {
   color: #66717d;
   font:
     9px "DM Mono",

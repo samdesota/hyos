@@ -8,6 +8,7 @@ import { openNodeStorage } from "@hyos/hydb/node";
 import { WebSocketServer } from "ws";
 
 import { createLiterateAgent } from "./agent.js";
+import { DEFAULT_AGENT, availableAgents } from "./agent-options.js";
 import { createNativeFolderPicker } from "./folder-picker.js";
 import { createVercelGateway, type GatewayTransport } from "./gateway.js";
 import { hyagentSchema } from "./model.js";
@@ -66,6 +67,8 @@ const gateway = apiKey
     })
   : unavailableGateway;
 const parallelApiKey = process.env.PARALLEL_API_KEY;
+const defaultAgent = process.env.HYAGENT_MODEL ?? DEFAULT_AGENT;
+const agents = availableAgents(defaultAgent);
 const agent = createLiterateAgent({
   store,
   project,
@@ -73,7 +76,7 @@ const agent = createLiterateAgent({
   web: parallelApiKey
     ? createParallelWebTools({ apiKey: parallelApiKey })
     : undefined,
-  model: process.env.HYAGENT_MODEL,
+  model: defaultAgent,
 });
 const router = createHyagentRouter({
   store,
@@ -81,6 +84,8 @@ const router = createHyagentRouter({
   agent,
   folderPicker,
   agentConfigured: Boolean(apiKey),
+  agents,
+  defaultAgent,
 });
 
 const handler = createHTTPHandler({

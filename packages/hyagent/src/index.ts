@@ -1,4 +1,10 @@
 export { createLiterateAgent, type LiterateAgent } from "./agent.js";
+export {
+  AGENT_OPTIONS,
+  DEFAULT_AGENT,
+  availableAgents,
+  type AgentOption,
+} from "./agent-options.js";
 export { createParallelWebTools, type AgentWebTools } from "./web-tools.js";
 export {
   documentOperationSchema,

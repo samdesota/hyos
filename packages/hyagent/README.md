@@ -18,6 +18,10 @@ Set `PARALLEL_API_KEY` alongside the gateway key to enable the agent's `web_sear
 and `web_fetch` tools. Search returns a bounded set of relevant sources and excerpts;
 fetch reads up to ten selected pages as focused or full Markdown content.
 
+Each prompt has an agent selector, including on the new-task page. The selection
+applies to that turn, so a thread can switch models between messages. The default is
+`anthropic/claude-sonnet-4.5` unless `HYAGENT_MODEL` overrides it.
+
 The + button opens a new-task draft without creating a persisted session. Choose one
 or more Git repositories, decide whether to use the selected checkouts or create
 isolated worktrees, enter the initial prompt, and press Enter to start. The session is

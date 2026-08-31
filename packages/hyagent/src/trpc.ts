@@ -2,6 +2,11 @@ import { initTRPC } from "@trpc/server";
 import { z } from "zod";
 
 import type { LiterateAgent } from "./agent.js";
+import {
+  DEFAULT_AGENT,
+  availableAgents,
+  type AgentOption,
+} from "./agent-options.js";
 import type { FolderPicker } from "./folder-picker.js";
 import type { ProjectTools } from "./project-tools.js";
 import type { HyagentStore } from "./store.js";
@@ -14,11 +19,21 @@ export function createHyagentRouter(options: {
   project: ProjectTools;
   folderPicker?: FolderPicker;
   agentConfigured?: boolean;
+  agents?: readonly AgentOption[];
+  defaultAgent?: string;
 }) {
   const activeRuns = new Map<string, Promise<void>>();
-  function launchAgent(sessionId: string, prompt: string) {
+  const defaultAgent = options.defaultAgent ?? DEFAULT_AGENT;
+  const agents = options.agents ?? availableAgents(defaultAgent);
+  const agentIds = new Set(agents.map((agent) => agent.id));
+  const agentInput = z
+    .string()
+    .trim()
+    .refine((agent) => agentIds.has(agent), "Unknown agent")
+    .default(defaultAgent);
+  function launchAgent(sessionId: string, prompt: string, agent: string) {
     const run = options.agent
-      .run(sessionId, prompt)
+      .run(sessionId, prompt, agent)
       .then(() => undefined)
       .catch(() => undefined)
       .finally(() => activeRuns.delete(sessionId));
@@ -68,6 +83,8 @@ export function createHyagentRouter(options: {
     health: t.procedure.query(() => ({
       status: "ok" as const,
       agentConfigured: options.agentConfigured ?? true,
+      agents,
+      defaultAgent,
     })),
     workspace: t.router({
       recent: t.procedure.query(() => options.store.recentRepositories()),
@@ -176,6 +193,7 @@ export function createHyagentRouter(options: {
             mode: z.enum(["checkout", "worktree"]),
             baseOnLatestRemoteMain: z.boolean().default(false),
             prompt: z.string().trim().min(1).max(20_000),
+            agent: agentInput,
           }),
         )
         .mutation(async ({ input }) => {
@@ -202,7 +220,7 @@ export function createHyagentRouter(options: {
             "system",
             `${input.mode === "worktree" ? "Worktree" : "Workspace"} ready: ${repositories.map((repository) => repository.name).join(", ")}`,
           );
-          launchAgent(session.id, input.prompt);
+          launchAgent(session.id, input.prompt, input.agent);
           return {
             repositories,
             session: await options.store.getSession(session.id),
@@ -235,6 +253,7 @@ export function createHyagentRouter(options: {
           z.object({
             id: z.string().min(1),
             feedback: z.string().trim().min(1).max(20_000),
+            agent: agentInput,
           }),
         )
         .mutation(async ({ input }) => {
@@ -254,7 +273,7 @@ export function createHyagentRouter(options: {
               input.feedback.split("\n")[0]!.slice(0, 100),
             );
           }
-          launchAgent(input.id, input.feedback);
+          launchAgent(input.id, input.feedback, input.agent);
           return { accepted: true as const };
         }),
       commit: t.procedure

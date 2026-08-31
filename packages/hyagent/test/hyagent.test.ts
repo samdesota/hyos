@@ -338,8 +338,10 @@ test("the custom loop exposes and routes web search and fetch tools", async () =
     { role: "assistant", content: "I found the current interface." },
   ];
   const offeredTools: string[] = [];
+  const requestedModels: string[] = [];
   const gateway: GatewayTransport = {
     async complete(request) {
+      requestedModels.push(request.model);
       if (offeredTools.length === 0) {
         offeredTools.push(
           ...(
@@ -373,11 +375,20 @@ test("the custom loop exposes and routes web search and fetch tools", async () =
       },
     });
 
-    await agent.run(session.id, "Look this up before changing anything");
+    await agent.run(
+      session.id,
+      "Look this up before changing anything",
+      "zai/glm-5.3-flash",
+    );
 
     assert.ok(offeredTools.includes("web_search"));
     assert.ok(offeredTools.includes("web_fetch"));
     assert.deepEqual(webCalls, ["search", "fetch"]);
+    assert.deepEqual(requestedModels, [
+      "zai/glm-5.3-flash",
+      "zai/glm-5.3-flash",
+      "zai/glm-5.3-flash",
+    ]);
     assert.equal((await store.getSession(session.id)).status, "ready");
   } finally {
     await database.close();
@@ -996,11 +1007,13 @@ test("feedback starts the agent without holding the mutation open", async () => 
   const { database, store } = await setup();
   let release!: () => void;
   let completed = false;
+  let selectedAgent = "";
   const blocked = new Promise<void>((resolve) => {
     release = resolve;
   });
   const agent = fakeAgent({
-    async run() {
+    async run(_sessionId, _feedback, agent) {
+      selectedAgent = agent ?? "";
       await blocked;
       completed = true;
       return proposedDocument;
@@ -1017,9 +1030,16 @@ test("feedback starts the agent without holding the mutation open", async () => 
     const result = await caller.session.feedback({
       id: session.id,
       feedback: "Start working",
+      agent: "zai/glm-5.3-flash",
     });
     assert.deepEqual(result, { accepted: true });
     assert.equal(completed, false);
+    assert.equal(selectedAgent, "zai/glm-5.3-flash");
+    assert.ok(
+      (await caller.health()).agents.some(
+        (agent) => agent.id === "zai/glm-5.3-flash",
+      ),
+    );
     release();
   } finally {
     release();
