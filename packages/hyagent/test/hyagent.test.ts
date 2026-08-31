@@ -661,7 +661,7 @@ test("project can prepare an isolated worktree and copy included files", async (
 
     const prepared = await project.prepareRepositories(
       [{ name: "project", root }],
-      "worktree",
+      { mode: "worktree" },
     );
 
     assert.notEqual(prepared[0]?.root, root);
@@ -680,6 +680,50 @@ test("project can prepare an isolated worktree and copy included files", async (
   } finally {
     await Promise.all([
       rm(root, { recursive: true, force: true }),
+      rm(worktreeRoot, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("a worktree can start from the latest remote main", async () => {
+  const root = await createRepository("remote-main-source");
+  const remote = await mkdtemp(join(tmpdir(), "hyagent-remote-"));
+  const worktreeRoot = await mkdtemp(join(tmpdir(), "hyagent-worktrees-"));
+  try {
+    await git(root, "branch", "-M", "main");
+    await exec("git", ["init", "--bare", "-q", remote]);
+    await git(root, "remote", "add", "origin", remote);
+    await git(root, "push", "-u", "origin", "main");
+    await writeFile(join(root, "state.txt"), "local only\n");
+    await git(root, "add", "state.txt");
+    await git(root, "commit", "-qm", "local unpushed change");
+    const project = createProjectTools([{ name: "project", root }], {
+      worktreeRoot,
+    });
+
+    const prepared = await project.prepareRepositories(
+      [{ name: "project", root }],
+      { mode: "worktree", baseOnLatestRemoteMain: true },
+    );
+
+    assert.equal(
+      (
+        await exec("git", ["rev-parse", "HEAD"], { cwd: prepared[0]!.root })
+      ).stdout.trim(),
+      (
+        await exec("git", ["rev-parse", "origin/main"], {
+          cwd: prepared[0]!.root,
+        })
+      ).stdout.trim(),
+    );
+    assert.equal(
+      await readFile(join(prepared[0]!.root, "state.txt"), "utf8"),
+      "one\ntwo\n",
+    );
+  } finally {
+    await Promise.all([
+      rm(root, { recursive: true, force: true }),
+      rm(remote, { recursive: true, force: true }),
       rm(worktreeRoot, { recursive: true, force: true }),
     ]);
   }
@@ -806,6 +850,7 @@ test("a task is persisted only after workspace preparation succeeds", async () =
       caller.session.start({
         repositories: [{ name: "project", root: "/code/project" }],
         mode: "worktree",
+        baseOnLatestRemoteMain: false,
         prompt: "Build the first change",
       }),
       /Could not prepare workspace/,
@@ -816,6 +861,7 @@ test("a task is persisted only after workspace preparation succeeds", async () =
     const started = await caller.session.start({
       repositories: [{ name: "project", root: "/code/project" }],
       mode: "checkout",
+      baseOnLatestRemoteMain: false,
       prompt: "Build the first change",
     });
     assert.equal(started.session.title, "Build the first change");

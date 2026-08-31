@@ -24,7 +24,9 @@ most recently used checkout by default, and exposes the rest in a dropdown. Mana
 worktree paths are not added to this source-folder history.
 
 Worktree mode creates a `hyagent/...` branch under `.data/hyagent-worktrees`. Files
-listed in a repository's `.worktreeinclude` are copied into the new worktree.
+listed in a repository's `.worktreeinclude` are copied into the new worktree. The
+optional “Base off latest remote main” setting fetches `origin/main` and creates the
+branch from that refreshed ref instead of local `HEAD`.
 
 ## Multiple repositories
 

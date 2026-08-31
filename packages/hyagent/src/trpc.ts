@@ -157,6 +157,7 @@ export function createHyagentRouter(options: {
               .min(1)
               .max(20),
             mode: z.enum(["checkout", "worktree"]),
+            baseOnLatestRemoteMain: z.boolean().default(false),
             prompt: z.string().trim().min(1).max(20_000),
           }),
         )
@@ -166,7 +167,10 @@ export function createHyagentRouter(options: {
           }
           const repositories = await options.project.prepareRepositories(
             input.repositories,
-            input.mode,
+            {
+              mode: input.mode,
+              baseOnLatestRemoteMain: input.baseOnLatestRemoteMain,
+            },
           );
           const session = await options.store.createSession(
             input.prompt.split("\n")[0]!.slice(0, 100),

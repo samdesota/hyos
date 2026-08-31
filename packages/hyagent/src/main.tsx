@@ -488,11 +488,17 @@ function NewThreadPage(props: {
   updateName(index: number, name: string): void;
   remove(index: number): void;
   selectRecent(repository: WorkspaceRepository): void;
-  start(prompt: string, mode: "checkout" | "worktree"): void;
+  start(
+    prompt: string,
+    mode: "checkout" | "worktree",
+    baseOnLatestRemoteMain: boolean,
+  ): void;
 }) {
   const [path, setPath] = createSignal("");
   const [prompt, setPrompt] = createSignal("");
   const [mode, setMode] = createSignal<"checkout" | "worktree">("worktree");
+  const [baseOnLatestRemoteMain, setBaseOnLatestRemoteMain] =
+    createSignal(false);
   const addPath = () => {
     if (!path().trim()) return;
     props.addPath(path().trim());
@@ -500,7 +506,7 @@ function NewThreadPage(props: {
   };
   const start = () => {
     if (!prompt().trim() || props.repositories.length === 0) return;
-    props.start(prompt().trim(), mode());
+    props.start(prompt().trim(), mode(), baseOnLatestRemoteMain());
   };
   return (
     <main class="workspace-start">
@@ -593,7 +599,7 @@ function NewThreadPage(props: {
             />
             <span>
               <strong>Create a worktree</strong>
-              <small>Start from HEAD on a new hyagent branch.</small>
+              <small>Start on a new hyagent branch.</small>
             </span>
           </label>
           <label classList={{ selected: mode() === "checkout" }}>
@@ -609,6 +615,21 @@ function NewThreadPage(props: {
             </span>
           </label>
         </fieldset>
+        <Show when={mode() === "worktree"}>
+          <label class="remote-main-option">
+            <input
+              type="checkbox"
+              checked={baseOnLatestRemoteMain()}
+              onChange={(event) =>
+                setBaseOnLatestRemoteMain(event.currentTarget.checked)
+              }
+            />
+            <span>
+              <strong>Base off latest remote main</strong>
+              <small>Fetch origin/main before creating the worktree.</small>
+            </span>
+          </label>
+        </Show>
         <label class="initial-prompt">
           <span>Initial prompt</span>
           <textarea
@@ -1293,6 +1314,7 @@ function App() {
   const startNewSession = async (
     prompt: string,
     mode: "checkout" | "worktree",
+    baseOnLatestRemoteMain: boolean,
   ) => {
     if (busy() || repositories().length === 0 || !prompt.trim()) return;
     if (!agentConfigured()) {
@@ -1307,6 +1329,7 @@ function App() {
       const started = await client.session.start.mutate({
         repositories: sourceRepositories,
         mode,
+        baseOnLatestRemoteMain,
         prompt,
       });
       setRepositories([...started.repositories]);
@@ -1410,7 +1433,9 @@ function App() {
                     )
                   }
                   selectRecent={(repository) => setRepositories([repository])}
-                  start={(prompt, mode) => void startNewSession(prompt, mode)}
+                  start={(prompt, mode, baseOnLatestRemoteMain) =>
+                    void startNewSession(prompt, mode, baseOnLatestRemoteMain)
+                  }
                 />
               </Match>
               <Match when={session()}>

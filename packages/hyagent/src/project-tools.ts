@@ -16,6 +16,11 @@ const MAX_FILES_PER_WARNING_FOLDER = 10;
 export type RepositorySpec = WorkspaceRepository;
 export type WorkspaceMode = "checkout" | "worktree";
 
+export interface WorkspacePreparation {
+  mode: WorkspaceMode;
+  baseOnLatestRemoteMain?: boolean;
+}
+
 export interface WorktreeWarning {
   repository: string;
   path: string;
@@ -254,7 +259,7 @@ export interface ProjectTools {
   configureRepositories(specs: readonly RepositorySpec[]): Promise<void>;
   prepareRepositories(
     specs: readonly RepositorySpec[],
-    mode: WorkspaceMode,
+    preparation: WorkspacePreparation,
   ): Promise<readonly RepositorySpec[]>;
   initialize(): Promise<void>;
   readFile(repository: string, path: string): Promise<string>;
@@ -377,10 +382,10 @@ export function createProjectTools(
 
   async function prepareRepositories(
     next: readonly RepositorySpec[],
-    mode: WorkspaceMode,
+    preparation: WorkspacePreparation,
   ): Promise<readonly RepositorySpec[]> {
     const normalized = await normalizedSpecs(next);
-    if (mode === "checkout") {
+    if (preparation.mode === "checkout") {
       await configureRepositories(normalized);
       return repositorySpecs();
     }
@@ -393,13 +398,33 @@ export function createProjectTools(
       [];
     try {
       for (const spec of normalized) {
+        const startRef = preparation.baseOnLatestRemoteMain
+          ? "origin/main"
+          : "HEAD";
+        if (preparation.baseOnLatestRemoteMain) {
+          const fetch = await runProcess(
+            "git",
+            [
+              "fetch",
+              "--no-tags",
+              "origin",
+              "+refs/heads/main:refs/remotes/origin/main",
+            ],
+            spec.root,
+          );
+          if (fetch.exitCode !== 0) {
+            throw new Error(
+              `Could not fetch origin/main for ${spec.name}: ${fetch.stderr || fetch.stdout}`,
+            );
+          }
+        }
         const token = randomUUID().slice(0, 8);
         const safeName = spec.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
         const target = join(worktreeRoot, `${safeName}-${token}`);
         const branch = `hyagent/${safeName}-${token}`;
         const result = await runProcess(
           "git",
-          ["worktree", "add", "-b", branch, target, "HEAD"],
+          ["worktree", "add", "-b", branch, target, startRef],
           spec.root,
         );
         if (result.exitCode !== 0) {
