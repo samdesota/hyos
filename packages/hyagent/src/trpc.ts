@@ -1,0 +1,226 @@
+import { initTRPC } from "@trpc/server";
+import { z } from "zod";
+
+import type { LiterateAgent } from "./agent.js";
+import type { FolderPicker } from "./folder-picker.js";
+import type { ProjectTools } from "./project-tools.js";
+import type { HyagentStore } from "./store.js";
+
+const t = initTRPC.create();
+
+export function createHyagentRouter(options: {
+  store: HyagentStore;
+  agent: LiterateAgent;
+  project: ProjectTools;
+  folderPicker?: FolderPicker;
+  agentConfigured?: boolean;
+}) {
+  const activeRuns = new Map<string, Promise<void>>();
+  async function sessionWorkspace(id: string) {
+    const [session, repositories] = await Promise.all([
+      options.store.getSession(id),
+      options.store.getWorkspace(id),
+    ]);
+    return { session, repositories };
+  }
+
+  async function activateSession(id: string) {
+    const opened = await sessionWorkspace(id);
+    if (opened.repositories.length === 0) {
+      throw new Error("Select a repository folder before starting the agent");
+    }
+    await options.project.configureRepositories(opened.repositories);
+    return opened.session;
+  }
+
+  let initialSession: Promise<string> | undefined;
+  function bootstrap(): Promise<string> {
+    initialSession ??= (async () => {
+      const session =
+        (await options.store.latestUnfinishedSession()) ??
+        (await options.store.createSession("New agent task"));
+      const workspace = await options.store.getWorkspace(session.id);
+      if (workspace.length > 0) {
+        await options.project.configureRepositories(workspace);
+      } else if (options.project.repositorySpecs().length > 0) {
+        await options.store.saveWorkspace(
+          session.id,
+          options.project.repositorySpecs(),
+        );
+      }
+      if (session.status === "running") {
+        await options.store.setStatus(session.id, "failed");
+      }
+      return session.id;
+    })();
+    return initialSession;
+  }
+
+  return t.router({
+    health: t.procedure.query(() => ({
+      status: "ok" as const,
+      agentConfigured: options.agentConfigured ?? true,
+    })),
+    workspace: t.router({
+      current: t.procedure.query(async () => {
+        await bootstrap();
+        return options.project.repositorySpecs();
+      }),
+      chooseFolder: t.procedure.mutation(async () => {
+        if (!options.folderPicker) {
+          throw new Error("The native folder picker is not configured");
+        }
+        return options.folderPicker.choose();
+      }),
+      configure: t.procedure
+        .input(
+          z.object({
+            id: z.string().min(1).optional(),
+            repositories: z
+              .array(
+                z.object({
+                  name: z.string().trim().min(1).max(100),
+                  root: z.string().trim().min(1).max(4_000),
+                }),
+              )
+              .min(1)
+              .max(20),
+          }),
+        )
+        .mutation(async ({ input }) => {
+          if (activeRuns.size > 0) {
+            throw new Error(
+              "Wait for the running agent before changing workspaces",
+            );
+          }
+          const session = await options.store.getSession(
+            input.id ?? (await bootstrap()),
+          );
+          const savedWorkspace = await options.store.getWorkspace(session.id);
+          if (session.revision && savedWorkspace.length > 0) {
+            throw new Error("This task already has a literate diff");
+          }
+          await options.project.configureRepositories(input.repositories);
+          await options.store.saveWorkspace(
+            session.id,
+            options.project.repositorySpecs(),
+          );
+          await options.store.appendMessage(
+            session.id,
+            "system",
+            `Workspace ready: ${options.project.repositoryNames().join(", ")}`,
+          );
+          return {
+            repositories: options.project.repositorySpecs(),
+            session: await options.store.getSession(session.id),
+          };
+        }),
+    }),
+    session: t.router({
+      list: t.procedure.query(() => options.store.listSessions()),
+      watchList: t.procedure.subscription(({ signal }) =>
+        options.store.subscribeSessions(signal),
+      ),
+      bootstrap: t.procedure.query(async () =>
+        options.store.getSession(await bootstrap()),
+      ),
+      create: t.procedure.mutation(() =>
+        options.store.createSession("New agent task"),
+      ),
+      archive: t.procedure
+        .input(z.object({ id: z.string().min(1) }))
+        .mutation(async ({ input }) => {
+          if (activeRuns.has(input.id)) {
+            throw new Error(
+              "Wait for this agent run to finish before archiving",
+            );
+          }
+          await options.store.archiveSession(input.id);
+          return options.store.listSessions();
+        }),
+      open: t.procedure
+        .input(z.object({ id: z.string().min(1) }))
+        .query(({ input }) => sessionWorkspace(input.id)),
+      get: t.procedure
+        .input(z.object({ id: z.string().min(1) }))
+        .query(({ input }) => options.store.getSession(input.id)),
+      watch: t.procedure
+        .input(z.object({ id: z.string().min(1) }))
+        .subscription(({ input, signal }) =>
+          options.store.subscribeSession(input.id, signal),
+        ),
+      feedback: t.procedure
+        .input(
+          z.object({
+            id: z.string().min(1),
+            feedback: z.string().trim().min(1).max(20_000),
+          }),
+        )
+        .mutation(async ({ input }) => {
+          if (activeRuns.size > 0) {
+            throw new Error("The agent is already working on another task");
+          }
+          const session = await activateSession(input.id);
+          if (session.status === "committed") {
+            throw new Error("This literate diff is already committed");
+          }
+          if (session.status === "running") {
+            throw new Error("The agent is already working on this task");
+          }
+          if (session.title === "New agent task") {
+            await options.store.setTitle(
+              input.id,
+              input.feedback.split("\n")[0]!.slice(0, 100),
+            );
+          }
+          const run = options.agent
+            .run(input.id, input.feedback)
+            .then(() => undefined)
+            .catch(() => undefined)
+            .finally(() => activeRuns.delete(input.id));
+          activeRuns.set(input.id, run);
+          return { accepted: true as const };
+        }),
+      commit: t.procedure
+        .input(z.object({ id: z.string().min(1) }))
+        .mutation(async ({ input }) => {
+          if (activeRuns.size > 0) {
+            throw new Error("Wait for the running agent before committing");
+          }
+          const session = await activateSession(input.id);
+          if (!session.revision)
+            throw new Error("There is no literate diff to commit");
+          if (session.status === "committed") return session;
+          const warnings = await options.project.checkConsistency(
+            session.revision.generatedIgnores,
+          );
+          if (warnings.length > 0) {
+            throw new Error(
+              `The worktree contains changes outside the literate diff:\n${warnings.map((warning) => `- ${warning.message}`).join("\n")}`,
+            );
+          }
+          const document = {
+            summary: session.revision.summary,
+            blocks: session.revision.blocks,
+            generatedIgnores: session.revision.generatedIgnores,
+          };
+          const messages = await options.agent.writeCommitMessages(document);
+          const commits = await options.project.commit(document, messages);
+          await options.store.setStatus(input.id, "committed");
+          await options.store.appendMessage(
+            input.id,
+            "system",
+            `Committed revision ${session.revision.number}: ${commits
+              .map(
+                (commit) =>
+                  `${commit.repository}@${commit.hash.slice(0, 7)} ${commit.message.split("\n")[0]}`,
+              )
+              .join(", ")}`,
+          );
+          return options.store.getSession(input.id);
+        }),
+    }),
+  });
+}
+
+export type HyagentRouter = ReturnType<typeof createHyagentRouter>;
