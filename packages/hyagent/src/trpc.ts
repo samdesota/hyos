@@ -267,6 +267,7 @@ export function createHyagentRouter(options: {
             "system",
             `${input.mode === "worktree" ? "Worktree" : "Workspace"} ready: ${repositories.map((repository) => repository.name).join(", ")}`,
           );
+          await options.store.setModel(session.id, input.agent);
           launchAgent(session.id, input.prompt, input.agent);
           return {
             repositories,
@@ -324,6 +325,7 @@ export function createHyagentRouter(options: {
               input.feedback.split("\n")[0]!.slice(0, 100),
             );
           }
+          await options.store.setModel(input.id, input.agent);
           launchAgent(input.id, input.feedback, input.agent);
           return { accepted: true as const };
         }),

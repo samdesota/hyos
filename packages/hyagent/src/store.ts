@@ -22,6 +22,7 @@ const ARCHIVED_MESSAGE = "HYAGENT_ARCHIVED";
 const PATCH_CURSOR_MESSAGE_PREFIX = "HYAGENT_PATCH_CURSOR:";
 const DIFF_STARTED_MESSAGE_PREFIX = "HYAGENT_DIFF_STARTED:";
 const DIFF_COMMITTED_MESSAGE_PREFIX = "HYAGENT_DIFF_COMMITTED:";
+const MODEL_MESSAGE_PREFIX = "HYAGENT_MODEL:";
 
 const createSessionCommand = hydb.command({
   input: z.object({ id: z.string(), title: z.string(), now: z.date() }),
@@ -147,6 +148,7 @@ export interface HyagentStore {
     appliedThrough: string | null,
   ): Promise<SessionSnapshot>;
   setAppliedThrough(id: string, appliedThrough: string | null): Promise<void>;
+  setModel(id: string, model: string): Promise<void>;
   setStatus(id: string, status: SessionStatus): Promise<void>;
   setTitle(id: string, title: string): Promise<void>;
 }
@@ -219,6 +221,17 @@ export function createHyagentStore(database: Database): HyagentStore {
         )
       : revisionRows;
     const revision = activeRevisionRows.at(-1);
+    const modelMessage = [...messageRows]
+      .reverse()
+      .find((message) => message.content.startsWith(MODEL_MESSAGE_PREFIX));
+    const model = modelMessage
+      ? z
+          .string()
+          .trim()
+          .min(1)
+          .max(200)
+          .parse(modelMessage.content.slice(MODEL_MESSAGE_PREFIX.length))
+      : null;
     const cursorMessage = [...messageRows]
       .reverse()
       .find(
@@ -305,6 +318,7 @@ export function createHyagentStore(database: Database): HyagentStore {
             !message.content.startsWith(PATCH_CURSOR_MESSAGE_PREFIX) &&
             !message.content.startsWith(DIFF_STARTED_MESSAGE_PREFIX) &&
             !message.content.startsWith(DIFF_COMMITTED_MESSAGE_PREFIX) &&
+            !message.content.startsWith(MODEL_MESSAGE_PREFIX) &&
             message.content !== ARCHIVED_MESSAGE,
         )
         .map(({ sessionId: _sessionId, ...message }) => message),
@@ -313,6 +327,7 @@ export function createHyagentStore(database: Database): HyagentStore {
       activeDiffId,
       latestRevisionNumber: revisionRows.at(-1)?.number ?? 0,
       appliedThrough,
+      model,
     };
   }
 
@@ -613,6 +628,17 @@ export function createHyagentStore(database: Database): HyagentStore {
         sessionId: id,
         role: "system",
         content: `${PATCH_CURSOR_MESSAGE_PREFIX}${JSON.stringify({ appliedThrough })}`,
+        now: nextWriteTime(),
+      });
+    },
+    async setModel(id, rawModel) {
+      const model = z.string().trim().min(1).max(200).parse(rawModel);
+      if ((await getSession(id)).model === model) return;
+      await database.execute(appendMessageCommand, {
+        id: randomUUID(),
+        sessionId: id,
+        role: "system",
+        content: `${MODEL_MESSAGE_PREFIX}${model}`,
         now: nextWriteTime(),
       });
     },

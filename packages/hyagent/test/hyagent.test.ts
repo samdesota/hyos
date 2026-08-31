@@ -272,6 +272,23 @@ test("hydb stores every incremental literate-diff revision", async () => {
   }
 });
 
+test("hydb remembers the selected model without exposing metadata in chat", async () => {
+  const { database, store } = await setup();
+  try {
+    const session = await store.createSession("Remember my model");
+    assert.equal(session.model, null);
+
+    await store.setModel(session.id, "zai/glm-5.3-flash");
+    const reloadedStore = createHyagentStore(database);
+    const reloaded = await reloadedStore.getSession(session.id);
+
+    assert.equal(reloaded.model, "zai/glm-5.3-flash");
+    assert.deepEqual(reloaded.messages, []);
+  } finally {
+    await database.close();
+  }
+});
+
 test("a session keeps committed diffs while a new active diff starts", async () => {
   const { database, store } = await setup();
   try {
@@ -2020,6 +2037,10 @@ test("feedback starts the agent without holding the mutation open", async () => 
     assert.deepEqual(result, { accepted: true });
     assert.equal(completed, false);
     assert.equal(selectedAgent, "zai/glm-5.3-flash");
+    assert.equal(
+      (await store.getSession(session.id)).model,
+      "zai/glm-5.3-flash",
+    );
     assert.ok(
       (await caller.health()).agents.some(
         (agent) => agent.id === "zai/glm-5.3-flash",

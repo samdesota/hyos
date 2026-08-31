@@ -1258,6 +1258,7 @@ function App() {
   const [following, setFollowing] = createSignal(true);
   const [agentConfigured, setAgentConfigured] = createSignal(true);
   const [agents, setAgents] = createSignal<AgentOption[]>([]);
+  const [defaultAgent, setDefaultAgent] = createSignal("");
   const [selectedAgent, setSelectedAgent] = createSignal("");
   const [creatingNew, setCreatingNew] = createSignal(false);
   const [initialized, setInitialized] = createSignal(false);
@@ -1303,6 +1304,7 @@ function App() {
     setCommitMessages({});
     setYeetRepositories([]);
     setSelectedDiffId("");
+    setSelectedAgent(defaultAgent());
     setError("");
     setNewThreadUrl(mode);
   }
@@ -1321,6 +1323,7 @@ function App() {
       setAgentStarting(false);
       setCreatingNew(false);
       setSession(opened.session);
+      setSelectedAgent(opened.session.model ?? defaultAgent());
       setSelectedDiffId(opened.session.activeDiffId);
       setRepositories([...opened.repositories]);
       setComments([]);
@@ -1350,6 +1353,7 @@ function App() {
       if (url.searchParams.get("new") === "1") {
         setCreatingNew(true);
         setRepositories(recentRepositories().slice(0, 1));
+        setSelectedAgent(defaultAgent());
         return;
       }
       const id = url.searchParams.get("session");
@@ -1368,6 +1372,7 @@ function App() {
           client.workspace.recent.query(),
         ]);
         setAgents([...health.agents]);
+        setDefaultAgent(health.defaultAgent);
         setSelectedAgent(health.defaultAgent);
         setRecentRepositories([...recent]);
         const url = new URL(location.href);
@@ -1398,6 +1403,7 @@ function App() {
         }
         const loaded = await client.session.open.query({ id: initial.id });
         setSession(loaded.session);
+        setSelectedAgent(loaded.session.model ?? health.defaultAgent);
         setSelectedDiffId(loaded.session.activeDiffId);
         setRepositories([...loaded.repositories]);
         void refreshYeetStatus(loaded.session.id);
@@ -1613,6 +1619,7 @@ function App() {
         ].slice(0, 20);
       });
       setSession(started.session);
+      setSelectedAgent(started.session.model ?? agent);
       setSelectedDiffId(started.session.activeDiffId);
       setCreatingNew(false);
       setComments([]);
@@ -1642,6 +1649,7 @@ function App() {
         const opened = await client.session.open.query({ id: next.id });
         setCreatingNew(false);
         setSession(opened.session);
+        setSelectedAgent(opened.session.model ?? defaultAgent());
         setSelectedDiffId(opened.session.activeDiffId);
         setRepositories([...opened.repositories]);
         setComments([]);
@@ -1654,6 +1662,7 @@ function App() {
         setSelectedDiffId("");
         setRepositories(recentRepositories().slice(0, 1));
         setCreatingNew(true);
+        setSelectedAgent(defaultAgent());
         setComments([]);
         setNewThreadUrl("replace");
       }

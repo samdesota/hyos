@@ -91,6 +91,7 @@ export interface SessionSnapshot {
   id: string;
   title: string;
   status: SessionStatus;
+  model: string | null;
   messages: AgentMessage[];
   revision: LiterateRevision | null;
   diffs: SessionDiff[];
