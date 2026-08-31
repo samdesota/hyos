@@ -100,6 +100,57 @@ function patchFilePaths(patch: string): string[] {
   return [...paths];
 }
 
+interface ContextlessHunk {
+  path: string;
+  header: string;
+}
+
+function contextlessModificationHunk(
+  patch: string,
+): ContextlessHunk | undefined {
+  for (const section of patch.split(/(?=^diff --git )/m)) {
+    if (!section.startsWith("diff --git ")) continue;
+    if (
+      /^--- \/dev\/null$/m.test(section) ||
+      /^\+\+\+ \/dev\/null$/m.test(section)
+    ) {
+      continue;
+    }
+    const path = section.match(/^\+\+\+ b\/(.+)$/m)?.[1] ?? "unknown file";
+    const lines = section.split("\n");
+    for (let index = 0; index < lines.length; index += 1) {
+      const header = lines[index]!;
+      if (!header.startsWith("@@ ")) continue;
+      let hasContext = false;
+      for (let body = index + 1; body < lines.length; body += 1) {
+        const line = lines[body]!;
+        if (line.startsWith("@@ ") || line.startsWith("diff --git ")) break;
+        if (line.startsWith(" ")) {
+          hasContext = true;
+          break;
+        }
+      }
+      if (!hasContext) return { path, header };
+    }
+  }
+  return undefined;
+}
+
+function patchFailureMessage(patch: string, stderr: string): string {
+  const contextless = contextlessModificationHunk(patch);
+  if (contextless) {
+    return `Patch was rejected before the literate diff was updated: ${contextless.path} has a modification hunk with no unchanged surrounding context (${contextless.header}). Include at least one unchanged line, prefixed with a space, before or after the edit.`;
+  }
+  const detail = stderr.trim();
+  if (/patch (failed|does not apply)/i.test(detail)) {
+    return `Patch was rejected before the literate diff was updated because its context does not match the current file. Read the file again and regenerate the hunk with unchanged surrounding lines. Git reported: ${detail}`;
+  }
+  if (/corrupt patch|unrecognized input/i.test(detail)) {
+    return `Patch was rejected before the literate diff was updated because it is not a valid unified diff. Git reported: ${detail}`;
+  }
+  return `Patch was rejected before the literate diff was updated. Git reported: ${detail || "the patch does not apply cleanly"}`;
+}
+
 function patchBlocks(document: LiterateDiff | null): PatchRef[] {
   return (document?.blocks ?? [])
     .filter((block): block is PatchBlock => block.kind === "apply_patch")
@@ -239,7 +290,7 @@ async function applyPatch(
       );
       if (already.exitCode === 0) return "already_applied";
     }
-    throw new Error(check.stderr || "Patch does not apply cleanly");
+    throw new Error(patchFailureMessage(patch, check.stderr));
   }
   const result = await runProcess(
     "git",

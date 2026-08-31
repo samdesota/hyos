@@ -300,6 +300,95 @@ test("the custom loop publishes document edits before it finishes", async () => 
   }
 });
 
+test("a rejected patch returns a repairable error to the agent tool call", async () => {
+  const { database, store } = await setup();
+  const root = await createRepository("agent-patch-error");
+  const responses: GatewayMessage[] = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "overview",
+          function: {
+            name: "edit_literate_diff",
+            arguments: JSON.stringify({
+              operations: [
+                { type: "set_summary", summary: "Visible first pass" },
+              ],
+            }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "bad-patch",
+          function: {
+            name: "edit_literate_diff",
+            arguments: JSON.stringify({
+              operations: [
+                {
+                  type: "insert_block",
+                  block: patchBlock(
+                    "contextless",
+                    "project",
+                    "@@ -1 +1 @@\n-one\n+ONE",
+                  ),
+                },
+              ],
+            }),
+          },
+        },
+      ],
+    },
+    { role: "assistant", content: "I need to regenerate that patch." },
+  ];
+  const requests: GatewayMessage[][] = [];
+  const gateway: GatewayTransport = {
+    async complete(request) {
+      requests.push([...request.messages]);
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+
+  try {
+    const session = await store.createSession("Reject malformed patch");
+    const agent = createLiterateAgent({
+      store,
+      project: createProjectTools([{ name: "project", root }]),
+      gateway,
+    });
+
+    await agent.run(session.id, "Make the change");
+
+    const toolError = requests
+      .at(-1)
+      ?.find(
+        (message) =>
+          message.role === "tool" && message.tool_call_id === "bad-patch",
+      )?.content;
+    assert.match(
+      toolError ?? "",
+      /modification hunk with no unchanged surrounding context/,
+    );
+    const snapshot = await store.getSession(session.id);
+    assert.equal(snapshot.revision?.summary, "Visible first pass");
+    assert.deepEqual(snapshot.revision?.blocks, []);
+    assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
+  } finally {
+    await Promise.all([
+      database.close(),
+      rm(root, { recursive: true, force: true }),
+    ]);
+  }
+});
+
 test("the custom loop has no fixed model-turn limit", async () => {
   const { database, store } = await setup();
   const inspections: GatewayMessage[] = Array.from(
@@ -815,6 +904,50 @@ test("a repository with no commits can be opened", async () => {
       (await project.checkConsistency([])).map(({ path }) => path),
       [],
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("patch errors identify modification hunks without context", async () => {
+  const root = await createRepository("contextless-patch");
+  try {
+    const project = createProjectTools([{ name: "project", root }]);
+    await project.initialize();
+    const document: LiterateDiff = {
+      summary: "Rejected patch",
+      generatedIgnores: [],
+      blocks: [patchBlock("contextless", "project", "@@ -1 +1 @@\n-one\n+ONE")],
+    };
+
+    await assert.rejects(
+      () => project.syncPatches(null, document),
+      /modification hunk with no unchanged surrounding context/,
+    );
+    assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("patch errors identify context that no longer matches", async () => {
+  const root = await createRepository("stale-patch");
+  try {
+    const project = createProjectTools([{ name: "project", root }]);
+    await project.initialize();
+    const document: LiterateDiff = {
+      summary: "Rejected patch",
+      generatedIgnores: [],
+      blocks: [
+        patchBlock("stale", "project", "@@ -1,2 +1,2 @@\n-stale\n+ONE\n two"),
+      ],
+    };
+
+    await assert.rejects(
+      () => project.syncPatches(null, document),
+      /context does not match the current file/,
+    );
+    assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
