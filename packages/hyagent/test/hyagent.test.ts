@@ -15,7 +15,11 @@ import type { LiterateDiff, SessionListItem } from "../src/domain.js";
 import type { GatewayMessage, GatewayTransport } from "../src/gateway.js";
 import { hyagentSchema } from "../src/model.js";
 import { renderAgentMarkdown } from "../src/markdown.js";
-import { createProjectTools, type ProjectTools } from "../src/project-tools.js";
+import {
+  createProjectTools,
+  PatchReplayError,
+  type ProjectTools,
+} from "../src/project-tools.js";
 import { createHyagentStore } from "../src/store.js";
 import { createHyagentRouter } from "../src/trpc.js";
 import { shouldShowWorkspacePicker } from "../src/workspace-state.js";
@@ -454,6 +458,75 @@ test("a rejected patch returns a repairable error to the agent tool call", async
       database.close(),
       rm(root, { recursive: true, force: true }),
     ]);
+  }
+});
+
+test("an unreplayable saved diff switches the run to explicit recovery", async () => {
+  const { database, store } = await setup();
+  const edit = (id: string): GatewayMessage => ({
+    role: "assistant",
+    content: null,
+    tool_calls: [
+      {
+        id,
+        function: {
+          name: "edit_literate_diff",
+          arguments: JSON.stringify({
+            operations: [{ type: "remove_block", id: "change" }],
+          }),
+        },
+      },
+    ],
+  });
+  const responses = [
+    edit("first-cleanup"),
+    edit("repeated-cleanup"),
+    finishRun("The saved diff needs to be re-anchored.", "blocked"),
+  ];
+  const requests: GatewayMessage[][] = [];
+  let replayAttempts = 0;
+  const gateway: GatewayTransport = {
+    async complete(request) {
+      requests.push([...request.messages]);
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+
+  try {
+    const session = await store.createSession("Recover a legacy diff");
+    await store.saveRevision(session.id, proposedDocument);
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject({
+        async syncPatches() {
+          replayAttempts += 1;
+          throw new PatchReplayError(
+            "reversing",
+            "Replay stopped in workspace while reversing block cleanup: file already exists",
+          );
+        },
+      }),
+      gateway,
+    });
+
+    await agent.run(session.id, "Clean up the saved document");
+
+    assert.equal(replayAttempts, 1);
+    for (const request of requests.slice(1)) {
+      const failure = request.find(
+        (message) =>
+          message.role === "tool" &&
+          ["first-cleanup", "repeated-cleanup"].includes(
+            message.tool_call_id ?? "",
+          ),
+      );
+      if (failure)
+        assert.match(failure.content ?? "", /reanchor_literate_diff/);
+    }
+  } finally {
+    await database.close();
   }
 });
 
@@ -1255,7 +1328,27 @@ test("re-anchor adopts one canonical patch per changed file", async () => {
             ),
           ],
         }),
-      /both control the file/,
+      /controlled by blocks state and duplicate-state/,
+    );
+
+    await assert.rejects(
+      () =>
+        project.reanchorPatches({
+          ...document,
+          blocks: [
+            patchBlock(
+              "stale-state",
+              "project",
+              "@@ -1,2 +1,2 @@\n-one\n+WRONG\n two",
+            ),
+            patchBlock(
+              "current-state",
+              "project",
+              "@@ -1,2 +1,2 @@\n-one\n+ONE\n two",
+            ),
+          ],
+        }),
+      /controlled by blocks stale-state and current-state/,
     );
   } finally {
     await rm(root, { recursive: true, force: true });

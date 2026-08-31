@@ -9,7 +9,11 @@ import { DEFAULT_AGENT } from "./agent-options.js";
 import { documentOperationsSchema, editLiterateDiff } from "./document.js";
 import type { LiterateDiff } from "./domain.js";
 import type { GatewayMessage, GatewayTransport } from "./gateway.js";
-import type { ProjectTools, WorktreeWarning } from "./project-tools.js";
+import {
+  PatchReplayError,
+  type ProjectTools,
+  type WorktreeWarning,
+} from "./project-tools.js";
 import type { HyagentStore } from "./store.js";
 import type { AgentWebTools } from "./web-tools.js";
 
@@ -338,6 +342,9 @@ function toolFailureDetail(
   return JSON.stringify(detail).slice(0, 8_000);
 }
 
+const REANCHOR_INSTRUCTION =
+  "The saved literate diff cannot be rewound. Do not retry edit_literate_diff. Use reanchor_literate_diff with one atomic cleanup that clears conflicting generated ignores and consolidates every changed file into exactly one canonical patch block matching the current worktree.";
+
 export interface LiterateAgent {
   run(
     sessionId: string,
@@ -443,6 +450,7 @@ export function createLiterateAgent(options: {
         document = documentFromSnapshot(snapshot.revision);
         const initialRevisionNumber = snapshot.revision?.number ?? 0;
         let savedRevisions = 0;
+        let requiresReanchor = false;
         const initialWarnings = await options.project.checkConsistency(
           document?.generatedIgnores ?? [],
         );
@@ -556,6 +564,9 @@ export function createLiterateAgent(options: {
                 call.function.name === "edit_literate_diff" &&
                 Array.isArray(args.operations)
               ) {
+                if (requiresReanchor) {
+                  throw new Error(REANCHOR_INSTRUCTION);
+                }
                 const operations = documentOperationsSchema.parse(
                   args.operations,
                 );
@@ -582,6 +593,7 @@ export function createLiterateAgent(options: {
                 document = await options.project.enrichDocument(next);
                 await options.store.saveRevision(sessionId, document);
                 savedRevisions += 1;
+                requiresReanchor = false;
                 output = {
                   ok: true,
                   revision: initialRevisionNumber + savedRevisions,
@@ -672,8 +684,17 @@ export function createLiterateAgent(options: {
               }
             } catch (error) {
               if (signal?.aborted) throw signal.reason;
-              const message =
+              if (
+                error instanceof PatchReplayError &&
+                error.direction === "reversing"
+              ) {
+                requiresReanchor = true;
+              }
+              let message =
                 error instanceof Error ? error.message : String(error);
+              if (requiresReanchor && !message.includes(REANCHOR_INSTRUCTION)) {
+                message += ` ${REANCHOR_INSTRUCTION}`;
+              }
               await activity(
                 "working",
                 `${toolActivity(call.function.name, args)} failed`,

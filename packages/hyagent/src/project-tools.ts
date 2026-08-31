@@ -33,6 +33,16 @@ export interface CommitResult {
   message: string;
 }
 
+export class PatchReplayError extends Error {
+  constructor(
+    readonly direction: "reversing" | "applying",
+    message: string,
+  ) {
+    super(message);
+    this.name = "PatchReplayError";
+  }
+}
+
 type PatchBlock = Extract<LiterateBlock, { kind: "apply_patch" }>;
 type PatchRef = Pick<PatchBlock, "id" | "repository" | "patch">;
 type Snapshot = Map<string, string>;
@@ -613,7 +623,8 @@ export function createProjectTools(
           rollbackError ??= cause;
         }
       }
-      throw new Error(
+      throw new PatchReplayError(
+        failed?.direction ?? "applying",
         `Replay stopped in ${repository}${failed ? ` while ${failed.direction} block ${failed.patch.id}` : ""}: ${error instanceof Error ? error.message : String(error)}${rollbackError ? ` Rollback also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}` : ""}`,
       );
     }
@@ -707,17 +718,28 @@ export function createProjectTools(
         const patches = patchBlocks(document).filter(
           (patch) => patch.repository === repository,
         );
-        const owners = new Map<string, string>();
+        const owners = new Map<string, string[]>();
         for (const patch of patches) {
           for (const path of patchFilePaths(patch.patch)) {
-            const owner = owners.get(path);
-            if (owner) {
-              throw new Error(
-                `Cannot re-anchor ${repository}:${path}: blocks ${owner} and ${patch.id} both control the file. Consolidate them into one final patch block.`,
-              );
-            }
-            owners.set(path, patch.id);
+            const pathOwners = owners.get(path) ?? [];
+            pathOwners.push(patch.id);
+            owners.set(path, pathOwners);
           }
+        }
+        const duplicates = [...owners]
+          .filter(([, pathOwners]) => pathOwners.length > 1)
+          .slice(0, 20)
+          .map(
+            ([path, pathOwners]) =>
+              `${repository}:${path} is controlled by blocks ${pathOwners.join(" and ")}`,
+          );
+        if (duplicates.length > 0) {
+          throw new Error(
+            `Cannot re-anchor until every changed file has one canonical patch block. Consolidate these duplicate controllers:\n${duplicates.join("\n")}`,
+          );
+        }
+        const invalidPatches: string[] = [];
+        for (const patch of patches) {
           const root = rootFor(repository);
           const check = await runProcess(
             "git",
@@ -726,10 +748,18 @@ export function createProjectTools(
             patch.patch,
           );
           if (check.exitCode !== 0) {
-            throw new Error(
-              `Cannot re-anchor block ${patch.id}: its patch does not describe the current worktree. ${patchFailureMessage(patch.patch, check.stderr)}`,
+            invalidPatches.push(
+              `Block ${patch.id}: ${patchFailureMessage(patch.patch, check.stderr)}`.slice(
+                0,
+                2_000,
+              ),
             );
           }
+        }
+        if (invalidPatches.length > 0) {
+          throw new Error(
+            `Cannot re-anchor because these patches do not describe the current worktree. Regenerate all of them before retrying:\n${invalidPatches.slice(0, 20).join("\n")}`,
+          );
         }
         const root = rootFor(repository);
         const entries = document.generatedIgnores.filter(
