@@ -300,6 +300,142 @@ test("the custom loop publishes document edits before it finishes", async () => 
   }
 });
 
+test("the custom loop has no fixed model-turn limit", async () => {
+  const { database, store } = await setup();
+  const inspections: GatewayMessage[] = Array.from(
+    { length: 24 },
+    (_, index) => ({
+      role: "assistant" as const,
+      content: null,
+      tool_calls: [
+        {
+          id: `inspect-${index}`,
+          function: {
+            name: "read_file",
+            arguments: JSON.stringify({
+              repository: "workspace",
+              path: "state.txt",
+            }),
+          },
+        },
+      ],
+    }),
+  );
+  const responses: GatewayMessage[] = [
+    ...inspections,
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "overview-after-inspection",
+          function: {
+            name: "edit_literate_diff",
+            arguments: JSON.stringify({
+              operations: [{ type: "set_summary", summary: "Late first pass" }],
+            }),
+          },
+        },
+      ],
+    },
+    { role: "assistant", content: "The first pass is ready." },
+  ];
+  const gateway: GatewayTransport = {
+    async complete() {
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+  try {
+    const session = await store.createSession("Long investigation");
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+    });
+
+    await agent.run(session.id, "Investigate thoroughly");
+
+    const snapshot = await store.getSession(session.id);
+    assert.equal(snapshot.status, "ready");
+    assert.equal(snapshot.revision?.summary, "Late first pass");
+  } finally {
+    await database.close();
+  }
+});
+
+test("repository work waits until the literate diff has an overview", async () => {
+  const { database, store } = await setup();
+  const responses: GatewayMessage[] = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "premature-read",
+          function: {
+            name: "read_file",
+            arguments: JSON.stringify({
+              repository: "workspace",
+              path: "state.txt",
+            }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "overview",
+          function: {
+            name: "edit_literate_diff",
+            arguments: JSON.stringify({
+              operations: [
+                { type: "set_summary", summary: "Visible first pass" },
+              ],
+            }),
+          },
+        },
+      ],
+    },
+    { role: "assistant", content: "The overview is visible." },
+  ];
+  const gateway: GatewayTransport = {
+    async complete() {
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+  let reads = 0;
+  try {
+    const session = await store.createSession("Visible work");
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject({
+        async readFile() {
+          reads += 1;
+          return "hidden work";
+        },
+      }),
+      gateway,
+    });
+
+    await agent.run(session.id, "Start working visibly");
+
+    assert.equal(reads, 0);
+    assert.equal(
+      (await store.getSession(session.id)).revision?.summary,
+      "Visible first pass",
+    );
+  } finally {
+    await database.close();
+  }
+});
+
 test("the custom loop exposes and routes web search and fetch tools", async () => {
   const { database, store } = await setup();
   const requests: GatewayMessage[] = [
@@ -505,6 +641,21 @@ test("session changes stream from Hydb subscriptions", async () => {
     }
     assert.equal(updated.done, false);
     assert.equal(updated.value?.messages.at(-1)?.content, "Stream this update");
+
+    await store.saveRevision(session.id, {
+      summary: "Stream this literate diff",
+      blocks: [],
+      generatedIgnores: [],
+    });
+    updated = await iterator.next();
+    while (
+      !updated.done &&
+      updated.value.revision?.summary !== "Stream this literate diff"
+    ) {
+      updated = await iterator.next();
+    }
+    assert.equal(updated.done, false);
+    assert.equal(updated.value?.revision?.summary, "Stream this literate diff");
     abort.abort();
     await iterator.return?.();
   } finally {

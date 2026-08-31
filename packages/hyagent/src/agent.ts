@@ -225,6 +225,8 @@ Repositories: ${repositories.join(", ")}.
 
 You may reply conversationally without creating or editing the literate diff when the user is discussing the task, asking a question, or clarifying the approach. Once you begin implementation, use edit_literate_diff early to write a high-level overview, then keep the document current as you investigate and work. A good document reads as ordinary technical prose with explanations next to the patches they justify. Use diagrams only when they clarify a real relationship.
 
+Before using read_file or run_command, start the literate diff with a high-level overview. Repository work must remain visible in the document as it happens; do not investigate the repository invisibly and write the document afterward.
+
 Patches are applied to the selected repository's current worktree as document blocks are added. If revising an earlier patch breaks a later patch, replay stops and the tool returns that failure for you to repair. Never use another editing mechanism.
 
 Run search, tests, builds, formatters, and generators with run_command. If a command changes the worktree outside the literate diff, you will receive a WORKTREE_INCONSISTENT warning. Incorporate each meaningful change into a patch or list a generated path with a reason using set_generated_ignores.
@@ -295,10 +297,8 @@ export function createLiterateAgent(options: {
   gateway: GatewayTransport;
   web?: AgentWebTools;
   model?: string;
-  maxSteps?: number;
 }): LiterateAgent {
   const model = options.model ?? DEFAULT_AGENT;
-  const maxSteps = options.maxSteps ?? 24;
   return {
     async writeCommitMessages(document) {
       const repositories = [
@@ -402,7 +402,7 @@ export function createLiterateAgent(options: {
         ];
         const persistedWarnings = new Set<string>();
 
-        for (let step = 0; step < maxSteps; step += 1) {
+        for (let step = 0; ; step += 1) {
           await activity(
             "working",
             step === 0 ? "Planning the first pass" : "Reviewing tool results",
@@ -441,6 +441,15 @@ export function createLiterateAgent(options: {
                 unknown
               >;
               await activity("working", toolActivity(call.function.name, args));
+              if (
+                !document &&
+                (call.function.name === "read_file" ||
+                  call.function.name === "run_command")
+              ) {
+                throw new Error(
+                  "Start the literate diff with a high-level overview before using repository tools",
+                );
+              }
               if (
                 call.function.name === "read_file" &&
                 typeof args.repository === "string" &&
@@ -541,17 +550,6 @@ export function createLiterateAgent(options: {
             });
           }
         }
-        if (document) {
-          await options.store.setStatus(sessionId, "ready");
-          await activity("complete", "Work complete");
-          await options.store.appendMessage(
-            sessionId,
-            "agent",
-            document.summary,
-          );
-          return document;
-        }
-        throw new Error(`Agent exceeded ${maxSteps} model steps`);
       } catch (error) {
         await options.store.setStatus(sessionId, "failed");
         const message = error instanceof Error ? error.message : String(error);
