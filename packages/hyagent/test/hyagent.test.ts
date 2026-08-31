@@ -54,6 +54,7 @@ function fakeProject(overrides: Partial<ProjectTools> = {}): ProjectTools {
     repositoryNames: () => ["workspace"],
     repositorySpecs: () => [{ name: "workspace", root: "/workspace" }],
     configureRepositories: async () => undefined,
+    canBaseOnLatestRemoteMain: async () => false,
     prepareRepositories: async (repositories) => repositories,
     initialize: async () => undefined,
     readFile: async () => "",
@@ -659,9 +660,14 @@ test("project can prepare an isolated worktree and copy included files", async (
       worktreeRoot,
     });
 
+    assert.equal(
+      await project.canBaseOnLatestRemoteMain([{ name: "project", root }]),
+      false,
+    );
+
     const prepared = await project.prepareRepositories(
       [{ name: "project", root }],
-      { mode: "worktree" },
+      { mode: "worktree", baseOnLatestRemoteMain: true },
     );
 
     assert.notEqual(prepared[0]?.root, root);
@@ -700,6 +706,11 @@ test("a worktree can start from the latest remote main", async () => {
     const project = createProjectTools([{ name: "project", root }], {
       worktreeRoot,
     });
+
+    assert.equal(
+      await project.canBaseOnLatestRemoteMain([{ name: "project", root }]),
+      true,
+    );
 
     const prepared = await project.prepareRepositories(
       [{ name: "project", root }],

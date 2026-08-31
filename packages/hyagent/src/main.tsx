@@ -499,6 +499,33 @@ function NewThreadPage(props: {
   const [mode, setMode] = createSignal<"checkout" | "worktree">("worktree");
   const [baseOnLatestRemoteMain, setBaseOnLatestRemoteMain] =
     createSignal(false);
+  const [remoteMainAvailable, setRemoteMainAvailable] = createSignal(false);
+  const [checkingRemote, setCheckingRemote] = createSignal(false);
+  createEffect(() => {
+    const repositories = props.repositories.map((repository) => ({
+      ...repository,
+    }));
+    let active = true;
+    setRemoteMainAvailable(false);
+    setBaseOnLatestRemoteMain(false);
+    setCheckingRemote(false);
+    if (repositories.length === 0) return;
+    setCheckingRemote(true);
+    void client.workspace.canBaseOnLatestRemoteMain
+      .query({ repositories })
+      .then((available) => {
+        if (active) setRemoteMainAvailable(available);
+      })
+      .catch(() => {
+        if (active) setRemoteMainAvailable(false);
+      })
+      .finally(() => {
+        if (active) setCheckingRemote(false);
+      });
+    onCleanup(() => {
+      active = false;
+    });
+  });
   const addPath = () => {
     if (!path().trim()) return;
     props.addPath(path().trim());
@@ -620,13 +647,20 @@ function NewThreadPage(props: {
             <input
               type="checkbox"
               checked={baseOnLatestRemoteMain()}
+              disabled={!remoteMainAvailable()}
               onChange={(event) =>
                 setBaseOnLatestRemoteMain(event.currentTarget.checked)
               }
             />
             <span>
               <strong>Base off latest remote main</strong>
-              <small>Fetch origin/main before creating the worktree.</small>
+              <small>
+                {checkingRemote()
+                  ? "Checking remotes…"
+                  : remoteMainAvailable()
+                    ? "Fetch origin/main before creating the worktree."
+                    : "Requires an origin remote on every selected repository."}
+              </small>
             </span>
           </label>
         </Show>

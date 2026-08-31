@@ -71,6 +71,23 @@ export function createHyagentRouter(options: {
     })),
     workspace: t.router({
       recent: t.procedure.query(() => options.store.recentRepositories()),
+      canBaseOnLatestRemoteMain: t.procedure
+        .input(
+          z.object({
+            repositories: z
+              .array(
+                z.object({
+                  name: z.string().trim().min(1).max(100),
+                  root: z.string().trim().min(1).max(4_000),
+                }),
+              )
+              .min(1)
+              .max(20),
+          }),
+        )
+        .query(({ input }) =>
+          options.project.canBaseOnLatestRemoteMain(input.repositories),
+        ),
       current: t.procedure.query(async () => {
         await bootstrap();
         return options.project.repositorySpecs();

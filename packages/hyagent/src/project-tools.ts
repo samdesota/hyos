@@ -257,6 +257,7 @@ export interface ProjectTools {
   repositoryNames(): readonly string[];
   repositorySpecs(): readonly RepositorySpec[];
   configureRepositories(specs: readonly RepositorySpec[]): Promise<void>;
+  canBaseOnLatestRemoteMain(specs: readonly RepositorySpec[]): Promise<boolean>;
   prepareRepositories(
     specs: readonly RepositorySpec[],
     preparation: WorkspacePreparation,
@@ -380,6 +381,29 @@ export function createProjectTools(
     }
   }
 
+  async function hasOriginRemote(spec: RepositorySpec): Promise<boolean> {
+    const result = await runProcess(
+      "git",
+      ["remote", "get-url", "origin"],
+      spec.root,
+    );
+    return result.exitCode === 0 && result.stdout.trim().length > 0;
+  }
+
+  async function canBaseOnLatestRemoteMain(
+    next: readonly RepositorySpec[],
+  ): Promise<boolean> {
+    const normalized = await normalizedSpecs(next);
+    return allHaveOriginRemote(normalized);
+  }
+
+  async function allHaveOriginRemote(
+    normalized: readonly RepositorySpec[],
+  ): Promise<boolean> {
+    const remoteChecks = await Promise.all(normalized.map(hasOriginRemote));
+    return remoteChecks.every(Boolean);
+  }
+
   async function prepareRepositories(
     next: readonly RepositorySpec[],
     preparation: WorkspacePreparation,
@@ -392,16 +416,17 @@ export function createProjectTools(
     const worktreeRoot = resolve(
       options.worktreeRoot ?? ".data/hyagent-worktrees",
     );
+    const baseOnLatestRemoteMain =
+      preparation.baseOnLatestRemoteMain &&
+      (await allHaveOriginRemote(normalized));
     await mkdir(worktreeRoot, { recursive: true });
     const created: RepositorySpec[] = [];
     const worktrees: Array<{ source: string; target: string; branch: string }> =
       [];
     try {
       for (const spec of normalized) {
-        const startRef = preparation.baseOnLatestRemoteMain
-          ? "origin/main"
-          : "HEAD";
-        if (preparation.baseOnLatestRemoteMain) {
+        const startRef = baseOnLatestRemoteMain ? "origin/main" : "HEAD";
+        if (baseOnLatestRemoteMain) {
           const fetch = await runProcess(
             "git",
             [
@@ -506,6 +531,7 @@ export function createProjectTools(
     repositoryNames: () => [...repositories.keys()],
     repositorySpecs,
     configureRepositories,
+    canBaseOnLatestRemoteMain,
     prepareRepositories,
     initialize,
     async readFile(repository, path) {
