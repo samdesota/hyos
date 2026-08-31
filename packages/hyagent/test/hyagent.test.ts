@@ -106,7 +106,10 @@ function fakeProject(overrides: Partial<ProjectTools> = {}): ProjectTools {
     }),
     checkConsistency: async () => [],
     commit: async () => [],
-    dirtyRepositories: async () => [],
+    inspectChanges: async () => ({
+      dirtyRepositories: [],
+      unaccountedChanges: [],
+    }),
     yeetRepositories: async () => [],
     yeet: async () => [],
     enrichDocument: async (document) => document,
@@ -1690,7 +1693,7 @@ test("the patch cursor rewinds and replays stable step ids across repositories",
   }
 });
 
-test("project commits only literate-diff paths with the supplied message", async () => {
+test("project commits patch and explicitly ignored paths", async () => {
   const root = await createRepository("commit");
   let historyRoot: string | undefined;
   try {
@@ -1717,6 +1720,19 @@ test("project commits only literate-diff paths with the supplied message", async
     await writeFile(join(root, "generated.txt"), "generated\n");
     await git(root, "add", "generated.txt");
 
+    assert.deepEqual(await project.inspectChanges(document), {
+      dirtyRepositories: ["project"],
+      unaccountedChanges: [],
+    });
+    await writeFile(join(root, "state.txt"), "ONE\ntwo\nmanual\n");
+    assert.deepEqual(
+      (await project.inspectChanges(document)).unaccountedChanges.map(
+        ({ path }) => path,
+      ),
+      ["state.txt"],
+    );
+    await writeFile(join(root, "state.txt"), "ONE\ntwo\n");
+
     const commits = await project.commit(document, {
       project: "feat: update immutable state",
     });
@@ -1729,10 +1745,12 @@ test("project commits only literate-diff paths with the supplied message", async
       "feat: update immutable state",
     );
     assert.equal(
+      (await exec("git", ["status", "--porcelain"], { cwd: root })).stdout,
+      "",
+    );
+    assert.equal(
       (
-        await exec("git", ["diff", "--cached", "--name-only"], {
-          cwd: root,
-        })
+        await exec("git", ["ls-files", "generated.txt"], { cwd: root })
       ).stdout.trim(),
       "generated.txt",
     );
@@ -1750,7 +1768,10 @@ test("project discovers and runs each root-level yeet.sh", async () => {
       { name: "first", root: firstRoot },
       { name: "second", root: secondRoot },
     ]);
-    assert.deepEqual(await project.dirtyRepositories(), []);
+    assert.deepEqual(await project.inspectChanges(null), {
+      dirtyRepositories: [],
+      unaccountedChanges: [],
+    });
     assert.deepEqual(await project.yeetRepositories(), []);
     await assert.rejects(
       () => project.yeet(),
@@ -1764,7 +1785,16 @@ test("project discovers and runs each root-level yeet.sh", async () => {
     );
 
     assert.deepEqual(await project.yeetRepositories(), ["first"]);
-    assert.deepEqual(await project.dirtyRepositories(), ["first"]);
+    assert.deepEqual(await project.inspectChanges(null), {
+      dirtyRepositories: ["first"],
+      unaccountedChanges: [
+        {
+          repository: "first",
+          path: "yeet.sh",
+          message: "first:yeet.sh changed outside the literate diff",
+        },
+      ],
+    });
     assert.deepEqual(
       (await project.yeet()).map(({ repository }) => repository),
       ["first"],
@@ -1908,9 +1938,9 @@ test("commit messages are generated before an editable message is committed", as
   let checks = 0;
   let committedMessage = "";
   const project = fakeProject({
-    async checkConsistency() {
+    async inspectChanges() {
       checks += 1;
-      return [];
+      return { dirtyRepositories: ["workspace"], unaccountedChanges: [] };
     },
     async commit(_document, messages) {
       committedMessage = messages.workspace ?? "";
@@ -1954,7 +1984,7 @@ test("commit messages are generated before an editable message is committed", as
       id: session.id,
       messages: { workspace: "feat: edited by reviewer" },
     });
-    assert.equal(checks, 2);
+    assert.equal(checks, 1);
     assert.equal(committedMessage, "feat: edited by reviewer");
     assert.equal(committed.status, "committed");
 
@@ -1978,10 +2008,19 @@ test("commit messages are generated before an editable message is committed", as
 test("yeet reports availability and runs the project workflow", async () => {
   const { database, store } = await setup();
   let runs = 0;
-  let dirtyRepositories = ["workspace"];
+  let worktreeState = {
+    dirtyRepositories: ["workspace"],
+    unaccountedChanges: [
+      {
+        repository: "workspace",
+        path: "stray.txt",
+        message: "workspace:stray.txt changed outside the literate diff",
+      },
+    ],
+  };
   const project = fakeProject({
-    async dirtyRepositories() {
-      return dirtyRepositories;
+    async inspectChanges() {
+      return worktreeState;
     },
     async yeetRepositories() {
       return ["workspace"];
@@ -2002,6 +2041,7 @@ test("yeet reports availability and runs the project workflow", async () => {
     assert.deepEqual(await caller.session.yeetStatus({ id: session.id }), {
       availableRepositories: ["workspace"],
       dirtyRepositories: ["workspace"],
+      unaccountedChanges: worktreeState.unaccountedChanges,
     });
     await assert.rejects(
       () => caller.session.yeet({ id: session.id }),
@@ -2009,7 +2049,7 @@ test("yeet reports availability and runs the project workflow", async () => {
     );
     assert.equal(runs, 0);
 
-    dirtyRepositories = [];
+    worktreeState = { dirtyRepositories: [], unaccountedChanges: [] };
     assert.equal(
       (await caller.session.yeet({ id: session.id }))[0]?.stdout,
       "done",

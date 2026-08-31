@@ -4,12 +4,14 @@ import {
   cp,
   lstat,
   mkdir,
+  mkdtemp,
   readFile,
   realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { tmpdir } from "node:os";
 
 import type {
   GeneratedIgnore,
@@ -33,6 +35,11 @@ export interface WorktreeWarning {
   repository: string;
   path: string;
   message: string;
+}
+
+export interface WorktreeState {
+  dirtyRepositories: string[];
+  unaccountedChanges: WorktreeWarning[];
 }
 
 export interface CommitResult {
@@ -366,7 +373,7 @@ export interface ProjectTools {
     document: LiterateDiff,
     messages: Readonly<Record<string, string>>,
   ): Promise<CommitResult[]>;
-  dirtyRepositories(specs?: readonly RepositorySpec[]): Promise<string[]>;
+  inspectChanges(document: LiterateDiff | null): Promise<WorktreeState>;
   yeetRepositories(specs?: readonly RepositorySpec[]): Promise<string[]>;
   yeet(): Promise<YeetResult[]>;
   enrichDocument(document: LiterateDiff): Promise<LiterateDiff>;
@@ -735,6 +742,57 @@ export function createProjectTools(
     }
   }
 
+  async function expectedPatchState(
+    document: LiterateDiff,
+  ): Promise<Map<string, Map<string, string>>> {
+    if (!activeBaseline) {
+      throw new Error("The session baseline has not been prepared");
+    }
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "hyagent-inspect-"));
+    const result = new Map<string, Map<string, string>>();
+    try {
+      for (const repository of repositories.keys()) {
+        const patches = patchBlocks(document).filter(
+          (patch) => patch.repository === repository,
+        );
+        if (patches.length === 0) continue;
+        const root = join(temporaryRoot, safeSegment(repository));
+        const baseline = repositoryBaseline(activeBaseline, repository);
+        const paths = [
+          ...new Set(patches.flatMap((patch) => patchFilePaths(patch.patch))),
+        ];
+        await mkdir(root, { recursive: true });
+        for (const path of paths) {
+          const target = join(root, path);
+          try {
+            await lstat(join(baseline, path));
+            await mkdir(dirname(target), { recursive: true });
+            await cp(join(baseline, path), target, {
+              preserveTimestamps: true,
+            });
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          }
+        }
+        for (const patch of patches) await applyPatch(root, patch.patch);
+        result.set(
+          repository,
+          new Map(
+            await Promise.all(
+              paths.map(
+                async (path) =>
+                  [path, await fileFingerprint(root, path)] as const,
+              ),
+            ),
+          ),
+        );
+      }
+      return result;
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  }
+
   return {
     repositoryNames: () => [...repositories.keys()],
     repositorySpecs,
@@ -839,20 +897,37 @@ export function createProjectTools(
     async commit(document, messages) {
       await initialize();
       const patches = patchBlocks(document);
-      const affected = [...new Set(patches.map((patch) => patch.repository))];
+      const candidates = [
+        ...new Set([
+          ...patches.map((patch) => patch.repository),
+          ...document.generatedIgnores.map((entry) => entry.repository),
+        ]),
+      ];
+      const pathsByRepository = new Map<string, string[]>();
+      for (const repository of candidates) {
+        const entries = document.generatedIgnores.filter(
+          (entry) => entry.repository === repository,
+        );
+        const paths = [
+          ...new Set([
+            ...patches
+              .filter((patch) => patch.repository === repository)
+              .flatMap((patch) => patchFilePaths(patch.patch)),
+            ...(await changedPaths(rootFor(repository))).filter((path) =>
+              ignored(path, entries),
+            ),
+          ]),
+        ];
+        if (paths.length > 0) pathsByRepository.set(repository, paths);
+      }
+      const affected = [...pathsByRepository.keys()];
       if (affected.length === 0) {
         throw new Error("The literate diff contains no code changes to commit");
       }
       const results: CommitResult[] = [];
       for (const repository of affected) {
         const root = rootFor(repository);
-        const paths = [
-          ...new Set(
-            patches
-              .filter((patch) => patch.repository === repository)
-              .flatMap((patch) => patchFilePaths(patch.patch)),
-          ),
-        ];
+        const paths = pathsByRepository.get(repository)!;
         const message = messages[repository]?.trim();
         if (!message) {
           throw new Error(`No commit message was generated for ${repository}`);
@@ -862,7 +937,7 @@ export function createProjectTools(
         }
         const staged = await runProcess(
           "git",
-          ["add", "-A", "--", ...paths],
+          ["add", "-f", "-A", "--", ...paths],
           root,
         );
         if (staged.exitCode !== 0) {
@@ -893,15 +968,44 @@ export function createProjectTools(
       }
       return results;
     },
-    async dirtyRepositories(specs) {
-      const dirty: string[] = [];
-      const candidates = specs
-        ? specs.map(({ name, root }) => [name, resolve(root)] as const)
-        : [...repositories];
-      for (const [repository, root] of candidates) {
-        if ((await changedPaths(root)).length > 0) dirty.push(repository);
+    async inspectChanges(document) {
+      const dirtyRepositories: string[] = [];
+      const unaccountedChanges: WorktreeWarning[] = [];
+      const controlledState = document
+        ? await expectedPatchState(document)
+        : new Map<string, Map<string, string>>();
+      for (const [repository, root] of repositories) {
+        const paths = await changedPaths(root);
+        if (paths.length === 0) continue;
+        dirtyRepositories.push(repository);
+        const controlled = controlledState.get(repository) ?? new Map();
+        const entries =
+          document?.generatedIgnores.filter(
+            (entry) => entry.repository === repository,
+          ) ?? [];
+        unaccountedChanges.push(
+          ...consistencyWarnings(
+            repository,
+            (
+              await Promise.all(
+                paths.map(async (path) => ({
+                  path,
+                  matchesPatch:
+                    controlled.has(path) &&
+                    controlled.get(path) ===
+                      (await fileFingerprint(root, path)),
+                })),
+              )
+            )
+              .filter(
+                ({ path, matchesPatch }) =>
+                  !matchesPatch && !ignored(path, entries),
+              )
+              .map(({ path }) => path),
+          ),
+        );
       }
-      return dirty;
+      return { dirtyRepositories, unaccountedChanges };
     },
     async yeetRepositories(specs) {
       const available: string[] = [];

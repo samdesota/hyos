@@ -174,6 +174,7 @@ interface WorkspaceProps {
   commitOpen: boolean;
   commitLoading: boolean;
   commitAndYeet: boolean;
+  commitAndYeetBlocker: string;
   commitMessages: CommitMessages;
   yeetRepositories: readonly string[];
   yeeting: boolean;
@@ -496,13 +497,24 @@ function CommitControls(props: WorkspaceProps) {
                   </label>
                 )}
               </For>
-              <button
-                class="confirm-commit"
-                disabled={props.busy || !validMessages()}
-                onClick={props.confirmCommit}
+              <span
+                class="confirm-commit-wrap"
+                title={
+                  props.commitAndYeet ? props.commitAndYeetBlocker : undefined
+                }
               >
-                {props.commitAndYeet ? "Commit & Yeet" : "Commit changes"}
-              </button>
+                <button
+                  class="confirm-commit"
+                  disabled={
+                    props.busy ||
+                    !validMessages() ||
+                    (props.commitAndYeet && !!props.commitAndYeetBlocker)
+                  }
+                  onClick={props.confirmCommit}
+                >
+                  {props.commitAndYeet ? "Commit & Yeet" : "Commit changes"}
+                </button>
+              </span>
             </Show>
           </div>
         </Show>
@@ -975,7 +987,7 @@ function VariantA(props: WorkspaceProps) {
           </For>
           <Show when={(revision()?.generatedIgnores.length ?? 0) > 0}>
             <section class="generated-ignores">
-              <h3>Generated artifacts not included</h3>
+              <h3>Generated artifacts included with commit</h3>
               <For each={revision()?.generatedIgnores ?? []}>
                 {(entry) => (
                   <div>
@@ -1266,6 +1278,7 @@ function App() {
   const [commitOpen, setCommitOpen] = createSignal(false);
   const [commitLoading, setCommitLoading] = createSignal(false);
   const [commitAndYeet, setCommitAndYeet] = createSignal(false);
+  const [commitAndYeetBlocker, setCommitAndYeetBlocker] = createSignal("");
   const [commitMessages, setCommitMessages] = createSignal<CommitMessages>({});
   const [yeetRepositories, setYeetRepositories] = createSignal<string[]>([]);
   const [yeeting, setYeeting] = createSignal(false);
@@ -1304,6 +1317,7 @@ function App() {
     setComments([]);
     setCommitOpen(false);
     setCommitAndYeet(false);
+    setCommitAndYeetBlocker("");
     setCommitMessages({});
     setYeetRepositories([]);
     setSelectedDiffId("");
@@ -1315,8 +1329,12 @@ function App() {
     try {
       const status = await client.session.yeetStatus.query({ id });
       setYeetRepositories([...status.availableRepositories]);
+      setCommitAndYeetBlocker(
+        status.unaccountedChanges.map(({ message }) => message).join("\n"),
+      );
     } catch {
       setYeetRepositories([]);
+      setCommitAndYeetBlocker("");
     }
   }
   async function openSession(id: string, historyMode?: "push" | "replace") {
@@ -1333,6 +1351,7 @@ function App() {
       setComments([]);
       setCommitOpen(false);
       setCommitAndYeet(false);
+      setCommitAndYeetBlocker("");
       setCommitMessages({});
       void refreshYeetStatus(id);
       if (historyMode) setSessionUrl(id, historyMode);
@@ -1528,6 +1547,7 @@ function App() {
     if (commitOpen()) {
       setCommitOpen(false);
       setCommitAndYeet(false);
+      setCommitAndYeetBlocker("");
       return;
     }
     void openCommit(false);
@@ -1546,6 +1566,7 @@ function App() {
       setSession(committed);
       setCommitOpen(false);
       setCommitAndYeet(false);
+      setCommitAndYeetBlocker("");
       if (shouldYeet) {
         setYeeting(true);
         await client.session.yeet.mutate({ id: current.id });
@@ -1565,6 +1586,9 @@ function App() {
     try {
       const status = await client.session.yeetStatus.query({ id: current.id });
       setYeetRepositories([...status.availableRepositories]);
+      setCommitAndYeetBlocker(
+        status.unaccountedChanges.map(({ message }) => message).join("\n"),
+      );
       if (status.dirtyRepositories.length > 0) {
         setOperationBusy(false);
         await openCommit(true);
@@ -1648,6 +1672,7 @@ function App() {
       setComments([]);
       setCommitOpen(false);
       setCommitAndYeet(false);
+      setCommitAndYeetBlocker("");
       setCommitMessages({});
       void refreshYeetStatus(started.session.id);
       setSessionUrl(started.session.id, "replace");
@@ -1679,6 +1704,7 @@ function App() {
         setComments([]);
         setCommitOpen(false);
         setCommitAndYeet(false);
+        setCommitAndYeetBlocker("");
         setCommitMessages({});
         void refreshYeetStatus(next.id);
         setSessionUrl(next.id, "replace");
@@ -1773,6 +1799,7 @@ function App() {
                     commitOpen={commitOpen()}
                     commitLoading={commitLoading()}
                     commitAndYeet={commitAndYeet()}
+                    commitAndYeetBlocker={commitAndYeetBlocker()}
                     commitMessages={commitMessages()}
                     yeetRepositories={yeetRepositories()}
                     yeeting={yeeting()}

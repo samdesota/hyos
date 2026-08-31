@@ -395,11 +395,12 @@ export function createLiterateAgent(options: {
   return {
     async writeCommitMessages(document) {
       const repositories = [
-        ...new Set(
-          document.blocks
+        ...new Set([
+          ...document.blocks
             .filter((block) => block.kind === "apply_patch")
             .map((block) => block.repository),
-        ),
+          ...document.generatedIgnores.map((entry) => entry.repository),
+        ]),
       ];
       const entries = await Promise.all(
         repositories.map(async (repository) => {
@@ -433,6 +434,9 @@ export function createLiterateAgent(options: {
                   repository,
                   documentSummary: document.summary,
                   changes,
+                  generatedFiles: document.generatedIgnores.filter(
+                    (entry) => entry.repository === repository,
+                  ),
                 }).slice(0, 60_000),
               },
             ],

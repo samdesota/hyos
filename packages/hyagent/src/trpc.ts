@@ -64,7 +64,7 @@ export function createHyagentRouter(options: {
     return opened.session;
   }
 
-  async function committableDocument(id: string) {
+  async function candidateDocument(id: string) {
     if (activeRuns.size > 0) {
       throw new Error("Wait for the running agent before committing");
     }
@@ -82,14 +82,6 @@ export function createHyagentRouter(options: {
         `Replay every patch step before committing. Currently applied through ${session.appliedThrough ?? "the beginning"}; final step is ${finalPatchId ?? "none"}.`,
       );
     }
-    const warnings = await options.project.checkConsistency(
-      revision.generatedIgnores,
-    );
-    if (warnings.length > 0) {
-      throw new Error(
-        `The worktree contains changes outside the literate diff:\n${warnings.map((warning) => `- ${warning.message}`).join("\n")}`,
-      );
-    }
     return {
       revision,
       appliedThrough: session.appliedThrough,
@@ -99,6 +91,17 @@ export function createHyagentRouter(options: {
         generatedIgnores: revision.generatedIgnores,
       },
     };
+  }
+
+  async function committableDocument(id: string) {
+    const candidate = await candidateDocument(id);
+    const state = await options.project.inspectChanges(candidate.document);
+    if (state.unaccountedChanges.length > 0) {
+      throw new Error(
+        `The worktree contains changes outside the literate diff:\n${state.unaccountedChanges.map((warning) => `- ${warning.message}`).join("\n")}`,
+      );
+    }
+    return candidate;
   }
 
   let initialSession: Promise<string> | undefined;
@@ -341,7 +344,7 @@ export function createHyagentRouter(options: {
       commitMessages: t.procedure
         .input(z.object({ id: z.string().min(1) }))
         .mutation(async ({ input }) => {
-          const { document } = await committableDocument(input.id);
+          const { document } = await candidateDocument(input.id);
           return options.agent.writeCommitMessages(document);
         }),
       commit: t.procedure
@@ -377,12 +380,20 @@ export function createHyagentRouter(options: {
       yeetStatus: t.procedure
         .input(z.object({ id: z.string().min(1) }))
         .query(async ({ input }) => {
-          const repositories = await options.store.getWorkspace(input.id);
-          const [availableRepositories, dirtyRepositories] = await Promise.all([
-            options.project.yeetRepositories(repositories),
-            options.project.dirtyRepositories(repositories),
+          const session = await activateSession(input.id);
+          const document =
+            session.revision && session.status !== "committed"
+              ? {
+                  summary: session.revision.summary,
+                  blocks: session.revision.blocks,
+                  generatedIgnores: session.revision.generatedIgnores,
+                }
+              : null;
+          const [availableRepositories, state] = await Promise.all([
+            options.project.yeetRepositories(),
+            options.project.inspectChanges(document),
           ]);
-          return { availableRepositories, dirtyRepositories };
+          return { availableRepositories, ...state };
         }),
       yeet: t.procedure
         .input(z.object({ id: z.string().min(1) }))
@@ -393,10 +404,10 @@ export function createHyagentRouter(options: {
             );
           }
           await activateSession(input.id);
-          const dirtyRepositories = await options.project.dirtyRepositories();
-          if (dirtyRepositories.length > 0) {
+          const state = await options.project.inspectChanges(null);
+          if (state.dirtyRepositories.length > 0) {
             throw new Error(
-              `Commit changes before running yeet.sh: ${dirtyRepositories.join(", ")}`,
+              `Commit changes before running yeet.sh: ${state.dirtyRepositories.join(", ")}`,
             );
           }
           const results = await options.project.yeet();
