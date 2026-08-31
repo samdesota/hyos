@@ -66,5 +66,10 @@ two-column UI ──tRPC──▶ custom agent loop ──▶ read_file
 Hydb stores the thread, sessions, activity, and incremental document revisions. The
 browser subscribes to that state over tRPC WebSockets. The agent server applies and
 replays document patches, then checks for worktree changes not represented by the
-document. Acceptance verifies consistency, asks AI for repository-specific commit
-messages, and creates real Git commits for the paths represented by the document.
+document. The Commit control verifies consistency, generates repository-specific
+messages, lets the reviewer edit them, and creates real Git commits for the paths
+represented by the document.
+
+Repositories may provide an executable root-level `yeet.sh` for their own merge or
+delivery workflow. Yeet is disabled when no selected repository has the script;
+otherwise it runs each available hook from that repository's root.

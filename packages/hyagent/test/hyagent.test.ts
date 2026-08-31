@@ -106,6 +106,8 @@ function fakeProject(overrides: Partial<ProjectTools> = {}): ProjectTools {
     }),
     checkConsistency: async () => [],
     commit: async () => [],
+    yeetRepositories: async () => [],
+    yeet: async () => [],
     enrichDocument: async (document) => document,
     ...overrides,
   };
@@ -1634,6 +1636,43 @@ test("project commits only literate-diff paths with the supplied message", async
   }
 });
 
+test("project discovers and runs each root-level yeet.sh", async () => {
+  const firstRoot = await createRepository("yeet-first");
+  const secondRoot = await createRepository("yeet-second");
+  try {
+    const project = createProjectTools([
+      { name: "first", root: firstRoot },
+      { name: "second", root: secondRoot },
+    ]);
+    assert.deepEqual(await project.yeetRepositories(), []);
+    await assert.rejects(
+      () => project.yeet(),
+      /No selected repository has a root-level yeet\.sh/,
+    );
+
+    await writeFile(
+      join(firstRoot, "yeet.sh"),
+      "#!/bin/sh\nprintf first > yeeted.txt\n",
+      { mode: 0o755 },
+    );
+
+    assert.deepEqual(await project.yeetRepositories(), ["first"]);
+    assert.deepEqual(
+      (await project.yeet()).map(({ repository }) => repository),
+      ["first"],
+    );
+    assert.equal(
+      await readFile(join(firstRoot, "yeeted.txt"), "utf8"),
+      "first",
+    );
+  } finally {
+    await Promise.all([
+      rm(firstRoot, { recursive: true, force: true }),
+      rm(secondRoot, { recursive: true, force: true }),
+    ]);
+  }
+});
+
 test("project can prepare an isolated worktree and copy included files", async () => {
   const root = await createRepository("worktree-source");
   const worktreeRoot = await mkdtemp(join(tmpdir(), "hyagent-worktrees-"));
@@ -1756,7 +1795,7 @@ test("the agent writes focused commit messages for affected repositories", async
   }
 });
 
-test("acceptance verifies consistency without reapplying patches", async () => {
+test("commit messages are generated before an editable message is committed", async () => {
   const { database, store } = await setup();
   let checks = 0;
   let committedMessage = "";
@@ -1784,14 +1823,53 @@ test("acceptance verifies consistency without reapplying patches", async () => {
     assert.equal(session.revision, null);
     await store.saveRevision(session.id, proposedDocument, null);
     await assert.rejects(
-      () => caller.session.commit({ id: session.id }),
-      /Replay every patch step before accepting changes/,
+      () => caller.session.commitMessages({ id: session.id }),
+      /Replay every patch step before committing/,
     );
     await store.setAppliedThrough(session.id, "change");
-    const committed = await caller.session.commit({ id: session.id });
-    assert.equal(checks, 1);
-    assert.equal(committedMessage, "feat: apply literate change");
+    assert.deepEqual(await caller.session.commitMessages({ id: session.id }), {
+      workspace: "feat: apply literate change",
+    });
+    const committed = await caller.session.commit({
+      id: session.id,
+      messages: { workspace: "feat: edited by reviewer" },
+    });
+    assert.equal(checks, 2);
+    assert.equal(committedMessage, "feat: edited by reviewer");
     assert.equal(committed.status, "committed");
+  } finally {
+    await database.close();
+  }
+});
+
+test("yeet reports availability and runs the project workflow", async () => {
+  const { database, store } = await setup();
+  let runs = 0;
+  const project = fakeProject({
+    async yeetRepositories() {
+      return ["workspace"];
+    },
+    async yeet() {
+      runs += 1;
+      return [{ repository: "workspace", stdout: "done", stderr: "" }];
+    },
+  });
+  try {
+    const caller = createHyagentRouter({
+      store,
+      project,
+      agent: fakeAgent(),
+    }).createCaller({});
+    const session = await caller.session.bootstrap();
+
+    assert.deepEqual(await caller.session.yeetStatus({ id: session.id }), [
+      "workspace",
+    ]);
+    assert.equal(
+      (await caller.session.yeet({ id: session.id }))[0]?.stdout,
+      "done",
+    );
+    assert.equal(runs, 1);
   } finally {
     await database.close();
   }

@@ -1662,6 +1662,93 @@ body {
   color: #d9dde4;
 }
 
+.commit-control {
+  position: relative;
+  flex: none;
+}
+
+.commit-dropdown {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(420px, calc(100vw - 40px));
+  padding: 14px;
+  border: 1px solid #343a44;
+  border-radius: 6px;
+  background: #181c22;
+  box-shadow: 0 16px 42px rgb(0 0 0 / 35%);
+}
+
+.commit-dropdown > p {
+  margin: 0;
+  color: #9ba3af;
+  font-size: 12px;
+}
+
+.commit-dropdown label {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.commit-dropdown label span {
+  display: block;
+  margin-bottom: 6px;
+  color: #969fac;
+  font:
+    10px "DM Mono",
+    monospace;
+}
+
+.commit-dropdown textarea {
+  display: block;
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  padding: 9px 10px;
+  border: 1px solid #3b424d;
+  border-radius: 4px;
+  outline: none;
+  background: #101318;
+  color: #e4e7ec;
+  font:
+    12px/1.55 "DM Mono",
+    monospace;
+}
+
+.commit-dropdown textarea:focus {
+  border-color: #687386;
+}
+
+.confirm-commit {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid #596372;
+  border-radius: 4px;
+  background: #e5e8ed;
+  color: #171a1f;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.yeet {
+  flex: none;
+  padding: 8px 11px;
+  border: 1px solid #55465f;
+  border-radius: 4px;
+  background: #251d2b;
+  color: #d9c5e5;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.commit:disabled,
+.confirm-commit:disabled,
+.yeet:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
 .document-flow {
   max-width: 920px;
 }

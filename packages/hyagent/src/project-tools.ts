@@ -41,6 +41,12 @@ export interface CommitResult {
   message: string;
 }
 
+export interface YeetResult {
+  repository: string;
+  stdout: string;
+  stderr: string;
+}
+
 export interface PatchCursorResult {
   appliedThrough: string | null;
   failed?: {
@@ -60,6 +66,7 @@ function runProcess(
   cwd: string,
   input?: string,
   signal?: AbortSignal,
+  timeoutMs = 30_000,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   if (signal?.aborted) {
     return Promise.reject(signal.reason ?? new Error("Operation aborted"));
@@ -72,7 +79,7 @@ function runProcess(
     });
     let stdout = "";
     let stderr = "";
-    const timer = setTimeout(() => child.kill("SIGTERM"), 30_000);
+    const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs);
     const abort = () => child.kill("SIGTERM");
     signal?.addEventListener("abort", abort, { once: true });
     child.stdout!.on("data", (chunk: Buffer) => {
@@ -359,6 +366,8 @@ export interface ProjectTools {
     document: LiterateDiff,
     messages: Readonly<Record<string, string>>,
   ): Promise<CommitResult[]>;
+  yeetRepositories(specs?: readonly RepositorySpec[]): Promise<string[]>;
+  yeet(): Promise<YeetResult[]>;
   enrichDocument(document: LiterateDiff): Promise<LiterateDiff>;
 }
 
@@ -879,6 +888,51 @@ export function createProjectTools(
           repository,
           hash: head.stdout.trim(),
           message,
+        });
+      }
+      return results;
+    },
+    async yeetRepositories(specs) {
+      const available: string[] = [];
+      const candidates = specs
+        ? specs.map(({ name, root }) => [name, resolve(root)] as const)
+        : [...repositories];
+      for (const [repository, root] of candidates) {
+        try {
+          const script = await lstat(join(root, "yeet.sh"));
+          if (script.isFile() || script.isSymbolicLink()) {
+            available.push(repository);
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
+      return available;
+    },
+    async yeet() {
+      const available = await this.yeetRepositories();
+      if (available.length === 0) {
+        throw new Error("No selected repository has a root-level yeet.sh");
+      }
+      const results: YeetResult[] = [];
+      for (const repository of available) {
+        const result = await runProcess(
+          "./yeet.sh",
+          [],
+          rootFor(repository),
+          undefined,
+          undefined,
+          300_000,
+        );
+        if (result.exitCode !== 0) {
+          throw new Error(
+            `yeet.sh failed in ${repository}: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
+          );
+        }
+        results.push({
+          repository,
+          stdout: result.stdout,
+          stderr: result.stderr,
         });
       }
       return results;

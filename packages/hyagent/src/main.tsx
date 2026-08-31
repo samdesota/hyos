@@ -48,6 +48,7 @@ type SessionListItem =
 type WorkspaceRepository =
   inferRouterOutputs<HyagentRouter>["workspace"]["current"][number];
 type ReviewComment = { id: string; target: string; body: string };
+type CommitMessages = Record<string, string>;
 
 const wsClient = createWSClient({
   url: `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/trpc`,
@@ -170,6 +171,11 @@ interface WorkspaceProps {
   error: string;
   comments: ReviewComment[];
   following: boolean;
+  commitOpen: boolean;
+  commitLoading: boolean;
+  commitMessages: CommitMessages;
+  yeetRepositories: readonly string[];
+  yeeting: boolean;
   setFeedback(value: string): void;
   setSelectedAgent(value: string): void;
   addComment(target: string, body: string): void;
@@ -177,7 +183,10 @@ interface WorkspaceProps {
   toggleFollowing(): void;
   send(): void;
   stop(): void;
-  commit(): void;
+  toggleCommit(): void;
+  updateCommitMessage(repository: string, message: string): void;
+  confirmCommit(): void;
+  yeet(): void;
 }
 
 function syntaxTokens(code: string) {
@@ -440,6 +449,73 @@ function FollowButton(props: WorkspaceProps) {
       <span />
       {props.following ? "Following agent" : "Follow agent"}
     </button>
+  );
+}
+
+function CommitControls(props: WorkspaceProps) {
+  const messages = () => Object.entries(props.commitMessages);
+  const validMessages = () =>
+    messages().length > 0 && messages().every(([, message]) => message.trim());
+  return (
+    <>
+      <div class="commit-control">
+        <button
+          class="commit"
+          disabled={
+            props.busy ||
+            props.session.status === "committed" ||
+            !props.session.revision
+          }
+          onClick={props.toggleCommit}
+        >
+          {props.session.status === "committed" ? "Committed ✓" : "Commit"}
+        </button>
+        <Show when={props.commitOpen}>
+          <div class="commit-dropdown">
+            <Show
+              when={!props.commitLoading}
+              fallback={<p>Generating commit message…</p>}
+            >
+              <For each={messages()}>
+                {([repository, message]) => (
+                  <label>
+                    <span>{repository}</span>
+                    <textarea
+                      value={message}
+                      onInput={(event) =>
+                        props.updateCommitMessage(
+                          repository,
+                          event.currentTarget.value,
+                        )
+                      }
+                    />
+                  </label>
+                )}
+              </For>
+              <button
+                class="confirm-commit"
+                disabled={props.busy || !validMessages()}
+                onClick={props.confirmCommit}
+              >
+                Commit changes
+              </button>
+            </Show>
+          </div>
+        </Show>
+      </div>
+      <button
+        class="yeet"
+        disabled={props.busy || props.yeetRepositories.length === 0}
+        title={
+          props.yeetRepositories.length === 0
+            ? "No selected repository has a root-level yeet.sh"
+            : `Run yeet.sh in ${props.yeetRepositories.join(", ")}`
+        }
+        onClick={props.yeet}
+      >
+        {props.yeeting ? "Yeeting…" : "Yeet"}
+      </button>
+    </>
   );
 }
 
@@ -844,19 +920,7 @@ function VariantA(props: WorkspaceProps) {
           </div>
           <div class="document-actions">
             <FollowButton {...props} />
-            <button
-              class="commit"
-              disabled={
-                props.busy ||
-                props.session.status === "committed" ||
-                !props.session.revision
-              }
-              onClick={props.commit}
-            >
-              {props.session.status === "committed"
-                ? "Committed ✓"
-                : "Accept changes"}
-            </button>
+            <CommitControls {...props} />
           </div>
         </header>
         <div class="document-flow">
@@ -939,18 +1003,7 @@ function VariantB(props: WorkspaceProps) {
         <header class="folio">
           <span>Revision {props.session.revision?.number ?? 0}</span>
           <FollowButton {...props} />
-          <button
-            disabled={
-              props.busy ||
-              props.session.status === "committed" ||
-              !props.session.revision
-            }
-            onClick={props.commit}
-          >
-            {props.session.status === "committed"
-              ? "Committed"
-              : "Accept & commit"}
-          </button>
+          <CommitControls {...props} />
         </header>
         <div class="manuscript-title">
           <h2>{props.session.revision?.summary}</h2>
@@ -1041,18 +1094,7 @@ function VariantC(props: WorkspaceProps) {
           </div>
           <div class="ledger-actions">
             <FollowButton {...props} />
-            <button
-              disabled={
-                props.busy ||
-                props.session.status === "committed" ||
-                !props.session.revision
-              }
-              onClick={props.commit}
-            >
-              {props.session.status === "committed"
-                ? "COMMITTED ✓"
-                : "COMMIT REVISION"}
-            </button>
+            <CommitControls {...props} />
           </div>
         </header>
         <div class="ledger-line" />
@@ -1192,6 +1234,11 @@ function App() {
   const [selectedAgent, setSelectedAgent] = createSignal("");
   const [creatingNew, setCreatingNew] = createSignal(false);
   const [initialized, setInitialized] = createSignal(false);
+  const [commitOpen, setCommitOpen] = createSignal(false);
+  const [commitLoading, setCommitLoading] = createSignal(false);
+  const [commitMessages, setCommitMessages] = createSignal<CommitMessages>({});
+  const [yeetRepositories, setYeetRepositories] = createSignal<string[]>([]);
+  const [yeeting, setYeeting] = createSignal(false);
   const busy = createMemo(
     () =>
       operationBusy() ||
@@ -1224,8 +1271,18 @@ function App() {
     setCreatingNew(true);
     setRepositories(recentRepositories().slice(0, 1));
     setComments([]);
+    setCommitOpen(false);
+    setCommitMessages({});
+    setYeetRepositories([]);
     setError("");
     setNewThreadUrl(mode);
+  }
+  async function refreshYeetStatus(id: string) {
+    try {
+      setYeetRepositories(await client.session.yeetStatus.query({ id }));
+    } catch {
+      setYeetRepositories([]);
+    }
   }
   async function openSession(id: string, historyMode?: "push" | "replace") {
     setOperationBusy(true);
@@ -1237,6 +1294,9 @@ function App() {
       setSession(opened.session);
       setRepositories([...opened.repositories]);
       setComments([]);
+      setCommitOpen(false);
+      setCommitMessages({});
+      void refreshYeetStatus(id);
       if (historyMode) setSessionUrl(id, historyMode);
     } catch (cause) {
       setError(
@@ -1309,6 +1369,7 @@ function App() {
         const loaded = await client.session.open.query({ id: initial.id });
         setSession(loaded.session);
         setRepositories([...loaded.repositories]);
+        void refreshYeetStatus(loaded.session.id);
         setAgentConfigured(health.agentConfigured);
         setSessionUrl(loaded.session.id, "replace");
       } catch (cause) {
@@ -1328,7 +1389,11 @@ function App() {
       { id },
       {
         onData(next) {
+          const previousStatus = session()?.status;
           setSession(next);
+          if (previousStatus === "running" && next.status !== "running") {
+            void refreshYeetStatus(next.id);
+          }
           if (next.status === "running" || next.status === "failed") {
             setAgentStarting(false);
           }
@@ -1384,16 +1449,64 @@ function App() {
         .join("\n")}`,
       () => setComments([]),
     );
-  const commit = async () => {
+  const toggleCommit = async () => {
+    const current = session();
+    if (!current || busy()) return;
+    if (commitOpen()) {
+      setCommitOpen(false);
+      return;
+    }
+    setCommitOpen(true);
+    setCommitLoading(true);
+    setCommitMessages({});
+    setOperationBusy(true);
+    setError("");
+    try {
+      setCommitMessages(
+        await client.session.commitMessages.mutate({ id: current.id }),
+      );
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not generate a commit message",
+      );
+    } finally {
+      setCommitLoading(false);
+      setOperationBusy(false);
+    }
+  };
+  const confirmCommit = async () => {
     const current = session();
     if (!current || busy()) return;
     setOperationBusy(true);
     setError("");
     try {
-      setSession(await client.session.commit.mutate({ id: current.id }));
+      setSession(
+        await client.session.commit.mutate({
+          id: current.id,
+          messages: commitMessages(),
+        }),
+      );
+      setCommitOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Commit failed");
     } finally {
+      setOperationBusy(false);
+    }
+  };
+  const yeet = async () => {
+    const current = session();
+    if (!current || busy() || yeetRepositories().length === 0) return;
+    setYeeting(true);
+    setOperationBusy(true);
+    setError("");
+    try {
+      await client.session.yeet.mutate({ id: current.id });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "yeet.sh failed");
+    } finally {
+      setYeeting(false);
       setOperationBusy(false);
     }
   };
@@ -1462,6 +1575,9 @@ function App() {
       setSession(started.session);
       setCreatingNew(false);
       setComments([]);
+      setCommitOpen(false);
+      setCommitMessages({});
+      void refreshYeetStatus(started.session.id);
       setSessionUrl(started.session.id, "replace");
     } catch (cause) {
       setAgentStarting(false);
@@ -1487,6 +1603,9 @@ function App() {
         setSession(opened.session);
         setRepositories([...opened.repositories]);
         setComments([]);
+        setCommitOpen(false);
+        setCommitMessages({});
+        void refreshYeetStatus(next.id);
         setSessionUrl(next.id, "replace");
       } else {
         setSession(undefined);
@@ -1574,6 +1693,11 @@ function App() {
                     error={error()}
                     comments={comments()}
                     following={following()}
+                    commitOpen={commitOpen()}
+                    commitLoading={commitLoading()}
+                    commitMessages={commitMessages()}
+                    yeetRepositories={yeetRepositories()}
+                    yeeting={yeeting()}
                     setFeedback={setFeedback}
                     setSelectedAgent={setSelectedAgent}
                     addComment={(target, body) =>
@@ -1586,7 +1710,15 @@ function App() {
                     toggleFollowing={() => setFollowing((current) => !current)}
                     send={send}
                     stop={() => void stop()}
-                    commit={commit}
+                    toggleCommit={() => void toggleCommit()}
+                    updateCommitMessage={(repository, message) =>
+                      setCommitMessages((current) => ({
+                        ...current,
+                        [repository]: message,
+                      }))
+                    }
+                    confirmCommit={() => void confirmCommit()}
+                    yeet={() => void yeet()}
                   />
                 )}
               </Match>

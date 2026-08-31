@@ -64,6 +64,42 @@ export function createHyagentRouter(options: {
     return opened.session;
   }
 
+  async function committableDocument(id: string) {
+    if (activeRuns.size > 0) {
+      throw new Error("Wait for the running agent before committing");
+    }
+    const session = await activateSession(id);
+    const revision = session.revision;
+    if (!revision) throw new Error("There is no literate diff to commit");
+    if (session.status === "committed") {
+      throw new Error("This literate diff is already committed");
+    }
+    const finalPatchId = [...revision.blocks]
+      .reverse()
+      .find((block) => block.kind === "apply_patch")?.id;
+    if ((finalPatchId ?? null) !== session.appliedThrough) {
+      throw new Error(
+        `Replay every patch step before committing. Currently applied through ${session.appliedThrough ?? "the beginning"}; final step is ${finalPatchId ?? "none"}.`,
+      );
+    }
+    const warnings = await options.project.checkConsistency(
+      revision.generatedIgnores,
+    );
+    if (warnings.length > 0) {
+      throw new Error(
+        `The worktree contains changes outside the literate diff:\n${warnings.map((warning) => `- ${warning.message}`).join("\n")}`,
+      );
+    }
+    return {
+      revision,
+      document: {
+        summary: revision.summary,
+        blocks: revision.blocks,
+        generatedIgnores: revision.generatedIgnores,
+      },
+    };
+  }
+
   let initialSession: Promise<string> | undefined;
   function bootstrap(): Promise<string> {
     initialSession ??= (async () => {
@@ -295,44 +331,33 @@ export function createHyagentRouter(options: {
           await active.promise;
           return options.store.getSession(input.id);
         }),
-      commit: t.procedure
+      commitMessages: t.procedure
         .input(z.object({ id: z.string().min(1) }))
         .mutation(async ({ input }) => {
-          if (activeRuns.size > 0) {
-            throw new Error("Wait for the running agent before committing");
-          }
-          const session = await activateSession(input.id);
-          if (!session.revision)
-            throw new Error("There is no literate diff to commit");
-          if (session.status === "committed") return session;
-          const finalPatchId = [...session.revision.blocks]
-            .reverse()
-            .find((block) => block.kind === "apply_patch")?.id;
-          if ((finalPatchId ?? null) !== session.appliedThrough) {
-            throw new Error(
-              `Replay every patch step before accepting changes. Currently applied through ${session.appliedThrough ?? "the beginning"}; final step is ${finalPatchId ?? "none"}.`,
-            );
-          }
-          const warnings = await options.project.checkConsistency(
-            session.revision.generatedIgnores,
+          const { document } = await committableDocument(input.id);
+          return options.agent.writeCommitMessages(document);
+        }),
+      commit: t.procedure
+        .input(
+          z.object({
+            id: z.string().min(1),
+            messages: z.record(
+              z.string(),
+              z.string().trim().min(1).max(10_000),
+            ),
+          }),
+        )
+        .mutation(async ({ input }) => {
+          const { revision, document } = await committableDocument(input.id);
+          const commits = await options.project.commit(
+            document,
+            input.messages,
           );
-          if (warnings.length > 0) {
-            throw new Error(
-              `The worktree contains changes outside the literate diff:\n${warnings.map((warning) => `- ${warning.message}`).join("\n")}`,
-            );
-          }
-          const document = {
-            summary: session.revision.summary,
-            blocks: session.revision.blocks,
-            generatedIgnores: session.revision.generatedIgnores,
-          };
-          const messages = await options.agent.writeCommitMessages(document);
-          const commits = await options.project.commit(document, messages);
           await options.store.setStatus(input.id, "committed");
           await options.store.appendMessage(
             input.id,
             "system",
-            `Committed revision ${session.revision.number}: ${commits
+            `Committed revision ${revision.number}: ${commits
               .map(
                 (commit) =>
                   `${commit.repository}@${commit.hash.slice(0, 7)} ${commit.message.split("\n")[0]}`,
@@ -340,6 +365,29 @@ export function createHyagentRouter(options: {
               .join(", ")}`,
           );
           return options.store.getSession(input.id);
+        }),
+      yeetStatus: t.procedure
+        .input(z.object({ id: z.string().min(1) }))
+        .query(async ({ input }) => {
+          const repositories = await options.store.getWorkspace(input.id);
+          return options.project.yeetRepositories(repositories);
+        }),
+      yeet: t.procedure
+        .input(z.object({ id: z.string().min(1) }))
+        .mutation(async ({ input }) => {
+          if (activeRuns.size > 0) {
+            throw new Error(
+              "Wait for the running agent before running yeet.sh",
+            );
+          }
+          await activateSession(input.id);
+          const results = await options.project.yeet();
+          await options.store.appendMessage(
+            input.id,
+            "system",
+            `Yeet completed: ${results.map(({ repository }) => repository).join(", ")}`,
+          );
+          return results;
         }),
     }),
   });
