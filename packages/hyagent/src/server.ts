@@ -48,7 +48,9 @@ function repositorySpecs(): RepositorySpec[] {
 }
 
 const repositories = repositorySpecs();
-const project = createProjectTools(repositories);
+const project = createProjectTools(repositories, {
+  historyRoot: resolve(dataDirectory, "baselines"),
+});
 const folderPicker = createNativeFolderPicker();
 const apiKey = process.env.AI_GATEWAY_API_KEY;
 const unavailableGateway: GatewayTransport = {

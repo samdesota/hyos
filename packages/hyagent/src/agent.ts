@@ -7,7 +7,7 @@ import {
 } from "./activity.js";
 import { DEFAULT_AGENT } from "./agent-options.js";
 import { documentOperationsSchema, editLiterateDiff } from "./document.js";
-import { literateDiffSchema, type LiterateDiff } from "./domain.js";
+import type { LiterateDiff } from "./domain.js";
 import type { GatewayMessage, GatewayTransport } from "./gateway.js";
 import type { ProjectTools, WorktreeWarning } from "./project-tools.js";
 import type { HyagentStore } from "./store.js";
@@ -191,39 +191,6 @@ function agentTools(repositories: readonly string[], webEnabled: boolean) {
       },
     ),
     tool(
-      "reanchor_literate_diff",
-      "Replace an already-corrupt legacy document with a complete canonical document matching the current worktree. This is an escape hatch, not an editing mode.",
-      {
-        type: "object",
-        properties: {
-          document: {
-            type: "object",
-            properties: {
-              summary: { type: "string" },
-              blocks: { type: "array", items: blockSchema },
-              generatedIgnores: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    repository,
-                    path: { type: "string" },
-                    reason: { type: "string" },
-                  },
-                  required: ["repository", "path", "reason"],
-                  additionalProperties: false,
-                },
-              },
-            },
-            required: ["summary", "blocks", "generatedIgnores"],
-            additionalProperties: false,
-          },
-        },
-        required: ["document"],
-        additionalProperties: false,
-      },
-    ),
-    tool(
       "finish_run",
       "Finish the run with an honest outcome. Changed work must be fully replayed before finishing.",
       {
@@ -304,11 +271,11 @@ You may reply conversationally without creating or editing the literate diff whe
 
 Before using read_file or run_command, start the literate diff with a high-level overview. Repository work must remain visible in the document as it happens; do not investigate the repository invisibly and write the document afterward.
 
-Apply-patch blocks are ordered executable steps with stable ids. The literate diff has a persisted appliedThrough cursor. The worktree equals the document immediately after that patch step; every later patch remains visible but unapplied. Adding or editing an unapplied patch changes only the document. Use replay_literate_diff to apply pending steps in order, either through a chosen step id or through the end. Replay stops at the first failing step and leaves the cursor at the last successful step so you can edit the failed step and continue.
+Apply-patch blocks are ordered executable steps with stable ids. The literate diff has a persisted appliedThrough cursor. The worktree equals the document immediately after that patch step; every later patch remains visible but unapplied. Adding or editing an unapplied patch changes only the document.
 
-To revise an applied patch, first call rewind_literate_diff with the id of the patch immediately before it, or null when revising the first patch. Rewind removes later worktree changes one step at a time and preserves those future steps in the document. Edit the target or later steps by stable id, then call replay_literate_diff. You may replay one step, several steps, or the entire suffix. Read_literate_diff returns the cursor and pending step ids. Do not simulate this workflow with Git commands.
+Rewind and replay deterministically materialize a document state: Hyagent restores the session's original baseline, then applies patch steps forward from the beginning through the requested step id. This does not depend on the current worktree or on reverse-applying patches. If any step fails, materialization stops before that step and leaves the cursor at the last successful step. Edit or remove the failed and later steps by stable id, then continue replaying.
 
-A failed replay is normal and does not create a recovery mode. If rewind itself fails, the saved history was already inconsistent with the worktree, usually because of legacy behavior or an out-of-band change. Only then may reanchor_literate_diff replace the entire document with a canonical snapshot containing one patch controller per changed file. Never use re-anchor for ordinary iteration. Never use another editing mechanism.
+To revise an applied patch, call rewind_literate_diff with the id of the patch immediately before it, or null when revising the first patch. Future steps stay in the document but become unapplied. Edit the target or later steps, then call replay_literate_diff through one step, a group, or the end. Read_literate_diff returns the cursor and pending step ids. A failed rewind or replay is normal: repair the reported first failing step and continue. There is no recovery mode or re-anchor operation. Do not simulate this workflow with Git commands or use another editing mechanism.
 
 Run search, tests, builds, formatters, and generators with run_command. If a command changes the worktree outside the literate diff, you will receive a WORKTREE_INCONSISTENT warning. Incorporate each meaningful change into a patch or list a genuinely generated path with a reason using set_generated_ignores. Never ignore an implementation or test file, and never ignore a path controlled by a patch block.
 
@@ -367,8 +334,6 @@ function toolActivity(name: string, args: Record<string, unknown>): string {
   if (name === "edit_literate_diff") return "Updating the literate diff";
   if (name === "rewind_literate_diff") return "Rewinding the literate diff";
   if (name === "replay_literate_diff") return "Replaying the literate diff";
-  if (name === "reanchor_literate_diff")
-    return "Re-anchoring the literate diff";
   if (name === "finish_run") return "Finishing the run";
   if (name === "web_search") return "Searching the web";
   if (name === "web_fetch") return "Reading web sources";
@@ -381,8 +346,7 @@ function toolFailureDetail(
   error: string,
 ): string {
   const detail =
-    ["edit_literate_diff", "reanchor_literate_diff"].includes(name) &&
-    Array.isArray(args.operations)
+    name === "edit_literate_diff" && Array.isArray(args.operations)
       ? {
           operations: args.operations.map((value) => {
             const operation = value as Record<string, unknown>;
@@ -729,28 +693,6 @@ export function createLiterateAgent(options: {
                         appliedThrough,
                       ),
                     };
-              } else if (
-                call.function.name === "reanchor_literate_diff" &&
-                args.document &&
-                typeof args.document === "object"
-              ) {
-                const next = literateDiffSchema.parse(args.document);
-                await options.project.reanchorPatches(next);
-                document = await options.project.enrichDocument(next);
-                appliedThrough = patchStepIds(document).at(-1) ?? null;
-                await options.store.saveRevision(
-                  sessionId,
-                  document,
-                  appliedThrough,
-                );
-                savedRevisions += 1;
-                output = {
-                  ok: true,
-                  revision: initialRevisionNumber + savedRevisions,
-                  summary: document.summary,
-                  blocks: document.blocks.map((block) => block.id),
-                  appliedThrough,
-                };
               } else if (
                 call.function.name === "finish_run" &&
                 ["changed", "conversation", "blocked"].includes(

@@ -58,10 +58,10 @@ function fakeProject(overrides: Partial<ProjectTools> = {}): ProjectTools {
     configureRepositories: async () => undefined,
     canBaseOnLatestRemoteMain: async () => false,
     prepareRepositories: async (repositories) => repositories,
+    prepareBaseline: async () => undefined,
     initialize: async () => undefined,
     readFile: async () => "",
     runCommand: async () => "",
-    reanchorPatches: async () => undefined,
     validateDocumentEdit: async () => undefined,
     movePatchCursor: async (_document, _appliedThrough, target) => ({
       appliedThrough: target,
@@ -399,6 +399,7 @@ test("an aborted agent run becomes ready and records that it stopped", async () 
 test("a rejected patch returns a repairable error to the agent tool call", async () => {
   const { database, store } = await setup();
   const root = await createRepository("agent-patch-error");
+  const historyRoot = await mkdtemp(join(tmpdir(), "hyagent-baselines-"));
   const responses: GatewayMessage[] = [
     {
       role: "assistant",
@@ -468,9 +469,13 @@ test("a rejected patch returns a repairable error to the agent tool call", async
 
   try {
     const session = await store.createSession("Reject malformed patch");
+    const project = createProjectTools([{ name: "project", root }], {
+      historyRoot,
+    });
+    await project.prepareBaseline(session.id, "worktree");
     const agent = createLiterateAgent({
       store,
-      project: createProjectTools([{ name: "project", root }]),
+      project,
       gateway,
     });
 
@@ -504,6 +509,7 @@ test("a rejected patch returns a repairable error to the agent tool call", async
     await Promise.all([
       database.close(),
       rm(root, { recursive: true, force: true }),
+      rm(historyRoot, { recursive: true, force: true }),
     ]);
   }
 });
@@ -573,67 +579,6 @@ test("the agent can rewind to a stable step id before editing history", async ()
       snapshot.revision?.blocks.map((block) => block.id),
       ["intent"],
     );
-  } finally {
-    await database.close();
-  }
-});
-
-test("re-anchor atomically replaces a corrupt document instead of editing it", async () => {
-  const { database, store } = await setup();
-  const replacement: LiterateDiff = {
-    summary: "Canonical replacement",
-    blocks: [proposedDocument.blocks[0]!],
-    generatedIgnores: [],
-  };
-  const responses: GatewayMessage[] = [
-    {
-      role: "assistant",
-      content: null,
-      tool_calls: [
-        {
-          id: "replace-corrupt-history",
-          function: {
-            name: "reanchor_literate_diff",
-            arguments: JSON.stringify({ document: replacement }),
-          },
-        },
-      ],
-    },
-    finishRun("The corrupt history was replaced."),
-  ];
-  let adopted: LiterateDiff | undefined;
-  const gateway: GatewayTransport = {
-    async complete() {
-      const response = responses.shift();
-      if (!response) throw new Error("Unexpected model step");
-      return response;
-    },
-  };
-
-  try {
-    const session = await store.createSession("Replace corrupt history");
-    await store.saveRevision(session.id, proposedDocument);
-    const agent = createLiterateAgent({
-      store,
-      project: fakeProject({
-        async reanchorPatches(document) {
-          adopted = document;
-        },
-      }),
-      gateway,
-    });
-
-    await agent.run(session.id, "Replace the broken document");
-
-    assert.deepEqual(adopted, replacement);
-    const snapshot = await store.getSession(session.id);
-    assert.equal(snapshot.revision?.number, 2);
-    assert.equal(snapshot.revision?.summary, "Canonical replacement");
-    assert.deepEqual(
-      snapshot.revision?.blocks.map((block) => block.id),
-      ["intent"],
-    );
-    assert.equal(snapshot.appliedThrough, null);
   } finally {
     await database.close();
   }
@@ -1276,6 +1221,17 @@ async function createRepository(name: string) {
   return root;
 }
 
+async function createBaselineProject(
+  repositories: readonly { name: string; root: string }[],
+  sessionId: string,
+  source: "worktree" | "head" = "worktree",
+) {
+  const historyRoot = await mkdtemp(join(tmpdir(), "hyagent-baselines-"));
+  const project = createProjectTools(repositories, { historyRoot });
+  await project.prepareBaseline(sessionId, source);
+  return { historyRoot, project };
+}
+
 test("a repository with no commits can be opened", async () => {
   const root = await mkdtemp(join(tmpdir(), "hyagent-unborn-"));
   try {
@@ -1296,9 +1252,14 @@ test("a repository with no commits can be opened", async () => {
 
 test("patch errors identify modification hunks without context", async () => {
   const root = await createRepository("contextless-patch");
+  let historyRoot: string | undefined;
   try {
-    const project = createProjectTools([{ name: "project", root }]);
-    await project.initialize();
+    const prepared = await createBaselineProject(
+      [{ name: "project", root }],
+      "contextless-patch",
+    );
+    historyRoot = prepared.historyRoot;
+    const { project } = prepared;
     const document: LiterateDiff = {
       summary: "Rejected patch",
       generatedIgnores: [],
@@ -1313,14 +1274,20 @@ test("patch errors identify modification hunks without context", async () => {
     assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
   } finally {
     await rm(root, { recursive: true, force: true });
+    if (historyRoot) await rm(historyRoot, { recursive: true, force: true });
   }
 });
 
 test("patch errors identify context that no longer matches", async () => {
   const root = await createRepository("stale-patch");
+  let historyRoot: string | undefined;
   try {
-    const project = createProjectTools([{ name: "project", root }]);
-    await project.initialize();
+    const prepared = await createBaselineProject(
+      [{ name: "project", root }],
+      "stale-patch",
+    );
+    historyRoot = prepared.historyRoot;
+    const { project } = prepared;
     const document: LiterateDiff = {
       summary: "Rejected patch",
       generatedIgnores: [],
@@ -1337,6 +1304,7 @@ test("patch errors identify context that no longer matches", async () => {
     assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
   } finally {
     await rm(root, { recursive: true, force: true });
+    if (historyRoot) await rm(historyRoot, { recursive: true, force: true });
   }
 });
 
@@ -1364,64 +1332,6 @@ test("generated ignores cannot hide patch-controlled files", async () => {
       /overlaps patch-controlled file project:state\.txt in block state/,
     );
     assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("re-anchor adopts one canonical patch per changed file", async () => {
-  const root = await createRepository("reanchor");
-  try {
-    const project = createProjectTools([{ name: "project", root }]);
-    await project.initialize();
-    await writeFile(join(root, "state.txt"), "ONE\ntwo\n");
-    const document: LiterateDiff = {
-      summary: "Canonical change",
-      blocks: [
-        patchBlock("state", "project", "@@ -1,2 +1,2 @@\n-one\n+ONE\n two"),
-      ],
-      generatedIgnores: [],
-    };
-
-    await project.reanchorPatches(document);
-
-    assert.equal(await readFile(join(root, "state.txt"), "utf8"), "ONE\ntwo\n");
-    assert.deepEqual(await project.checkConsistency([]), []);
-    await assert.rejects(
-      () =>
-        project.reanchorPatches({
-          ...document,
-          blocks: [
-            ...document.blocks,
-            patchBlock(
-              "duplicate-state",
-              "project",
-              "@@ -1,2 +1,2 @@\n-one\n+ONE\n two",
-            ),
-          ],
-        }),
-      /controlled by blocks state and duplicate-state/,
-    );
-
-    await assert.rejects(
-      () =>
-        project.reanchorPatches({
-          ...document,
-          blocks: [
-            patchBlock(
-              "stale-state",
-              "project",
-              "@@ -1,2 +1,2 @@\n-one\n+WRONG\n two",
-            ),
-            patchBlock(
-              "current-state",
-              "project",
-              "@@ -1,2 +1,2 @@\n-one\n+ONE\n two",
-            ),
-          ],
-        }),
-      /controlled by blocks stale-state and current-state/,
-    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1466,11 +1376,17 @@ function patchBlock(
 test("the patch cursor rewinds and replays stable step ids across repositories", async () => {
   const firstRoot = await createRepository("cursor-first");
   const secondRoot = await createRepository("cursor-second");
+  let historyRoot: string | undefined;
   try {
-    const project = createProjectTools([
-      { name: "first", root: firstRoot },
-      { name: "second", root: secondRoot },
-    ]);
+    const prepared = await createBaselineProject(
+      [
+        { name: "first", root: firstRoot },
+        { name: "second", root: secondRoot },
+      ],
+      "cursor-history",
+    );
+    historyRoot = prepared.historyRoot;
+    let { project } = prepared;
     const patchA = patchBlock(
       "a",
       "first",
@@ -1504,6 +1420,15 @@ test("the patch cursor rewinds and replays stable step ids across repositories",
       "OTHER\ntwo\n",
     );
 
+    await writeFile(join(firstRoot, "state.txt"), "out-of-band drift\n");
+    project = createProjectTools(
+      [
+        { name: "first", root: firstRoot },
+        { name: "second", root: secondRoot },
+      ],
+      { historyRoot },
+    );
+    await project.prepareBaseline("cursor-history", "head");
     assert.deepEqual(await project.movePatchCursor(document, "b", "a"), {
       appliedThrough: "a",
     });
@@ -1557,15 +1482,23 @@ test("the patch cursor rewinds and replays stable step ids across repositories",
     await Promise.all([
       rm(firstRoot, { recursive: true, force: true }),
       rm(secondRoot, { recursive: true, force: true }),
+      historyRoot
+        ? rm(historyRoot, { recursive: true, force: true })
+        : Promise.resolve(),
     ]);
   }
 });
 
 test("project commits only literate-diff paths with the supplied message", async () => {
   const root = await createRepository("commit");
+  let historyRoot: string | undefined;
   try {
-    const project = createProjectTools([{ name: "project", root }]);
-    await project.initialize();
+    const prepared = await createBaselineProject(
+      [{ name: "project", root }],
+      "commit",
+    );
+    historyRoot = prepared.historyRoot;
+    const { project } = prepared;
     const document: LiterateDiff = {
       summary: "Update state",
       blocks: [
@@ -1604,6 +1537,7 @@ test("project commits only literate-diff paths with the supplied message", async
     );
   } finally {
     await rm(root, { recursive: true, force: true });
+    if (historyRoot) await rm(historyRoot, { recursive: true, force: true });
   }
 });
 

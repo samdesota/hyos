@@ -57,6 +57,10 @@ export function createHyagentRouter(options: {
       throw new Error("Select a repository folder before starting the agent");
     }
     await options.project.configureRepositories(opened.repositories);
+    await options.project.prepareBaseline(
+      id,
+      opened.session.revision ? "head" : "worktree",
+    );
     return opened.session;
   }
 
@@ -148,6 +152,7 @@ export function createHyagentRouter(options: {
             throw new Error("This task already has a literate diff");
           }
           await options.project.configureRepositories(input.repositories);
+          await options.project.prepareBaseline(session.id, "worktree");
           await options.store.saveWorkspace(
             session.id,
             options.project.repositorySpecs(),
@@ -214,6 +219,7 @@ export function createHyagentRouter(options: {
           const session = await options.store.createSession(
             input.prompt.split("\n")[0]!.slice(0, 100),
           );
+          await options.project.prepareBaseline(session.id, "worktree");
           await options.store.saveWorkspace(session.id, repositories);
           await options.store.saveSourceRepositories(
             session.id,

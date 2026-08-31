@@ -1,6 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { cp, lstat, mkdir, readFile, realpath } from "node:fs/promises";
+import {
+  cp,
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import type {
@@ -336,6 +344,10 @@ export interface ProjectTools {
     specs: readonly RepositorySpec[],
     preparation: WorkspacePreparation,
   ): Promise<readonly RepositorySpec[]>;
+  prepareBaseline(
+    sessionId: string,
+    source: "worktree" | "head",
+  ): Promise<void>;
   initialize(): Promise<void>;
   readFile(repository: string, path: string): Promise<string>;
   runCommand(
@@ -344,7 +356,6 @@ export interface ProjectTools {
     args: readonly string[],
     signal?: AbortSignal,
   ): Promise<string>;
-  reanchorPatches(document: LiterateDiff): Promise<void>;
   validateDocumentEdit(
     previous: LiterateDiff | null,
     next: LiterateDiff,
@@ -367,7 +378,7 @@ export interface ProjectTools {
 
 export function createProjectTools(
   input: string | readonly RepositorySpec[] = [],
-  options: { worktreeRoot?: string } = {},
+  options: { worktreeRoot?: string; historyRoot?: string } = {},
 ): ProjectTools {
   const specs =
     typeof input === "string"
@@ -380,6 +391,16 @@ export function createProjectTools(
     specs.map((spec) => [spec.name, resolve(spec.root)] as const),
   );
   const expected = new Map<string, Snapshot>();
+  const historyRoot = resolve(options.historyRoot ?? ".data/hyagent-baselines");
+  let activeBaseline: string | undefined;
+
+  function safeSegment(value: string): string {
+    return createHash("sha256").update(value).digest("hex");
+  }
+
+  function repositoryBaseline(root: string, repository: string): string {
+    return join(root, safeSegment(repository));
+  }
 
   async function normalizedSpecs(
     next: readonly RepositorySpec[],
@@ -440,8 +461,126 @@ export function createProjectTools(
     const normalized = await normalizedSpecs(next);
     repositories.clear();
     expected.clear();
+    activeBaseline = undefined;
     for (const spec of normalized) repositories.set(spec.name, spec.root);
     await initialize();
+  }
+
+  async function copyVisibleWorktree(root: string, target: string) {
+    const listed = await runProcess(
+      "git",
+      ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+      root,
+    );
+    if (listed.exitCode !== 0) {
+      throw new Error(`Could not capture worktree baseline: ${listed.stderr}`);
+    }
+    for (const path of listed.stdout.split("\0").filter(Boolean)) {
+      assertRelativeProjectPath(path);
+      const source = join(root, path);
+      try {
+        const details = await lstat(source);
+        if (details.isDirectory()) continue;
+        await mkdir(dirname(join(target, path)), { recursive: true });
+        await cp(source, join(target, path), { preserveTimestamps: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+  }
+
+  async function copyHeadTree(root: string, target: string, scratch: string) {
+    const head = await runProcess(
+      "git",
+      ["rev-parse", "--verify", "HEAD"],
+      root,
+    );
+    if (head.exitCode !== 0) return;
+    const archive = join(scratch, `${safeSegment(root)}.tar`);
+    const archived = await runProcess(
+      "git",
+      ["archive", "--format=tar", `--output=${archive}`, "HEAD"],
+      root,
+    );
+    if (archived.exitCode !== 0) {
+      throw new Error(`Could not capture HEAD baseline: ${archived.stderr}`);
+    }
+    const extracted = await runProcess(
+      "tar",
+      ["-xf", archive, "-C", target],
+      root,
+    );
+    await rm(archive, { force: true });
+    if (extracted.exitCode !== 0) {
+      throw new Error(`Could not extract HEAD baseline: ${extracted.stderr}`);
+    }
+  }
+
+  async function prepareBaseline(
+    sessionId: string,
+    source: "worktree" | "head",
+  ) {
+    await initialize();
+    const baseline = join(historyRoot, safeSegment(sessionId));
+    const ready = join(baseline, "ready.json");
+    try {
+      await readFile(ready, "utf8");
+      activeBaseline = baseline;
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    await rm(baseline, { recursive: true, force: true });
+    await mkdir(baseline, { recursive: true });
+    try {
+      for (const [repository, root] of repositories) {
+        const target = repositoryBaseline(baseline, repository);
+        await mkdir(target, { recursive: true });
+        if (source === "head") await copyHeadTree(root, target, baseline);
+        else await copyVisibleWorktree(root, target);
+      }
+      await writeFile(
+        ready,
+        JSON.stringify({
+          sessionId,
+          source,
+          repositories: [...repositories.keys()],
+        }),
+        "utf8",
+      );
+      activeBaseline = baseline;
+    } catch (error) {
+      await rm(baseline, { recursive: true, force: true });
+      throw error;
+    }
+  }
+
+  async function restoreControlledPaths(patches: readonly PatchRef[]) {
+    if (!activeBaseline) {
+      throw new Error("The session baseline has not been prepared");
+    }
+    const repositoryPaths = new Map<string, Set<string>>();
+    for (const patch of patches) {
+      const paths = repositoryPaths.get(patch.repository) ?? new Set<string>();
+      for (const path of patchFilePaths(patch.patch)) paths.add(path);
+      repositoryPaths.set(patch.repository, paths);
+    }
+    for (const [repository, paths] of repositoryPaths) {
+      const root = rootFor(repository);
+      const baseline = repositoryBaseline(activeBaseline, repository);
+      for (const path of paths) {
+        assertRelativeProjectPath(path);
+        const target = join(root, path);
+        await rm(target, { recursive: true, force: true });
+        try {
+          await lstat(join(baseline, path));
+          await mkdir(dirname(target), { recursive: true });
+          await cp(join(baseline, path), target, { preserveTimestamps: true });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
+    }
   }
 
   async function copyWorktreeIncludes(source: string, target: string) {
@@ -606,6 +745,7 @@ export function createProjectTools(
     configureRepositories,
     canBaseOnLatestRemoteMain,
     prepareRepositories,
+    prepareBaseline,
     initialize,
     async readFile(repository, path) {
       assertRelativeProjectPath(path);
@@ -650,7 +790,6 @@ export function createProjectTools(
     },
     async movePatchCursor(document, appliedThrough, target) {
       await initialize();
-      assertGeneratedIgnoresDoNotHidePatches(document);
       const patches = patchBlocks(document);
       const currentIndex = patchIndex(
         patches,
@@ -658,120 +797,26 @@ export function createProjectTools(
         "Currently applied",
       );
       const targetIndex = patchIndex(patches, target, "Target");
-      if (currentIndex === targetIndex) return { appliedThrough };
-
-      const moved: PatchRef[] = [];
-      if (targetIndex < currentIndex) {
-        for (let index = currentIndex; index > targetIndex; index -= 1) {
-          const patch = patches[index]!;
-          try {
-            await applyPatch(rootFor(patch.repository), patch.patch, {
-              reverse: true,
-            });
-            moved.push(patch);
-          } catch (error) {
-            await recordPatchState(moved);
-            return {
-              appliedThrough: patch.id,
-              failed: {
-                stepId: patch.id,
-                direction: "rewind",
-                error: error instanceof Error ? error.message : String(error),
-              },
-            };
-          }
-        }
-      } else {
-        for (let index = currentIndex + 1; index <= targetIndex; index += 1) {
-          const patch = patches[index]!;
-          try {
-            await applyPatch(rootFor(patch.repository), patch.patch);
-            moved.push(patch);
-          } catch (error) {
-            await recordPatchState(moved);
-            return {
-              appliedThrough: patches[index - 1]?.id ?? null,
-              failed: {
-                stepId: patch.id,
-                direction: "replay",
-                error: error instanceof Error ? error.message : String(error),
-              },
-            };
-          }
+      const direction = targetIndex < currentIndex ? "rewind" : "replay";
+      await restoreControlledPaths(patches);
+      for (let index = 0; index <= targetIndex; index += 1) {
+        const patch = patches[index]!;
+        try {
+          await applyPatch(rootFor(patch.repository), patch.patch);
+        } catch (error) {
+          await recordPatchState(patches);
+          return {
+            appliedThrough: patches[index - 1]?.id ?? null,
+            failed: {
+              stepId: patch.id,
+              direction,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          };
         }
       }
-      await recordPatchState(moved);
+      await recordPatchState(patches);
       return { appliedThrough: target };
-    },
-    async reanchorPatches(document) {
-      await initialize();
-      assertGeneratedIgnoresDoNotHidePatches(document);
-      for (const repository of repositories.keys()) {
-        const patches = patchBlocks(document).filter(
-          (patch) => patch.repository === repository,
-        );
-        const owners = new Map<string, string[]>();
-        for (const patch of patches) {
-          for (const path of patchFilePaths(patch.patch)) {
-            const pathOwners = owners.get(path) ?? [];
-            pathOwners.push(patch.id);
-            owners.set(path, pathOwners);
-          }
-        }
-        const duplicates = [...owners]
-          .filter(([, pathOwners]) => pathOwners.length > 1)
-          .slice(0, 20)
-          .map(
-            ([path, pathOwners]) =>
-              `${repository}:${path} is controlled by blocks ${pathOwners.join(" and ")}`,
-          );
-        if (duplicates.length > 0) {
-          throw new Error(
-            `Cannot re-anchor until every changed file has one canonical patch block. Consolidate these duplicate controllers:\n${duplicates.join("\n")}`,
-          );
-        }
-        const invalidPatches: string[] = [];
-        for (const patch of patches) {
-          const root = rootFor(repository);
-          const check = await runProcess(
-            "git",
-            ["apply", "--reverse", "--check", "-"],
-            root,
-            patch.patch,
-          );
-          if (check.exitCode !== 0) {
-            invalidPatches.push(
-              `Block ${patch.id}: ${patchFailureMessage(patch.patch, check.stderr)}`.slice(
-                0,
-                2_000,
-              ),
-            );
-          }
-        }
-        if (invalidPatches.length > 0) {
-          throw new Error(
-            `Cannot re-anchor because these patches do not describe the current worktree. Regenerate all of them before retrying:\n${invalidPatches.slice(0, 20).join("\n")}`,
-          );
-        }
-        const root = rootFor(repository);
-        const entries = document.generatedIgnores.filter(
-          (entry) => entry.repository === repository,
-        );
-        const uncovered = (await changedPaths(root)).filter(
-          (path) => !owners.has(path) && !ignored(path, entries),
-        );
-        if (uncovered.length > 0) {
-          throw new Error(
-            `Cannot re-anchor ${repository}: these changed paths are not represented by a patch or generated ignore: ${uncovered.join(", ")}`,
-          );
-        }
-        const baseline = expected.get(repository)!;
-        for (const path of owners.keys()) {
-          const fingerprint = await fileFingerprint(root, path);
-          if (fingerprint === "deleted") baseline.delete(path);
-          else baseline.set(path, fingerprint);
-        }
-      }
     },
     async checkConsistency(ignores) {
       await initialize();
