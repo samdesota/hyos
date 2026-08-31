@@ -168,7 +168,7 @@ function systemPrompt(repositories: readonly string[]): string {
 
 Repositories: ${repositories.join(", ")}.
 
-Use edit_literate_diff early to write a high-level overview, then keep the document current as you investigate and work. A good document reads as ordinary technical prose with explanations next to the patches they justify. Use diagrams only when they clarify a real relationship.
+You may reply conversationally without creating or editing the literate diff when the user is discussing the task, asking a question, or clarifying the approach. Once you begin implementation, use edit_literate_diff early to write a high-level overview, then keep the document current as you investigate and work. A good document reads as ordinary technical prose with explanations next to the patches they justify. Use diagrams only when they clarify a real relationship.
 
 Patches are applied to the selected repository's current worktree as document blocks are added. If revising an earlier patch breaks a later patch, replay stops and the tool returns that failure for you to repair. Never use another editing mechanism.
 
@@ -214,7 +214,7 @@ function toolActivity(name: string, args: Record<string, unknown>): string {
 }
 
 export interface LiterateAgent {
-  run(sessionId: string, feedback: string): Promise<LiterateDiff>;
+  run(sessionId: string, feedback: string): Promise<LiterateDiff | null>;
   writeCommitMessages(document: LiterateDiff): Promise<Record<string, string>>;
 }
 
@@ -352,17 +352,18 @@ export function createLiterateAgent(options: {
           messages.push(response);
           const calls = response.tool_calls ?? [];
           if (calls.length === 0) {
-            if (!document) {
-              throw new Error(
-                "Agent stopped before starting the literate diff",
-              );
-            }
+            const reply = response.content?.trim();
+            if (!document && !reply)
+              throw new Error("Agent returned an empty response");
             await options.store.setStatus(sessionId, "ready");
-            await activity("complete", "Work complete");
+            await activity(
+              "complete",
+              document ? "Work complete" : "Response complete",
+            );
             await options.store.appendMessage(
               sessionId,
               "agent",
-              response.content?.trim() || document.summary,
+              reply || document!.summary,
             );
             return document;
           }

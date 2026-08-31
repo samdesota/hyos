@@ -237,6 +237,46 @@ test("the custom loop publishes document edits before it finishes", async () => 
   }
 });
 
+test("the agent can reply conversationally before starting a literate diff", async () => {
+  const { database, store } = await setup();
+  const reply =
+    "Before I start changing code, which behavior should remain compatible?";
+  const gateway: GatewayTransport = {
+    async complete() {
+      return { role: "assistant", content: reply };
+    },
+  };
+  try {
+    const session = await store.createSession("Discuss the change first");
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+    });
+
+    await agent.run(session.id, "Let's talk through the approach first");
+
+    const snapshot = await store.getSession(session.id);
+    assert.equal(snapshot.revision, null);
+    assert.equal(snapshot.status, "ready");
+    assert.equal(
+      snapshot.messages.filter((message) => message.role === "agent").at(-1)
+        ?.content,
+      reply,
+    );
+    assert.equal(
+      snapshot.messages.some((message) =>
+        message.content.includes(
+          "Agent stopped before starting the literate diff",
+        ),
+      ),
+      false,
+    );
+  } finally {
+    await database.close();
+  }
+});
+
 test("the custom loop becomes visible before project inspection finishes", async () => {
   const { database, store } = await setup();
   let releaseInspection!: () => void;
