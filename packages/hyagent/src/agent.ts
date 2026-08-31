@@ -140,11 +140,11 @@ function agentTools(repositories: readonly string[], webEnabled: boolean) {
       required: ["repository", "path"],
       additionalProperties: false,
     }),
-    tool("run_command", "Run a bounded command in the current worktree", {
+    tool("run_command", "Run a command in the repository's current worktree", {
       type: "object",
       properties: {
         repository,
-        command: { type: "string", enum: ["rg", "git", "npm"] },
+        command: { type: "string" },
         args: { type: "array", items: { type: "string" } },
       },
       required: ["repository", "command", "args"],
@@ -277,7 +277,7 @@ Rewind and replay deterministically materialize a document state: Hyagent restor
 
 To revise an applied patch, call rewind_literate_diff with the id of the patch immediately before it, or null when revising the first patch. Future steps stay in the document but become unapplied. Edit the target or later steps, then call replay_literate_diff through one step, a group, or the end. Read_literate_diff returns the cursor and pending step ids. A failed rewind or replay is normal: repair the reported first failing step and continue. There is no recovery mode or re-anchor operation. Do not simulate this workflow with Git commands or use another editing mechanism.
 
-Run search, tests, builds, formatters, and generators with run_command. If a command changes the worktree outside the literate diff, you will receive a WORKTREE_INCONSISTENT warning. Incorporate each meaningful change into a patch or list a genuinely generated path with a reason using set_generated_ignores. Never ignore an implementation or test file, and never ignore a path controlled by a patch block.
+Run any needed command with run_command. Commands may directly create, edit, move, or remove worktree files when that is useful. This is allowed, but any change outside the literate diff produces a WORKTREE_INCONSISTENT warning. Incorporate each meaningful change into a patch or list a genuinely generated path with a reason using set_generated_ignores. Never ignore an implementation or test file, and never ignore a path controlled by a patch block.
 
 ${webEnabled ? "Use web_search when current or external information would help, then web_fetch to inspect the most relevant sources in depth. Cite source URLs in conversational answers and in the literate diff when web research informs a decision.\n\n" : ""}Finish every run with finish_run. Outcome=changed is accepted only after a document or cursor change and only when every patch step is applied.`;
 }

@@ -758,6 +758,41 @@ test("repository work waits until the literate diff has an overview", async () =
   }
 });
 
+test("run_command offers unrestricted executables to the agent", async () => {
+  const { database, store } = await setup();
+  let commandSchema: Record<string, unknown> | undefined;
+  const gateway: GatewayTransport = {
+    async complete(request) {
+      const runCommand = (
+        (request.tools ?? []) as Array<{
+          function: {
+            name: string;
+            parameters: {
+              properties: { command: Record<string, unknown> };
+            };
+          };
+        }>
+      ).find((entry) => entry.function.name === "run_command");
+      commandSchema = runCommand?.function.parameters.properties.command;
+      return finishRun("No repository work was requested.", "conversation");
+    },
+  };
+  try {
+    const session = await store.createSession("Inspect command access");
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+    });
+
+    await agent.run(session.id, "What commands can you run?");
+
+    assert.deepEqual(commandSchema, { type: "string" });
+  } finally {
+    await database.close();
+  }
+});
+
 test("the custom loop exposes and routes web search and fetch tools", async () => {
   const { database, store } = await setup();
   const requests: GatewayMessage[] = [
@@ -1282,6 +1317,26 @@ test("a repository with no commits can be opened", async () => {
     assert.deepEqual(
       (await project.checkConsistency([])).map(({ path }) => path),
       [],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("manual command changes run and produce consistency warnings", async () => {
+  const root = await createRepository("manual-command");
+  try {
+    const project = createProjectTools([{ name: "project", root }]);
+    await project.initialize();
+
+    const result = JSON.parse(
+      await project.runCommand("project", "rm", ["state.txt"]),
+    ) as { exitCode: number };
+
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(
+      (await project.checkConsistency([])).map(({ path }) => path),
+      ["state.txt"],
     );
   } finally {
     await rm(root, { recursive: true, force: true });

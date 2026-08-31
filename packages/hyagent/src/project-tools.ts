@@ -101,20 +101,6 @@ function assertRelativeProjectPath(path: string): void {
   }
 }
 
-function assertCommand(command: string, args: readonly string[]): void {
-  if (!["rg", "git", "npm"].includes(command)) {
-    throw new Error(`Command is not available to the agent: ${command}`);
-  }
-  if (
-    command === "git" &&
-    !["status", "diff", "show", "log", "ls-files", "grep"].includes(
-      args[0] ?? "",
-    )
-  ) {
-    throw new Error("Only read-only git commands are available to the agent");
-  }
-}
-
 function patchFilePaths(patch: string): string[] {
   const paths = new Set<string>();
   for (const line of patch.split("\n")) {
@@ -761,7 +747,6 @@ export function createProjectTools(
       return contents;
     },
     async runCommand(repository, command, args, signal) {
-      assertCommand(command, args);
       return JSON.stringify(
         await runProcess(command, args, rootFor(repository), undefined, signal),
       );
