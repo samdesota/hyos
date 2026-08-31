@@ -24,6 +24,14 @@ import type { AgentOption } from "./agent-options.js";
 import type { LiterateBlock } from "./domain.js";
 import { renderAgentMarkdown } from "./markdown.js";
 import type { HyagentRouter } from "./trpc.js";
+import {
+  diffRows,
+  fullFileFromAddedPatch,
+  patchStats,
+  splitPatchFiles,
+  type CodeRow,
+  type PatchFileSection,
+} from "./diff-view.js";
 import "./styles.css";
 
 // PROTOTYPE: Three variants of the two-column agent/literate-diff workspace,
@@ -172,75 +180,6 @@ interface WorkspaceProps {
   commit(): void;
 }
 
-function patchFile(block: Extract<LiterateBlock, { kind: "apply_patch" }>) {
-  const path =
-    block.file ??
-    block.patch.match(/^diff --git a\/(.+?) b\//m)?.[1] ??
-    "Changed file";
-  return `${block.repository}/${path}`;
-}
-
-function patchStats(patch: string) {
-  const lines = patch.split("\n");
-  return {
-    added: lines.filter(
-      (line) => line.startsWith("+") && !line.startsWith("+++"),
-    ).length,
-    removed: lines.filter(
-      (line) => line.startsWith("-") && !line.startsWith("---"),
-    ).length,
-  };
-}
-
-type CodeRow = {
-  kind: "context" | "added" | "removed" | "gap";
-  code: string;
-  oldLine?: number;
-  newLine?: number;
-};
-
-function diffRows(patch: string): CodeRow[] {
-  const rows: CodeRow[] = [];
-  let oldLine = 0;
-  let newLine = 0;
-  let inHunk = false;
-  for (const line of patch.split("\n")) {
-    const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-    if (hunk) {
-      const nextOldLine = Number(hunk[1]);
-      const nextNewLine = Number(hunk[2]);
-      if (inHunk && nextOldLine > oldLine) {
-        rows.push({
-          kind: "gap",
-          code: `${nextOldLine - oldLine} unchanged lines`,
-        });
-      }
-      oldLine = nextOldLine;
-      newLine = nextNewLine;
-      inHunk = true;
-      continue;
-    }
-    if (!inHunk || line.startsWith("\\ No newline")) continue;
-    if (line.startsWith("+")) {
-      rows.push({ kind: "added", code: line.slice(1), newLine });
-      newLine += 1;
-    } else if (line.startsWith("-")) {
-      rows.push({ kind: "removed", code: line.slice(1), oldLine });
-      oldLine += 1;
-    } else {
-      rows.push({
-        kind: "context",
-        code: line.startsWith(" ") ? line.slice(1) : line,
-        oldLine,
-        newLine,
-      });
-      oldLine += 1;
-      newLine += 1;
-    }
-  }
-  return rows;
-}
-
 function syntaxTokens(code: string) {
   const pattern =
     /("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|`(?:\\.|[^`])*`|\/\/.*|\b(?:async|await|boolean|const|export|extends|false|from|function|import|interface|let|number|readonly|return|string|true|type)\b|\b\d+\b)/g;
@@ -317,22 +256,69 @@ function CodeView(props: { patch?: string; fullFile?: string }) {
   );
 }
 
+function PatchFileView(props: {
+  repository: string;
+  section: PatchFileSection;
+  fullFile?: string;
+  onComment(): void;
+}) {
+  const [showFullFile, setShowFullFile] = createSignal(false);
+  const stats = () => patchStats(props.section.patch);
+  const fullFile = () =>
+    props.fullFile ?? fullFileFromAddedPatch(props.section.patch);
+  return (
+    <details class="file-diff" open>
+      <summary>
+        <span class="file-chevron">›</span>
+        <strong>{`${props.repository}/${props.section.path}`}</strong>
+        <span class="diff-stats">
+          <b>+{stats().added}</b>
+          <i>−{stats().removed}</i>
+        </span>
+        <Show when={fullFile() !== undefined}>
+          <label onClick={(event) => event.stopPropagation()}>
+            <input
+              type="checkbox"
+              checked={showFullFile()}
+              onChange={(event) => setShowFullFile(event.currentTarget.checked)}
+            />
+            Show full file
+          </label>
+        </Show>
+        <button
+          class="file-comment"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            props.onComment();
+          }}
+        >
+          Comment
+        </button>
+      </summary>
+      <CodeView
+        patch={showFullFile() ? undefined : props.section.patch}
+        fullFile={showFullFile() ? fullFile() : undefined}
+      />
+    </details>
+  );
+}
+
 function Block(props: {
   block: LiterateBlock;
   editing: boolean;
   onComment(target: string, body: string): void;
 }) {
-  const [showFullFile, setShowFullFile] = createSignal(false);
   const [commenting, setCommenting] = createSignal(false);
   const [comment, setComment] = createSignal("");
+  const [commentTarget, setCommentTarget] = createSignal("Document text");
+  const startComment = (target: string) => {
+    setCommentTarget(target);
+    setCommenting(true);
+  };
   const submitComment = () => {
     if (!comment().trim()) return;
-    props.onComment(
-      props.block.kind === "apply_patch"
-        ? patchFile(props.block)
-        : "Document text",
-      comment(),
-    );
+    props.onComment(commentTarget(), comment());
     setComment("");
     setCommenting(false);
   };
@@ -348,7 +334,10 @@ function Block(props: {
                 <span class="agent-caret" />
               </Show>
             </p>
-            <button class="add-comment" onClick={() => setCommenting(true)}>
+            <button
+              class="add-comment"
+              onClick={() => startComment("Document text")}
+            >
               +
             </button>
           </div>
@@ -372,44 +361,27 @@ function Block(props: {
               LiterateBlock,
               { kind: "apply_patch" }
             >;
-            const stats = patchStats(block.patch);
+            const files = splitPatchFiles(block.patch);
             return (
               <>
                 <p class="rationale">{block.rationale}</p>
-                <details class="file-diff" open>
-                  <summary>
-                    <span class="file-chevron">›</span>
-                    <strong>{patchFile(block)}</strong>
-                    <span class="diff-stats">
-                      <b>+{stats.added}</b>
-                      <i>−{stats.removed}</i>
-                    </span>
-                    <label onClick={(event) => event.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={showFullFile()}
-                        onChange={(event) =>
-                          setShowFullFile(event.currentTarget.checked)
-                        }
-                      />
-                      Show full file
-                    </label>
-                    <button
-                      class="file-comment"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setCommenting(true);
-                      }}
-                    >
-                      Comment
-                    </button>
-                  </summary>
-                  <CodeView
-                    patch={showFullFile() ? undefined : block.patch}
-                    fullFile={showFullFile() ? block.fullFile : undefined}
-                  />
-                </details>
+                <For each={files}>
+                  {(section, index) => (
+                    <PatchFileView
+                      repository={block.repository}
+                      section={section}
+                      fullFile={
+                        block.file === section.path ||
+                        (!block.file && index() === 0)
+                          ? block.fullFile
+                          : undefined
+                      }
+                      onComment={() =>
+                        startComment(`${block.repository}/${section.path}`)
+                      }
+                    />
+                  )}
+                </For>
               </>
             );
           })()}

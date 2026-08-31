@@ -11,6 +11,11 @@ import { hydb, memoryStorage } from "@hyos/hydb";
 import { createLiterateAgent, type LiterateAgent } from "../src/agent.js";
 import { decodeActivityEvent, encodeActivityEvent } from "../src/activity.js";
 import { editLiterateDiff } from "../src/document.js";
+import {
+  diffRows,
+  fullFileFromAddedPatch,
+  splitPatchFiles,
+} from "../src/diff-view.js";
 import type { LiterateDiff, SessionListItem } from "../src/domain.js";
 import type { GatewayMessage, GatewayTransport } from "../src/gateway.js";
 import { hyagentSchema } from "../src/model.js";
@@ -44,6 +49,39 @@ const proposedDocument: LiterateDiff = {
   ],
   generatedIgnores: [],
 };
+
+test("multi-file patches render as separate file sections", () => {
+  const patch = [
+    "diff --git a/src/schema/schema.ts b/src/schema/schema.ts",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/src/schema/schema.ts",
+    "@@ -0,0 +1 @@",
+    "+export const schema = {};",
+    "diff --git a/src/schema/index.ts b/src/schema/index.ts",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/src/schema/index.ts",
+    "@@ -0,0 +1 @@",
+    "+export * from './schema';",
+    "",
+  ].join("\n");
+
+  const files = splitPatchFiles(patch);
+
+  assert.deepEqual(
+    files.map(({ path }) => path),
+    ["src/schema/schema.ts", "src/schema/index.ts"],
+  );
+  assert.deepEqual(
+    diffRows(files[1]!.patch).map(({ code }) => code),
+    ["export * from './schema';"],
+  );
+  assert.equal(
+    fullFileFromAddedPatch(files[1]!.patch),
+    "export * from './schema';\n",
+  );
+});
 
 async function setup() {
   const storage = await memoryStorage({ schema: hyagentSchema });
