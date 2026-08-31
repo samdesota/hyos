@@ -300,6 +300,56 @@ test("the custom loop publishes document edits before it finishes", async () => 
   }
 });
 
+test("an aborted agent run becomes ready and records that it stopped", async () => {
+  const { database, store } = await setup();
+  let requestStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    requestStarted = resolve;
+  });
+  const gateway: GatewayTransport = {
+    complete(request) {
+      requestStarted();
+      return new Promise((_resolve, reject) => {
+        assert.ok(request.signal);
+        request.signal.addEventListener(
+          "abort",
+          () => reject(request.signal?.reason),
+          { once: true },
+        );
+      });
+    },
+  };
+  const controller = new AbortController();
+
+  try {
+    const session = await store.createSession("Stop this run");
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+    });
+    const run = agent.run(
+      session.id,
+      "Start working",
+      undefined,
+      controller.signal,
+    );
+    await started;
+
+    controller.abort();
+    assert.equal(await run, null);
+
+    const snapshot = await store.getSession(session.id);
+    assert.equal(snapshot.status, "ready");
+    assert.equal(
+      decodeActivityEvent(snapshot.messages.at(-1)?.content ?? "")?.status,
+      "stopped",
+    );
+  } finally {
+    await database.close();
+  }
+});
+
 test("a rejected patch returns a repairable error to the agent tool call", async () => {
   const { database, store } = await setup();
   const root = await createRepository("agent-patch-error");
@@ -1327,6 +1377,45 @@ test("feedback starts the agent without holding the mutation open", async () => 
     release();
   } finally {
     release();
+    await database.close();
+  }
+});
+
+test("stop aborts the active session run", async () => {
+  const { database, store } = await setup();
+  let activeSignal: AbortSignal | undefined;
+  let runStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    runStarted = resolve;
+  });
+  const agent = fakeAgent({
+    async run(_sessionId, _feedback, _agent, signal) {
+      activeSignal = signal;
+      runStarted();
+      await new Promise<void>((resolve) =>
+        signal?.addEventListener("abort", () => resolve(), { once: true }),
+      );
+      return null;
+    },
+  });
+  try {
+    const router = createHyagentRouter({
+      store,
+      project: fakeProject(),
+      agent,
+    });
+    const caller = router.createCaller({});
+    const session = await caller.session.bootstrap();
+    await caller.session.feedback({
+      id: session.id,
+      feedback: "Start working",
+    });
+    await started;
+
+    await caller.session.stop({ id: session.id });
+
+    assert.equal(activeSignal?.aborted, true);
+  } finally {
     await database.close();
   }
 });

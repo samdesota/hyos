@@ -2,7 +2,7 @@ export const ACTIVITY_MESSAGE_PREFIX = "HYAGENT_ACTIVITY:";
 
 export interface AgentActivityEvent {
   runId: string;
-  status: "working" | "complete" | "failed";
+  status: "working" | "complete" | "failed" | "stopped";
   summary: string;
 }
 
@@ -19,7 +19,9 @@ export function decodeActivityEvent(
       Partial<AgentActivityEvent> | undefined;
     if (
       typeof value?.runId !== "string" ||
-      !["working", "complete", "failed"].includes(value.status ?? "") ||
+      !["working", "complete", "failed", "stopped"].includes(
+        value.status ?? "",
+      ) ||
       typeof value.summary !== "string"
     ) {
       return null;

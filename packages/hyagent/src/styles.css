@@ -1501,6 +1501,13 @@ body {
   font-size: 10px;
 }
 
+.composer button.stop-agent,
+.variant-c .composer button.stop-agent {
+  border: 1px solid #704b4b;
+  background: #2b1d20;
+  color: #f1b8b8;
+}
+
 .diff-block header > span {
   margin-bottom: 6px;
   color: #8fa6ff;

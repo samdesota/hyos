@@ -155,6 +155,7 @@ interface WorkspaceProps {
   session: UiSession;
   feedback: string;
   busy: boolean;
+  stopping: boolean;
   agentConfigured: boolean;
   agents: readonly AgentOption[];
   selectedAgent: string;
@@ -167,6 +168,7 @@ interface WorkspaceProps {
   submitComments(): void;
   toggleFollowing(): void;
   send(): void;
+  stop(): void;
   commit(): void;
 }
 
@@ -515,14 +517,27 @@ function Composer(props: WorkspaceProps) {
           />
           <span>⌘ ↵ to send</span>
         </div>
-        <button
-          disabled={
-            !props.agentConfigured || props.busy || !props.feedback.trim()
+        <Show
+          when={props.session.status === "running" || props.stopping}
+          fallback={
+            <button
+              disabled={
+                !props.agentConfigured || props.busy || !props.feedback.trim()
+              }
+              onClick={props.send}
+            >
+              Give feedback <b>→</b>
+            </button>
           }
-          onClick={props.send}
         >
-          Give feedback <b>→</b>
-        </button>
+          <button
+            class="stop-agent"
+            disabled={props.stopping}
+            onClick={props.stop}
+          >
+            {props.stopping ? "Stopping…" : "Stop agent"}
+          </button>
+        </Show>
       </div>
     </div>
   );
@@ -1196,6 +1211,7 @@ function App() {
   const [feedback, setFeedback] = createSignal("");
   const [operationBusy, setOperationBusy] = createSignal(false);
   const [agentStarting, setAgentStarting] = createSignal(false);
+  const [stopping, setStopping] = createSignal(false);
   const [error, setError] = createSignal("");
   const [comments, setComments] = createSignal<ReviewComment[]>([]);
   const [following, setFollowing] = createSignal(true);
@@ -1205,7 +1221,11 @@ function App() {
   const [creatingNew, setCreatingNew] = createSignal(false);
   const [initialized, setInitialized] = createSignal(false);
   const busy = createMemo(
-    () => operationBusy() || agentStarting() || session()?.status === "running",
+    () =>
+      operationBusy() ||
+      agentStarting() ||
+      stopping() ||
+      session()?.status === "running",
   );
   createEffect(() => {
     if (!busy() || !following()) return;
@@ -1371,6 +1391,20 @@ function App() {
     }
   };
   const send = () => void sendFeedback(feedback(), () => setFeedback(""));
+  const stop = async () => {
+    const current = session();
+    if (!current || current.status !== "running" || stopping()) return;
+    setStopping(true);
+    setError("");
+    try {
+      setSession(await client.session.stop.mutate({ id: current.id }));
+      setAgentStarting(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not stop agent");
+    } finally {
+      setStopping(false);
+    }
+  };
   const submitComments = () =>
     void sendFeedback(
       `Review comments:\n${comments()
@@ -1561,6 +1595,7 @@ function App() {
                     session={loaded()}
                     feedback={feedback()}
                     busy={busy()}
+                    stopping={stopping()}
                     agentConfigured={agentConfigured()}
                     agents={agents()}
                     selectedAgent={selectedAgent()}
@@ -1578,6 +1613,7 @@ function App() {
                     submitComments={submitComments}
                     toggleFollowing={() => setFollowing((current) => !current)}
                     send={send}
+                    stop={() => void stop()}
                     commit={commit}
                   />
                 )}

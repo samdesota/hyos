@@ -9,8 +9,16 @@ export interface WebFetchInput {
 }
 
 export interface AgentWebTools {
-  search(input: WebSearchInput, sessionId: string): Promise<unknown>;
-  fetch(input: WebFetchInput, sessionId: string): Promise<unknown>;
+  search(
+    input: WebSearchInput,
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<unknown>;
+  fetch(
+    input: WebFetchInput,
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<unknown>;
 }
 
 interface ParallelError {
@@ -48,7 +56,11 @@ export function createParallelWebTools(options: {
     "",
   );
 
-  async function request(path: string, body: object): Promise<unknown> {
+  async function request(
+    path: string,
+    body: object,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     const response = await fetch(`${baseUrl}/${path}`, {
       method: "POST",
       headers: {
@@ -56,7 +68,9 @@ export function createParallelWebTools(options: {
         "x-api-key": options.apiKey,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(60_000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(60_000)])
+        : AbortSignal.timeout(60_000),
     });
     const result = (await response.json()) as ParallelError;
     if (!response.ok) {
@@ -72,32 +86,40 @@ export function createParallelWebTools(options: {
   }
 
   return {
-    search(input, sessionId) {
+    search(input, sessionId, signal) {
       const searchQueries = input.searchQueries.map((query) =>
         requireText(query, "Search query"),
       );
       if (searchQueries.length === 0 || searchQueries.length > 3) {
         throw new Error("web_search requires between 1 and 3 search queries");
       }
-      return request("search", {
-        objective: requireText(input.objective, "Search objective"),
-        search_queries: searchQueries,
-        advanced_settings: {
-          max_results: 6,
-          excerpt_settings: { max_chars_per_result: 3_000 },
+      return request(
+        "search",
+        {
+          objective: requireText(input.objective, "Search objective"),
+          search_queries: searchQueries,
+          advanced_settings: {
+            max_results: 6,
+            excerpt_settings: { max_chars_per_result: 3_000 },
+          },
+          session_id: sessionId,
         },
-        session_id: sessionId,
-      });
+        signal,
+      );
     },
-    fetch(input, sessionId) {
-      return request("extract", {
-        urls: requireUrls(input.urls),
-        ...(input.objective
-          ? { objective: requireText(input.objective, "Fetch objective") }
-          : {}),
-        max_chars_total: 30_000,
-        session_id: sessionId,
-      });
+    fetch(input, sessionId, signal) {
+      return request(
+        "extract",
+        {
+          urls: requireUrls(input.urls),
+          ...(input.objective
+            ? { objective: requireText(input.objective, "Fetch objective") }
+            : {}),
+          max_chars_total: 30_000,
+          session_id: sessionId,
+        },
+        signal,
+      );
     },
   };
 }

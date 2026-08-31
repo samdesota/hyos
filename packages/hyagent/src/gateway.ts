@@ -16,6 +16,7 @@ export interface GatewayRequest {
   tools?: unknown[];
   tool_choice?: "auto";
   stream: false;
+  signal?: AbortSignal;
 }
 
 export interface GatewayTransport {
@@ -37,7 +38,7 @@ export function createVercelGateway(options: {
     options.baseUrl ?? "https://ai-gateway.vercel.sh/v1"
   ).replace(/\/$/, "");
   return {
-    async complete(request) {
+    async complete({ signal, ...request }) {
       const response = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
@@ -45,6 +46,7 @@ export function createVercelGateway(options: {
           "content-type": "application/json",
         },
         body: JSON.stringify(request),
+        signal,
       });
       const body = (await response.json()) as GatewayResponse;
       if (!response.ok) {

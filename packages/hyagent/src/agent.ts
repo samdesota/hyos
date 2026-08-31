@@ -277,6 +277,7 @@ export interface LiterateAgent {
     sessionId: string,
     feedback: string,
     agent?: string,
+    signal?: AbortSignal,
   ): Promise<LiterateDiff | null>;
   writeCommitMessages(document: LiterateDiff): Promise<Record<string, string>>;
 }
@@ -349,8 +350,9 @@ export function createLiterateAgent(options: {
       );
       return Object.fromEntries(entries);
     },
-    async run(sessionId, feedback, selectedAgent = model) {
+    async run(sessionId, feedback, selectedAgent = model, signal) {
       const runId = randomUUID();
+      let document: LiterateDiff | null = null;
       const activity = (
         status: AgentActivityEvent["status"],
         summary: string,
@@ -365,11 +367,13 @@ export function createLiterateAgent(options: {
       await activity("working", "Preparing the workspace");
 
       try {
+        signal?.throwIfAborted();
         await options.project.initialize();
+        signal?.throwIfAborted();
         const repositories = options.project.repositoryNames();
         const tools = agentTools(repositories, Boolean(options.web));
         const snapshot = await options.store.getSession(sessionId);
-        let document = documentFromSnapshot(snapshot.revision);
+        document = documentFromSnapshot(snapshot.revision);
         const initialWarnings = await options.project.checkConsistency(
           document?.generatedIgnores ?? [],
         );
@@ -403,6 +407,7 @@ export function createLiterateAgent(options: {
         const persistedWarnings = new Set<string>();
 
         for (let step = 0; ; step += 1) {
+          signal?.throwIfAborted();
           await activity(
             "working",
             step === 0 ? "Planning the first pass" : "Reviewing tool results",
@@ -413,7 +418,9 @@ export function createLiterateAgent(options: {
             tools,
             tool_choice: "auto",
             stream: false,
+            signal,
           });
+          signal?.throwIfAborted();
           messages.push(response);
           const calls = response.tool_calls ?? [];
           if (calls.length === 0) {
@@ -434,6 +441,7 @@ export function createLiterateAgent(options: {
           }
 
           for (const call of calls) {
+            signal?.throwIfAborted();
             let output: unknown;
             try {
               const args = JSON.parse(call.function.arguments) as Record<
@@ -470,6 +478,7 @@ export function createLiterateAgent(options: {
                   args.repository,
                   args.command,
                   args.args,
+                  signal,
                 );
               } else if (
                 call.function.name === "edit_literate_diff" &&
@@ -500,6 +509,7 @@ export function createLiterateAgent(options: {
                     searchQueries: args.search_queries,
                   },
                   runId,
+                  signal,
                 );
               } else if (
                 call.function.name === "web_fetch" &&
@@ -517,11 +527,13 @@ export function createLiterateAgent(options: {
                       : {}),
                   },
                   runId,
+                  signal,
                 );
               } else {
                 throw new Error("Invalid or unknown tool call");
               }
 
+              signal?.throwIfAborted();
               const warnings = await options.project.checkConsistency(
                 document?.generatedIgnores ?? [],
               );
@@ -538,6 +550,7 @@ export function createLiterateAgent(options: {
                 }
               }
             } catch (error) {
+              if (signal?.aborted) throw signal.reason;
               output = {
                 error: error instanceof Error ? error.message : String(error),
               };
@@ -551,6 +564,11 @@ export function createLiterateAgent(options: {
           }
         }
       } catch (error) {
+        if (signal?.aborted) {
+          await options.store.setStatus(sessionId, "ready");
+          await activity("stopped", "Stopped by user");
+          return document;
+        }
         await options.store.setStatus(sessionId, "failed");
         const message = error instanceof Error ? error.message : String(error);
         await activity("failed", `Run stopped: ${message.slice(0, 300)}`);

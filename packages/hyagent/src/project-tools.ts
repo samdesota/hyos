@@ -42,7 +42,11 @@ function runProcess(
   args: readonly string[],
   cwd: string,
   input?: string,
+  signal?: AbortSignal,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason ?? new Error("Operation aborted"));
+  }
   return new Promise((resolveProcess, reject) => {
     const child = spawn(command, [...args], {
       cwd,
@@ -52,6 +56,8 @@ function runProcess(
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => child.kill("SIGTERM"), 30_000);
+    const abort = () => child.kill("SIGTERM");
+    signal?.addEventListener("abort", abort, { once: true });
     child.stdout!.on("data", (chunk: Buffer) => {
       if (stdout.length < MAX_OUTPUT) stdout += chunk.toString();
     });
@@ -61,6 +67,7 @@ function runProcess(
     child.once("error", reject);
     child.once("close", (code) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
       resolveProcess({
         stdout: stdout.slice(0, MAX_OUTPUT),
         stderr: stderr.slice(0, MAX_OUTPUT),
@@ -319,6 +326,7 @@ export interface ProjectTools {
     repository: string,
     command: string,
     args: readonly string[],
+    signal?: AbortSignal,
   ): Promise<string>;
   syncPatches(previous: LiterateDiff | null, next: LiterateDiff): Promise<void>;
   checkConsistency(
@@ -598,10 +606,10 @@ export function createProjectTools(
         throw new Error("File is too large to read");
       return contents;
     },
-    async runCommand(repository, command, args) {
+    async runCommand(repository, command, args, signal) {
       assertCommand(command, args);
       return JSON.stringify(
-        await runProcess(command, args, rootFor(repository)),
+        await runProcess(command, args, rootFor(repository), undefined, signal),
       );
     },
     async syncPatches(previous, next) {

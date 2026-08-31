@@ -22,7 +22,10 @@ export function createHyagentRouter(options: {
   agents?: readonly AgentOption[];
   defaultAgent?: string;
 }) {
-  const activeRuns = new Map<string, Promise<void>>();
+  const activeRuns = new Map<
+    string,
+    { controller: AbortController; promise: Promise<void> }
+  >();
   const defaultAgent = options.defaultAgent ?? DEFAULT_AGENT;
   const agents = options.agents ?? availableAgents(defaultAgent);
   const agentIds = new Set(agents.map((agent) => agent.id));
@@ -32,12 +35,13 @@ export function createHyagentRouter(options: {
     .refine((agent) => agentIds.has(agent), "Unknown agent")
     .default(defaultAgent);
   function launchAgent(sessionId: string, prompt: string, agent: string) {
+    const controller = new AbortController();
     const run = options.agent
-      .run(sessionId, prompt, agent)
+      .run(sessionId, prompt, agent, controller.signal)
       .then(() => undefined)
       .catch(() => undefined)
       .finally(() => activeRuns.delete(sessionId));
-    activeRuns.set(sessionId, run);
+    activeRuns.set(sessionId, { controller, promise: run });
   }
   async function sessionWorkspace(id: string) {
     const [session, repositories] = await Promise.all([
@@ -275,6 +279,15 @@ export function createHyagentRouter(options: {
           }
           launchAgent(input.id, input.feedback, input.agent);
           return { accepted: true as const };
+        }),
+      stop: t.procedure
+        .input(z.object({ id: z.string().min(1) }))
+        .mutation(async ({ input }) => {
+          const active = activeRuns.get(input.id);
+          if (!active) return options.store.getSession(input.id);
+          active.controller.abort();
+          await active.promise;
+          return options.store.getSession(input.id);
         }),
       commit: t.procedure
         .input(z.object({ id: z.string().min(1) }))
