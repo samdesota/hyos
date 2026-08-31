@@ -1989,6 +1989,91 @@ body {
   font-size: 16px;
 }
 
+.workspace-mode {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.workspace-mode legend,
+.initial-prompt > span {
+  margin-bottom: 8px;
+  color: #8d96a1;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.workspace-mode label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #303740;
+  border-radius: 5px;
+  color: #aeb6c0;
+  cursor: pointer;
+}
+
+.workspace-mode label.selected {
+  border-color: #718346;
+  background: #141a12;
+  color: #e5e9ee;
+}
+
+.workspace-mode input {
+  margin: 3px 0 0;
+  accent-color: #c7f36b;
+}
+
+.workspace-mode label span {
+  display: grid;
+  gap: 3px;
+}
+
+.workspace-mode strong {
+  font-size: 11px;
+}
+
+.workspace-mode small {
+  color: #737d89;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.initial-prompt {
+  display: grid;
+  margin-top: 16px;
+}
+
+.initial-prompt textarea {
+  min-height: 118px;
+  padding: 12px;
+  resize: vertical;
+  border: 1px solid #303740;
+  border-radius: 5px;
+  outline: none;
+  background: #0d1115;
+  color: #e3e7eb;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.initial-prompt textarea:focus {
+  border-color: #718346;
+}
+
+.initial-prompt > small {
+  margin-top: 6px;
+  color: #66717d;
+  font:
+    9px "DM Mono",
+    monospace;
+  text-align: right;
+}
+
 .start-error {
   margin: 2px 0 10px;
   color: #ef9292;
@@ -2065,6 +2150,10 @@ body {
 
   .choose-folder {
     grid-column: 1 / -1;
+  }
+
+  .workspace-mode {
+    grid-template-columns: 1fr;
   }
 }
 

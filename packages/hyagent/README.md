@@ -14,13 +14,18 @@ AI_GATEWAY_API_KEY=... npm run dev:hyagent
 
 Open <http://127.0.0.1:5184/>. The agent server runs on port `4328`.
 
-The UI opens with an overview when no gateway key is configured, but agent feedback
-requires the key.
+The + button opens a new-task draft without creating a persisted session. Choose one
+or more Git repositories, decide whether to use the selected checkouts or create
+isolated worktrees, enter the initial prompt, and press Enter to start. The session is
+persisted only after workspace preparation succeeds.
+
+Worktree mode creates a `hyagent/...` branch under `.data/hyagent-worktrees`. Files
+listed in a repository's `.worktreeinclude` are copied into the new worktree.
 
 ## Multiple repositories
 
-The default workspace contains this repository as `hyos`. Configure more repositories
-with a JSON name-to-path map:
+Multiple repositories can be selected from the new-task screen. Servers can also
+start with repository paths configured through a JSON name-to-path map:
 
 ```sh
 HYAGENT_REPOSITORIES='{"web":"/projects/web","api":"/projects/api"}' \

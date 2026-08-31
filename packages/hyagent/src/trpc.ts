@@ -16,6 +16,14 @@ export function createHyagentRouter(options: {
   agentConfigured?: boolean;
 }) {
   const activeRuns = new Map<string, Promise<void>>();
+  function launchAgent(sessionId: string, prompt: string) {
+    const run = options.agent
+      .run(sessionId, prompt)
+      .then(() => undefined)
+      .catch(() => undefined)
+      .finally(() => activeRuns.delete(sessionId));
+    activeRuns.set(sessionId, run);
+  }
   async function sessionWorkspace(id: string) {
     const [session, repositories] = await Promise.all([
       options.store.getSession(id),
@@ -124,9 +132,52 @@ export function createHyagentRouter(options: {
       bootstrap: t.procedure.query(async () =>
         options.store.getSession(await bootstrap()),
       ),
-      create: t.procedure.mutation(() =>
-        options.store.createSession("New agent task"),
-      ),
+      initial: t.procedure.query(async () => {
+        const sessions = await options.store.listSessions();
+        const initial =
+          sessions.find((session) => session.status !== "committed") ??
+          sessions[0];
+        return initial ? options.store.getSession(initial.id) : null;
+      }),
+      start: t.procedure
+        .input(
+          z.object({
+            repositories: z
+              .array(
+                z.object({
+                  name: z.string().trim().min(1).max(100),
+                  root: z.string().trim().min(1).max(4_000),
+                }),
+              )
+              .min(1)
+              .max(20),
+            mode: z.enum(["checkout", "worktree"]),
+            prompt: z.string().trim().min(1).max(20_000),
+          }),
+        )
+        .mutation(async ({ input }) => {
+          if (activeRuns.size > 0) {
+            throw new Error("The agent is already working on another task");
+          }
+          const repositories = await options.project.prepareRepositories(
+            input.repositories,
+            input.mode,
+          );
+          const session = await options.store.createSession(
+            input.prompt.split("\n")[0]!.slice(0, 100),
+          );
+          await options.store.saveWorkspace(session.id, repositories);
+          await options.store.appendMessage(
+            session.id,
+            "system",
+            `${input.mode === "worktree" ? "Worktree" : "Workspace"} ready: ${repositories.map((repository) => repository.name).join(", ")}`,
+          );
+          launchAgent(session.id, input.prompt);
+          return {
+            repositories,
+            session: await options.store.getSession(session.id),
+          };
+        }),
       archive: t.procedure
         .input(z.object({ id: z.string().min(1) }))
         .mutation(async ({ input }) => {
@@ -173,12 +224,7 @@ export function createHyagentRouter(options: {
               input.feedback.split("\n")[0]!.slice(0, 100),
             );
           }
-          const run = options.agent
-            .run(input.id, input.feedback)
-            .then(() => undefined)
-            .catch(() => undefined)
-            .finally(() => activeRuns.delete(input.id));
-          activeRuns.set(input.id, run);
+          launchAgent(input.id, input.feedback);
           return { accepted: true as const };
         }),
       commit: t.procedure

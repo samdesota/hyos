@@ -54,6 +54,7 @@ function fakeProject(overrides: Partial<ProjectTools> = {}): ProjectTools {
     repositoryNames: () => ["workspace"],
     repositorySpecs: () => [{ name: "workspace", root: "/workspace" }],
     configureRepositories: async () => undefined,
+    prepareRepositories: async (repositories) => repositories,
     initialize: async () => undefined,
     readFile: async () => "",
     runCommand: async () => "",
@@ -619,6 +620,45 @@ test("project commits only literate-diff paths with the supplied message", async
   }
 });
 
+test("project can prepare an isolated worktree and copy included files", async () => {
+  const root = await createRepository("worktree-source");
+  const worktreeRoot = await mkdtemp(join(tmpdir(), "hyagent-worktrees-"));
+  try {
+    await writeFile(join(root, ".gitignore"), ".env\n");
+    await writeFile(join(root, ".worktreeinclude"), ".env\n");
+    await writeFile(join(root, ".env"), "LOCAL_ONLY=test\n");
+    await git(root, "add", ".gitignore", ".worktreeinclude");
+    await git(root, "commit", "-qm", "configure worktrees");
+    const project = createProjectTools([{ name: "project", root }], {
+      worktreeRoot,
+    });
+
+    const prepared = await project.prepareRepositories(
+      [{ name: "project", root }],
+      "worktree",
+    );
+
+    assert.notEqual(prepared[0]?.root, root);
+    assert.equal(
+      await readFile(join(prepared[0]!.root, ".env"), "utf8"),
+      "LOCAL_ONLY=test\n",
+    );
+    assert.match(
+      (
+        await exec("git", ["branch", "--show-current"], {
+          cwd: prepared[0]!.root,
+        })
+      ).stdout.trim(),
+      /^hyagent\/project-/,
+    );
+  } finally {
+    await Promise.all([
+      rm(root, { recursive: true, force: true }),
+      rm(worktreeRoot, { recursive: true, force: true }),
+    ]);
+  }
+});
+
 test("the agent writes focused commit messages for affected repositories", async () => {
   const { database, store } = await setup();
   const requests: string[] = [];
@@ -715,6 +755,46 @@ test("feedback starts the agent without holding the mutation open", async () => 
     release();
   } finally {
     release();
+    await database.close();
+  }
+});
+
+test("a task is persisted only after workspace preparation succeeds", async () => {
+  const { database, store } = await setup();
+  let shouldFail = true;
+  const project = fakeProject({
+    async prepareRepositories(repositories) {
+      if (shouldFail) throw new Error("Could not prepare workspace");
+      return repositories;
+    },
+  });
+  try {
+    const router = createHyagentRouter({
+      store,
+      project,
+      agent: fakeAgent(),
+    });
+    const caller = router.createCaller({});
+    assert.equal(await caller.session.initial(), null);
+    await assert.rejects(
+      caller.session.start({
+        repositories: [{ name: "project", root: "/code/project" }],
+        mode: "worktree",
+        prompt: "Build the first change",
+      }),
+      /Could not prepare workspace/,
+    );
+    assert.deepEqual(await caller.session.list(), []);
+
+    shouldFail = false;
+    const started = await caller.session.start({
+      repositories: [{ name: "project", root: "/code/project" }],
+      mode: "checkout",
+      prompt: "Build the first change",
+    });
+    assert.equal(started.session.title, "Build the first change");
+    assert.equal((await caller.session.list()).length, 1);
+  } finally {
     await database.close();
   }
 });

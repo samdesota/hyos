@@ -23,7 +23,6 @@ import { decodeActivityEvent, type AgentActivityEvent } from "./activity.js";
 import type { LiterateBlock } from "./domain.js";
 import type { HyagentRouter } from "./trpc.js";
 import "./styles.css";
-import { shouldShowWorkspacePicker } from "./workspace-state.js";
 
 // PROTOTYPE: Three variants of the two-column agent/literate-diff workspace,
 // switchable via ?variant=. The winning interaction should be rebuilt cleanly.
@@ -479,7 +478,7 @@ function Composer(props: WorkspaceProps) {
   );
 }
 
-function WorkspacePicker(props: {
+function NewThreadPage(props: {
   repositories: WorkspaceRepository[];
   busy: boolean;
   error: string;
@@ -487,13 +486,19 @@ function WorkspacePicker(props: {
   addPath(path: string): void;
   updateName(index: number, name: string): void;
   remove(index: number): void;
-  start(): void;
+  start(prompt: string, mode: "checkout" | "worktree"): void;
 }) {
   const [path, setPath] = createSignal("");
+  const [prompt, setPrompt] = createSignal("");
+  const [mode, setMode] = createSignal<"checkout" | "worktree">("worktree");
   const addPath = () => {
     if (!path().trim()) return;
     props.addPath(path().trim());
     setPath("");
+  };
+  const start = () => {
+    if (!prompt().trim() || props.repositories.length === 0) return;
+    props.start(prompt().trim(), mode());
   };
   return (
     <main class="workspace-start">
@@ -503,8 +508,8 @@ function WorkspacePicker(props: {
       </header>
       <section class="workspace-open">
         <header>
-          <h1>Open workspace</h1>
-          <p>Select one or more Git repositories.</p>
+          <h1>New agent task</h1>
+          <p>Choose the code, isolation mode, and the first instruction.</p>
         </header>
         <div class="workspace-actions">
           <button
@@ -551,17 +556,66 @@ function WorkspacePicker(props: {
             </For>
           </div>
         </Show>
+        <fieldset class="workspace-mode">
+          <legend>Where should the agent work?</legend>
+          <label classList={{ selected: mode() === "worktree" }}>
+            <input
+              type="radio"
+              name="workspace-mode"
+              checked={mode() === "worktree"}
+              onChange={() => setMode("worktree")}
+            />
+            <span>
+              <strong>Create a worktree</strong>
+              <small>Start from HEAD on a new hyagent branch.</small>
+            </span>
+          </label>
+          <label classList={{ selected: mode() === "checkout" }}>
+            <input
+              type="radio"
+              name="workspace-mode"
+              checked={mode() === "checkout"}
+              onChange={() => setMode("checkout")}
+            />
+            <span>
+              <strong>Use this checkout</strong>
+              <small>Work directly in the selected folder.</small>
+            </span>
+          </label>
+        </fieldset>
+        <label class="initial-prompt">
+          <span>Initial prompt</span>
+          <textarea
+            autofocus
+            value={prompt()}
+            onInput={(event) => setPrompt(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                start();
+              }
+            }}
+            placeholder="Describe the change you want the agent to make…"
+          />
+          <small>Enter to start · Shift Enter for a new line</small>
+        </label>
         <Show when={props.error}>
           <p class="start-error">{props.error}</p>
         </Show>
         <div class="start-footer">
-          <p>Existing worktree changes are preserved as the baseline.</p>
+          <p>
+            {mode() === "worktree"
+              ? "The selected checkout stays untouched."
+              : "Existing changes become the agent baseline."}
+          </p>
           <button
             class="start-task"
-            disabled={props.busy || props.repositories.length === 0}
-            onClick={props.start}
+            disabled={
+              props.busy || props.repositories.length === 0 || !prompt().trim()
+            }
+            onClick={start}
           >
-            {props.busy ? "Opening…" : "Open workspace"}
+            {props.busy ? "Starting…" : "Start agent"}
           </button>
         </div>
       </section>
@@ -994,7 +1048,8 @@ function App() {
   const [comments, setComments] = createSignal<ReviewComment[]>([]);
   const [following, setFollowing] = createSignal(true);
   const [agentConfigured, setAgentConfigured] = createSignal(true);
-  const [workspaceOpen, setWorkspaceOpen] = createSignal(false);
+  const [creatingNew, setCreatingNew] = createSignal(false);
+  const [initialized, setInitialized] = createSignal(false);
   const busy = createMemo(
     () => operationBusy() || agentStarting() || session()?.status === "running",
   );
@@ -1009,7 +1064,22 @@ function App() {
   function setSessionUrl(id: string, mode: "push" | "replace") {
     const url = new URL(location.href);
     url.searchParams.set("session", id);
+    url.searchParams.delete("new");
     history[mode === "push" ? "pushState" : "replaceState"]({}, "", url);
+  }
+  function setNewThreadUrl(mode: "push" | "replace") {
+    const url = new URL(location.href);
+    url.searchParams.delete("session");
+    url.searchParams.set("new", "1");
+    history[mode === "push" ? "pushState" : "replaceState"]({}, "", url);
+  }
+  function showNewThread(mode: "push" | "replace") {
+    setAgentStarting(false);
+    setCreatingNew(true);
+    setRepositories([]);
+    setComments([]);
+    setError("");
+    setNewThreadUrl(mode);
   }
   async function openSession(id: string, historyMode?: "push" | "replace") {
     setOperationBusy(true);
@@ -1017,9 +1087,9 @@ function App() {
     try {
       const opened = await client.session.open.query({ id });
       setAgentStarting(false);
+      setCreatingNew(false);
       setSession(opened.session);
       setRepositories([...opened.repositories]);
-      setWorkspaceOpen(opened.repositories.length > 0);
       setComments([]);
       if (historyMode) setSessionUrl(id, historyMode);
     } catch (cause) {
@@ -1040,7 +1110,13 @@ function App() {
       },
     });
     const handleHistory = () => {
-      const id = new URL(location.href).searchParams.get("session");
+      const url = new URL(location.href);
+      if (url.searchParams.get("new") === "1") {
+        setCreatingNew(true);
+        setRepositories([]);
+        return;
+      }
+      const id = url.searchParams.get("session");
       if (id && id !== session()?.id) void openSession(id);
     };
     addEventListener("popstate", handleHistory);
@@ -1052,28 +1128,41 @@ function App() {
     void (async () => {
       try {
         const health = await client.health.query();
-        const requested = new URL(location.href).searchParams.get("session");
-        let loaded: Awaited<ReturnType<typeof client.session.open.query>>;
+        const url = new URL(location.href);
+        const requested = url.searchParams.get("session");
+        if (url.searchParams.get("new") === "1") {
+          setCreatingNew(true);
+          setAgentConfigured(health.agentConfigured);
+          return;
+        }
+        let initial: UiSession | null = null;
         if (requested) {
           try {
-            loaded = await client.session.open.query({ id: requested });
+            initial = (await client.session.open.query({ id: requested }))
+              .session;
           } catch {
-            const fallback = await client.session.bootstrap.query();
-            loaded = await client.session.open.query({ id: fallback.id });
+            initial = await client.session.initial.query();
           }
         } else {
-          const fallback = await client.session.bootstrap.query();
-          loaded = await client.session.open.query({ id: fallback.id });
+          initial = await client.session.initial.query();
         }
+        if (!initial) {
+          setCreatingNew(true);
+          setNewThreadUrl("replace");
+          setAgentConfigured(health.agentConfigured);
+          return;
+        }
+        const loaded = await client.session.open.query({ id: initial.id });
         setSession(loaded.session);
         setRepositories([...loaded.repositories]);
         setAgentConfigured(health.agentConfigured);
-        setWorkspaceOpen(loaded.repositories.length > 0);
         setSessionUrl(loaded.session.id, "replace");
       } catch (cause) {
         setError(
           cause instanceof Error ? cause.message : "Could not load session",
         );
+      } finally {
+        setInitialized(true);
       }
     })();
   });
@@ -1166,41 +1255,33 @@ function App() {
       setRepositories((current) => [...current, { name, root: clean }]);
     }
   };
-  const startWorkspace = async () => {
-    if (busy() || repositories().length === 0) return;
-    setOperationBusy(true);
-    setError("");
-    try {
-      const configured = await client.workspace.configure.mutate({
-        id: session()?.id,
-        repositories: repositories(),
-      });
-      setRepositories([...configured.repositories]);
-      setSession(configured.session);
-      setWorkspaceOpen(true);
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Could not open workspace",
-      );
-    } finally {
-      setOperationBusy(false);
+  const startNewSession = async (
+    prompt: string,
+    mode: "checkout" | "worktree",
+  ) => {
+    if (busy() || repositories().length === 0 || !prompt.trim()) return;
+    if (!agentConfigured()) {
+      setError("Agent unavailable. Start the server with AI_GATEWAY_API_KEY.");
+      return;
     }
-  };
-  const createSession = async () => {
-    if (operationBusy()) return;
     setOperationBusy(true);
+    setAgentStarting(true);
     setError("");
     try {
-      const created = await client.session.create.mutate();
-      setAgentStarting(false);
-      setSession(created);
-      setRepositories([]);
-      setWorkspaceOpen(false);
+      const started = await client.session.start.mutate({
+        repositories: repositories(),
+        mode,
+        prompt,
+      });
+      setRepositories([...started.repositories]);
+      setSession(started.session);
+      setCreatingNew(false);
       setComments([]);
-      setSessionUrl(created.id, "push");
+      setSessionUrl(started.session.id, "replace");
     } catch (cause) {
+      setAgentStarting(false);
       setError(
-        cause instanceof Error ? cause.message : "Could not create session",
+        cause instanceof Error ? cause.message : "Could not start agent task",
       );
     } finally {
       setOperationBusy(false);
@@ -1217,18 +1298,17 @@ function App() {
       const next = remaining[0];
       if (next) {
         const opened = await client.session.open.query({ id: next.id });
+        setCreatingNew(false);
         setSession(opened.session);
         setRepositories([...opened.repositories]);
-        setWorkspaceOpen(opened.repositories.length > 0);
         setComments([]);
         setSessionUrl(next.id, "replace");
       } else {
-        const created = await client.session.create.mutate();
-        setSession(created);
+        setSession(undefined);
         setRepositories([]);
-        setWorkspaceOpen(false);
+        setCreatingNew(true);
         setComments([]);
-        setSessionUrl(created.id, "replace");
+        setNewThreadUrl("replace");
       }
     } catch (cause) {
       setError(
@@ -1240,77 +1320,77 @@ function App() {
   };
   return (
     <Switch>
-      <Match when={!session()}>
+      <Match when={!initialized()}>
         <div class="loading">
           <div class="mark">hy</div>
           <p>{error() || "Opening the change room…"}</p>
         </div>
       </Match>
-      <Match when={session()}>
-        {(loaded) => (
-          <div class="session-shell">
-            <SessionSidebar
-              sessions={sessions()}
-              activeId={loaded().id}
-              disabled={operationBusy()}
-              select={(id) => void openSession(id, "push")}
-              create={() => void createSession()}
-              archive={(id) => void archiveSession(id)}
-            />
-            <section class="session-stage">
-              <Show
-                when={!shouldShowWorkspacePicker(workspaceOpen())}
-                fallback={
-                  <WorkspacePicker
-                    repositories={repositories()}
-                    busy={busy()}
-                    error={error()}
-                    chooseFolder={() => void chooseFolder()}
-                    addPath={addPath}
-                    updateName={(index, name) =>
-                      setRepositories((current) =>
-                        current.map((repository, repositoryIndex) =>
-                          repositoryIndex === index
-                            ? { ...repository, name }
-                            : repository,
-                        ),
-                      )
-                    }
-                    remove={(index) =>
-                      setRepositories((current) =>
-                        current.filter(
-                          (_, repositoryIndex) => repositoryIndex !== index,
-                        ),
-                      )
-                    }
-                    start={() => void startWorkspace()}
-                  />
-                }
-              >
-                <VariantA
-                  session={loaded()}
-                  feedback={feedback()}
+      <Match when={initialized()}>
+        <div class="session-shell">
+          <SessionSidebar
+            sessions={sessions()}
+            activeId={creatingNew() ? "" : (session()?.id ?? "")}
+            disabled={operationBusy()}
+            select={(id) => void openSession(id, "push")}
+            create={() => showNewThread("push")}
+            archive={(id) => void archiveSession(id)}
+          />
+          <section class="session-stage">
+            <Switch>
+              <Match when={creatingNew() || !session()}>
+                <NewThreadPage
+                  repositories={repositories()}
                   busy={busy()}
-                  agentConfigured={agentConfigured()}
                   error={error()}
-                  comments={comments()}
-                  following={following()}
-                  setFeedback={setFeedback}
-                  addComment={(target, body) =>
-                    setComments((current) => [
-                      ...current,
-                      { id: crypto.randomUUID(), target, body },
-                    ])
+                  chooseFolder={() => void chooseFolder()}
+                  addPath={addPath}
+                  updateName={(index, name) =>
+                    setRepositories((current) =>
+                      current.map((repository, repositoryIndex) =>
+                        repositoryIndex === index
+                          ? { ...repository, name }
+                          : repository,
+                      ),
+                    )
                   }
-                  submitComments={submitComments}
-                  toggleFollowing={() => setFollowing((current) => !current)}
-                  send={send}
-                  commit={commit}
+                  remove={(index) =>
+                    setRepositories((current) =>
+                      current.filter(
+                        (_, repositoryIndex) => repositoryIndex !== index,
+                      ),
+                    )
+                  }
+                  start={(prompt, mode) => void startNewSession(prompt, mode)}
                 />
-              </Show>
-            </section>
-          </div>
-        )}
+              </Match>
+              <Match when={session()}>
+                {(loaded) => (
+                  <VariantA
+                    session={loaded()}
+                    feedback={feedback()}
+                    busy={busy()}
+                    agentConfigured={agentConfigured()}
+                    error={error()}
+                    comments={comments()}
+                    following={following()}
+                    setFeedback={setFeedback}
+                    addComment={(target, body) =>
+                      setComments((current) => [
+                        ...current,
+                        { id: crypto.randomUUID(), target, body },
+                      ])
+                    }
+                    submitComments={submitComments}
+                    toggleFollowing={() => setFollowing((current) => !current)}
+                    send={send}
+                    commit={commit}
+                  />
+                )}
+              </Match>
+            </Switch>
+          </section>
+        </div>
       </Match>
     </Switch>
   );

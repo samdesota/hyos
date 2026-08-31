@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { lstat, readFile, realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { cp, lstat, mkdir, readFile, realpath } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import type {
   GeneratedIgnore,
@@ -14,6 +14,7 @@ const MAX_OUTPUT = 60_000;
 const MAX_FILES_PER_WARNING_FOLDER = 10;
 
 export type RepositorySpec = WorkspaceRepository;
+export type WorkspaceMode = "checkout" | "worktree";
 
 export interface WorktreeWarning {
   repository: string;
@@ -251,6 +252,10 @@ export interface ProjectTools {
   repositoryNames(): readonly string[];
   repositorySpecs(): readonly RepositorySpec[];
   configureRepositories(specs: readonly RepositorySpec[]): Promise<void>;
+  prepareRepositories(
+    specs: readonly RepositorySpec[],
+    mode: WorkspaceMode,
+  ): Promise<readonly RepositorySpec[]>;
   initialize(): Promise<void>;
   readFile(repository: string, path: string): Promise<string>;
   runCommand(
@@ -271,6 +276,7 @@ export interface ProjectTools {
 
 export function createProjectTools(
   input: string | readonly RepositorySpec[] = [],
+  options: { worktreeRoot?: string } = {},
 ): ProjectTools {
   const specs =
     typeof input === "string"
@@ -347,6 +353,87 @@ export function createProjectTools(
     await initialize();
   }
 
+  async function copyWorktreeIncludes(source: string, target: string) {
+    let contents: string;
+    try {
+      contents = await readFile(join(source, ".worktreeinclude"), "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    for (const entry of contents
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"))) {
+      assertRelativeProjectPath(entry);
+      try {
+        await mkdir(dirname(join(target, entry)), { recursive: true });
+        await cp(join(source, entry), join(target, entry), { recursive: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+  }
+
+  async function prepareRepositories(
+    next: readonly RepositorySpec[],
+    mode: WorkspaceMode,
+  ): Promise<readonly RepositorySpec[]> {
+    const normalized = await normalizedSpecs(next);
+    if (mode === "checkout") {
+      await configureRepositories(normalized);
+      return repositorySpecs();
+    }
+    const worktreeRoot = resolve(
+      options.worktreeRoot ?? ".data/hyagent-worktrees",
+    );
+    await mkdir(worktreeRoot, { recursive: true });
+    const created: RepositorySpec[] = [];
+    const worktrees: Array<{ source: string; target: string; branch: string }> =
+      [];
+    try {
+      for (const spec of normalized) {
+        const token = randomUUID().slice(0, 8);
+        const safeName = spec.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
+        const target = join(worktreeRoot, `${safeName}-${token}`);
+        const branch = `hyagent/${safeName}-${token}`;
+        const result = await runProcess(
+          "git",
+          ["worktree", "add", "-b", branch, target, "HEAD"],
+          spec.root,
+        );
+        if (result.exitCode !== 0) {
+          throw new Error(
+            `Could not create a worktree for ${spec.name}: ${result.stderr || result.stdout}`,
+          );
+        }
+        worktrees.push({ source: spec.root, target, branch });
+        await copyWorktreeIncludes(spec.root, target);
+        created.push({ name: spec.name, root: target });
+      }
+      await configureRepositories(created);
+      return repositorySpecs();
+    } catch (error) {
+      for (const worktree of worktrees.reverse()) {
+        await runProcess(
+          "git",
+          ["worktree", "remove", "--force", worktree.target],
+          worktree.source,
+        );
+        await runProcess(
+          "git",
+          ["branch", "-D", worktree.branch],
+          worktree.source,
+        );
+      }
+      throw error;
+    }
+  }
+
+  function repositorySpecs(): RepositorySpec[] {
+    return [...repositories].map(([name, root]) => ({ name, root }));
+  }
+
   async function transition(
     repository: string,
     previous: readonly PatchRef[],
@@ -392,9 +479,9 @@ export function createProjectTools(
 
   return {
     repositoryNames: () => [...repositories.keys()],
-    repositorySpecs: () =>
-      [...repositories].map(([name, root]) => ({ name, root })),
+    repositorySpecs,
     configureRepositories,
+    prepareRepositories,
     initialize,
     async readFile(repository, path) {
       assertRelativeProjectPath(path);
