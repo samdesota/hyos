@@ -4,6 +4,7 @@ export interface AgentActivityEvent {
   runId: string;
   status: "working" | "complete" | "failed" | "stopped";
   summary: string;
+  detail?: string;
 }
 
 export function encodeActivityEvent(event: AgentActivityEvent): string {
@@ -22,7 +23,8 @@ export function decodeActivityEvent(
       !["working", "complete", "failed", "stopped"].includes(
         value.status ?? "",
       ) ||
-      typeof value.summary !== "string"
+      typeof value.summary !== "string" ||
+      (value.detail !== undefined && typeof value.detail !== "string")
     ) {
       return null;
     }

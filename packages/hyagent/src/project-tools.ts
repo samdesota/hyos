@@ -181,6 +181,23 @@ function ignored(path: string, entries: readonly GeneratedIgnore[]): boolean {
   );
 }
 
+function assertGeneratedIgnoresDoNotHidePatches(document: LiterateDiff): void {
+  for (const patch of patchBlocks(document)) {
+    for (const path of patchFilePaths(patch.patch)) {
+      const entry = document.generatedIgnores.find(
+        (candidate) =>
+          candidate.repository === patch.repository &&
+          ignored(path, [candidate]),
+      );
+      if (entry) {
+        throw new Error(
+          `Generated ignore ${entry.repository}:${entry.path} overlaps patch-controlled file ${patch.repository}:${path} in block ${patch.id}. Generated ignores may only cover files that are not represented by the literate diff.`,
+        );
+      }
+    }
+  }
+}
+
 function consistencyWarnings(
   repository: string,
   changedPaths: readonly string[],
@@ -329,6 +346,7 @@ export interface ProjectTools {
     signal?: AbortSignal,
   ): Promise<string>;
   syncPatches(previous: LiterateDiff | null, next: LiterateDiff): Promise<void>;
+  reanchorPatches(document: LiterateDiff): Promise<void>;
   checkConsistency(
     ignores: readonly GeneratedIgnore[],
   ): Promise<WorktreeWarning[]>;
@@ -561,14 +579,18 @@ export function createProjectTools(
 
     const removed = previous.slice(prefix);
     const added = next.slice(prefix);
+    const reversed: PatchRef[] = [];
     const applied: PatchRef[] = [];
-    let failed: PatchRef | undefined;
+    let failed:
+      { patch: PatchRef; direction: "reversing" | "applying" } | undefined;
     try {
       for (const patch of [...removed].reverse()) {
+        failed = { patch, direction: "reversing" };
         await applyPatch(root, patch.patch, { reverse: true });
+        reversed.push(patch);
       }
       for (const patch of added) {
-        failed = patch;
+        failed = { patch, direction: "applying" };
         const result = await applyPatch(root, patch.patch, {
           allowAlreadyApplied: removed.length === 0,
         });
@@ -576,12 +598,23 @@ export function createProjectTools(
       }
       failed = undefined;
     } catch (error) {
+      let rollbackError: unknown;
       for (const patch of [...applied].reverse()) {
-        await applyPatch(root, patch.patch, { reverse: true });
+        try {
+          await applyPatch(root, patch.patch, { reverse: true });
+        } catch (cause) {
+          rollbackError ??= cause;
+        }
       }
-      for (const patch of removed) await applyPatch(root, patch.patch);
+      for (const patch of [...reversed].reverse()) {
+        try {
+          await applyPatch(root, patch.patch);
+        } catch (cause) {
+          rollbackError ??= cause;
+        }
+      }
       throw new Error(
-        `Replay stopped in ${repository}${failed ? ` at ${failed.id}` : ""}: ${error instanceof Error ? error.message : String(error)}`,
+        `Replay stopped in ${repository}${failed ? ` while ${failed.direction} block ${failed.patch.id}` : ""}: ${error instanceof Error ? error.message : String(error)}${rollbackError ? ` Rollback also failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}` : ""}`,
       );
     }
   }
@@ -614,6 +647,7 @@ export function createProjectTools(
     },
     async syncPatches(previous, next) {
       await initialize();
+      assertGeneratedIgnoresDoNotHidePatches(next);
       const oldPatches = patchBlocks(previous);
       const newPatches = patchBlocks(next);
       for (const patch of newPatches) rootFor(patch.repository);
@@ -662,6 +696,57 @@ export function createProjectTools(
         for (const path of touched) {
           const fingerprint = current.get(path);
           if (fingerprint === undefined) baseline.delete(path);
+          else baseline.set(path, fingerprint);
+        }
+      }
+    },
+    async reanchorPatches(document) {
+      await initialize();
+      assertGeneratedIgnoresDoNotHidePatches(document);
+      for (const repository of repositories.keys()) {
+        const patches = patchBlocks(document).filter(
+          (patch) => patch.repository === repository,
+        );
+        const owners = new Map<string, string>();
+        for (const patch of patches) {
+          for (const path of patchFilePaths(patch.patch)) {
+            const owner = owners.get(path);
+            if (owner) {
+              throw new Error(
+                `Cannot re-anchor ${repository}:${path}: blocks ${owner} and ${patch.id} both control the file. Consolidate them into one final patch block.`,
+              );
+            }
+            owners.set(path, patch.id);
+          }
+          const root = rootFor(repository);
+          const check = await runProcess(
+            "git",
+            ["apply", "--reverse", "--check", "-"],
+            root,
+            patch.patch,
+          );
+          if (check.exitCode !== 0) {
+            throw new Error(
+              `Cannot re-anchor block ${patch.id}: its patch does not describe the current worktree. ${patchFailureMessage(patch.patch, check.stderr)}`,
+            );
+          }
+        }
+        const root = rootFor(repository);
+        const entries = document.generatedIgnores.filter(
+          (entry) => entry.repository === repository,
+        );
+        const uncovered = (await changedPaths(root)).filter(
+          (path) => !owners.has(path) && !ignored(path, entries),
+        );
+        if (uncovered.length > 0) {
+          throw new Error(
+            `Cannot re-anchor ${repository}: these changed paths are not represented by a patch or generated ignore: ${uncovered.join(", ")}`,
+          );
+        }
+        const baseline = expected.get(repository)!;
+        for (const path of owners.keys()) {
+          const fingerprint = await fileFingerprint(root, path);
+          if (fingerprint === "deleted") baseline.delete(path);
           else baseline.set(path, fingerprint);
         }
       }

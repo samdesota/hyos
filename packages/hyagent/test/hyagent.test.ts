@@ -62,6 +62,7 @@ function fakeProject(overrides: Partial<ProjectTools> = {}): ProjectTools {
     readFile: async () => "",
     runCommand: async () => "",
     syncPatches: async () => undefined,
+    reanchorPatches: async () => undefined,
     checkConsistency: async () => [],
     commit: async () => [],
     enrichDocument: async (document) => document,
@@ -76,6 +77,25 @@ function fakeAgent(overrides: Partial<LiterateAgent> = {}): LiterateAgent {
       workspace: "feat: apply literate change",
     }),
     ...overrides,
+  };
+}
+
+function finishRun(
+  message: string,
+  outcome: "changed" | "conversation" | "blocked" = "changed",
+): GatewayMessage {
+  return {
+    role: "assistant",
+    content: null,
+    tool_calls: [
+      {
+        id: "finish",
+        function: {
+          name: "finish_run",
+          arguments: JSON.stringify({ outcome, message }),
+        },
+      },
+    ],
   };
 }
 
@@ -252,7 +272,7 @@ test("the custom loop publishes document edits before it finishes", async () => 
         },
       ],
     },
-    { role: "assistant", content: "The first pass is ready." },
+    finishRun("The first pass is ready."),
   ];
   const gateway: GatewayTransport = {
     async complete() {
@@ -285,15 +305,7 @@ test("the custom loop publishes document edits before it finishes", async () => 
       snapshot.messages
         .map((message) => decodeActivityEvent(message.content)?.status)
         .filter(Boolean),
-      [
-        "working",
-        "working",
-        "working",
-        "working",
-        "working",
-        "working",
-        "complete",
-      ],
+      ["working", "working", "working", "working", "working", "complete"],
     );
   } finally {
     await database.close();
@@ -395,7 +407,7 @@ test("a rejected patch returns a repairable error to the agent tool call", async
         },
       ],
     },
-    { role: "assistant", content: "I need to regenerate that patch." },
+    finishRun("I need to regenerate that patch.", "blocked"),
   ];
   const requests: GatewayMessage[][] = [];
   const gateway: GatewayTransport = {
@@ -430,6 +442,12 @@ test("a rejected patch returns a repairable error to the agent tool call", async
     const snapshot = await store.getSession(session.id);
     assert.equal(snapshot.revision?.summary, "Visible first pass");
     assert.deepEqual(snapshot.revision?.blocks, []);
+    assert.match(
+      snapshot.messages
+        .map((message) => decodeActivityEvent(message.content)?.detail ?? "")
+        .find((detail) => detail.includes("contextless")) ?? "",
+      /modification hunk with no unchanged surrounding context/,
+    );
     assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
   } finally {
     await Promise.all([
@@ -477,7 +495,7 @@ test("the custom loop has no fixed model-turn limit", async () => {
         },
       ],
     },
-    { role: "assistant", content: "The first pass is ready." },
+    finishRun("The first pass is ready."),
   ];
   const gateway: GatewayTransport = {
     async complete() {
@@ -540,7 +558,7 @@ test("repository work waits until the literate diff has an overview", async () =
         },
       ],
     },
-    { role: "assistant", content: "The overview is visible." },
+    finishRun("The overview is visible."),
   ];
   const gateway: GatewayTransport = {
     async complete() {
@@ -610,7 +628,7 @@ test("the custom loop exposes and routes web search and fetch tools", async () =
         },
       ],
     },
-    { role: "assistant", content: "I found the current interface." },
+    finishRun("I found the current interface.", "conversation"),
   ];
   const offeredTools: string[] = [];
   const requestedModels: string[] = [];
@@ -676,7 +694,7 @@ test("the agent can reply conversationally before starting a literate diff", asy
     "Before I start changing code, which behavior should remain compatible?";
   const gateway: GatewayTransport = {
     async complete() {
-      return { role: "assistant", content: reply };
+      return finishRun(reply, "conversation");
     },
   };
   try {
@@ -704,6 +722,128 @@ test("the agent can reply conversationally before starting a literate diff", asy
         ),
       ),
       false,
+    );
+  } finally {
+    await database.close();
+  }
+});
+
+test("the agent can reread the authoritative literate diff", async () => {
+  const { database, store } = await setup();
+  const responses: GatewayMessage[] = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "read-document",
+          function: {
+            name: "read_literate_diff",
+            arguments: "{}",
+          },
+        },
+      ],
+    },
+    finishRun("The current document is revision 1.", "conversation"),
+  ];
+  let readResult = "";
+  const gateway: GatewayTransport = {
+    async complete(request) {
+      readResult =
+        request.messages.find(
+          (message) =>
+            message.role === "tool" && message.tool_call_id === "read-document",
+        )?.content ?? readResult;
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+  try {
+    const session = await store.createSession("Read the diff");
+    await store.saveRevision(session.id, proposedDocument);
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+    });
+
+    await agent.run(session.id, "What is in the current document?");
+
+    const result = JSON.parse(readResult) as {
+      revision: number;
+      document: LiterateDiff;
+    };
+    assert.equal(result.revision, 1);
+    assert.deepEqual(result.document.blocks, proposedDocument.blocks);
+  } finally {
+    await database.close();
+  }
+});
+
+test("the agent cannot claim a document change without saving a revision", async () => {
+  const { database, store } = await setup();
+  const responses: GatewayMessage[] = [
+    { role: "assistant", content: "I've cleaned up the document." },
+    finishRun("I've cleaned up the document."),
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "remove-noise",
+          function: {
+            name: "edit_literate_diff",
+            arguments: JSON.stringify({
+              operations: [{ type: "remove_block", id: "change" }],
+            }),
+          },
+        },
+      ],
+    },
+    finishRun("The noisy block is now removed."),
+  ];
+  const requests: GatewayMessage[][] = [];
+  const gateway: GatewayTransport = {
+    async complete(request) {
+      requests.push([...request.messages]);
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+  try {
+    const session = await store.createSession("Clean the diff");
+    await store.saveRevision(session.id, proposedDocument);
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+    });
+
+    await agent.run(session.id, "Remove the noisy change block");
+
+    assert.equal(requests.length, 4);
+    assert.match(
+      requests[1]?.at(-1)?.content ?? "",
+      /must finish with finish_run/,
+    );
+    assert.match(
+      requests[2]?.find(
+        (message) =>
+          message.role === "tool" && message.tool_call_id === "finish",
+      )?.content ?? "",
+      /no literate-diff revision was saved/,
+    );
+    const snapshot = await store.getSession(session.id);
+    assert.equal(snapshot.revision?.number, 2);
+    assert.deepEqual(
+      snapshot.revision?.blocks.map((block) => block.id),
+      ["intent"],
+    );
+    assert.equal(
+      snapshot.messages.at(-1)?.content,
+      "The noisy block is now removed.",
     );
   } finally {
     await database.close();
@@ -1003,6 +1143,125 @@ test("patch errors identify context that no longer matches", async () => {
   }
 });
 
+test("generated ignores cannot hide patch-controlled files", async () => {
+  const root = await createRepository("overlapping-ignore");
+  try {
+    const project = createProjectTools([{ name: "project", root }]);
+    await project.initialize();
+    const document: LiterateDiff = {
+      summary: "Invalid ignore",
+      blocks: [
+        patchBlock("state", "project", "@@ -1,2 +1,2 @@\n-one\n+ONE\n two"),
+      ],
+      generatedIgnores: [
+        {
+          repository: "project",
+          path: "state.txt",
+          reason: "This path is controlled by a patch",
+        },
+      ],
+    };
+
+    await assert.rejects(
+      () => project.syncPatches(null, document),
+      /overlaps patch-controlled file project:state\.txt in block state/,
+    );
+    assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("failed rewind restores only patches that were actually reversed", async () => {
+  const root = await createRepository("rewind-rollback");
+  try {
+    await writeFile(join(root, "a.txt"), "a0\ncontext\n");
+    await writeFile(join(root, "b.txt"), "b0\ncontext\n");
+    await git(root, "add", "a.txt", "b.txt");
+    await git(root, "commit", "-qm", "add rewind fixtures");
+    const project = createProjectTools([{ name: "project", root }]);
+    await project.initialize();
+    const block = (
+      id: string,
+      path: string,
+      before: string,
+      after: string,
+    ) => ({
+      id,
+      kind: "apply_patch" as const,
+      repository: "project",
+      title: id,
+      rationale: id,
+      patch: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1,2 +1,2 @@\n-${before}\n+${after}\n context\n`,
+    });
+    const previous: LiterateDiff = {
+      summary: "Two changes",
+      blocks: [
+        block("change-a", "a.txt", "a0", "a1"),
+        block("change-b", "b.txt", "b0", "b1"),
+      ],
+      generatedIgnores: [],
+    };
+    await project.syncPatches(null, previous);
+    await writeFile(join(root, "a.txt"), "outside the diff\n");
+
+    await assert.rejects(
+      () =>
+        project.syncPatches(previous, {
+          summary: "Remove both",
+          blocks: [],
+          generatedIgnores: [],
+        }),
+      /while reversing block change-a/,
+    );
+    assert.equal(
+      await readFile(join(root, "a.txt"), "utf8"),
+      "outside the diff\n",
+    );
+    assert.equal(await readFile(join(root, "b.txt"), "utf8"), "b1\ncontext\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("re-anchor adopts one canonical patch per changed file", async () => {
+  const root = await createRepository("reanchor");
+  try {
+    const project = createProjectTools([{ name: "project", root }]);
+    await project.initialize();
+    await writeFile(join(root, "state.txt"), "ONE\ntwo\n");
+    const document: LiterateDiff = {
+      summary: "Canonical change",
+      blocks: [
+        patchBlock("state", "project", "@@ -1,2 +1,2 @@\n-one\n+ONE\n two"),
+      ],
+      generatedIgnores: [],
+    };
+
+    await project.reanchorPatches(document);
+
+    assert.equal(await readFile(join(root, "state.txt"), "utf8"), "ONE\ntwo\n");
+    assert.deepEqual(await project.checkConsistency([]), []);
+    await assert.rejects(
+      () =>
+        project.reanchorPatches({
+          ...document,
+          blocks: [
+            ...document.blocks,
+            patchBlock(
+              "duplicate-state",
+              "project",
+              "@@ -1,2 +1,2 @@\n-one\n+ONE\n two",
+            ),
+          ],
+        }),
+      /both control the file/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("consistency warnings collapse large changed folders", async () => {
   const root = await createRepository("compact-warnings");
   try {
@@ -1088,7 +1347,10 @@ test("patch replay and consistency are scoped across repositories", async () => 
       ...first,
       blocks: [revisedA, patchOther, patchB],
     };
-    await assert.rejects(() => project.syncPatches(first, broken), /at b/);
+    await assert.rejects(
+      () => project.syncPatches(first, broken),
+      /while applying block b/,
+    );
     assert.equal(
       await readFile(join(firstRoot, "state.txt"), "utf8"),
       "ONE\nTWO\n",

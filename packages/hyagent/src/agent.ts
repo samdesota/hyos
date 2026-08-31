@@ -151,6 +151,15 @@ function agentTools(repositories: readonly string[], webEnabled: boolean) {
       additionalProperties: false,
     }),
     tool(
+      "read_literate_diff",
+      "Read the authoritative current literate diff and revision number",
+      {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    ),
+    tool(
       "edit_literate_diff",
       "Edit the live review document. This is the only way to propose code changes.",
       {
@@ -159,6 +168,34 @@ function agentTools(repositories: readonly string[], webEnabled: boolean) {
           operations: { type: "array", minItems: 1, items: operation },
         },
         required: ["operations"],
+        additionalProperties: false,
+      },
+    ),
+    tool(
+      "reanchor_literate_diff",
+      "Recovery only: replace an unreplayable document with canonical patches that already describe the current worktree. Each changed file must appear in exactly one patch block.",
+      {
+        type: "object",
+        properties: {
+          operations: { type: "array", minItems: 1, items: operation },
+        },
+        required: ["operations"],
+        additionalProperties: false,
+      },
+    ),
+    tool(
+      "finish_run",
+      "Finish the run with an honest outcome. Use changed only after edit_literate_diff succeeded in this run.",
+      {
+        type: "object",
+        properties: {
+          outcome: {
+            type: "string",
+            enum: ["changed", "conversation", "blocked"],
+          },
+          message: { type: "string" },
+        },
+        required: ["outcome", "message"],
         additionalProperties: false,
       },
     ),
@@ -223,15 +260,15 @@ function systemPrompt(
 
 Repositories: ${repositories.join(", ")}.
 
-You may reply conversationally without creating or editing the literate diff when the user is discussing the task, asking a question, or clarifying the approach. Once you begin implementation, use edit_literate_diff early to write a high-level overview, then keep the document current as you investigate and work. A good document reads as ordinary technical prose with explanations next to the patches they justify. Use diagrams only when they clarify a real relationship.
+You may reply conversationally without creating or editing the literate diff when the user is discussing the task, asking a question, or clarifying the approach. Once you begin implementation, use edit_literate_diff early to write a high-level overview, then keep the document current as you investigate and work. A good document reads as ordinary technical prose with explanations next to the patches they justify. It is the final review artifact, not an append-only activity log: replace or remove probes, temporary scripts, failed approaches, duplicate file creations, and obsolete explanations as soon as they stop contributing to the final change. Use diagrams only when they clarify a real relationship.
 
 Before using read_file or run_command, start the literate diff with a high-level overview. Repository work must remain visible in the document as it happens; do not investigate the repository invisibly and write the document afterward.
 
-Patches are applied to the selected repository's current worktree as document blocks are added. If revising an earlier patch breaks a later patch, replay stops and the tool returns that failure for you to repair. Never use another editing mechanism.
+Patches are applied to the selected repository's current worktree as document blocks are added. You can replace, move, or remove any earlier block. Hyagent rewinds from the first changed patch and replays every later patch in order. If a later patch no longer applies, edit_literate_diff fails without saving the proposed revision and names the block and replay direction that failed. Repair that block, then retry the document edit. Use read_literate_diff whenever you need to confirm the authoritative current document instead of reconstructing it from earlier tool calls. If an old, internally inconsistent document cannot be rewound at all, reanchor_literate_diff can adopt a cleaned document only after verifying that it contains exactly one canonical final patch per changed file and covers the current worktree. Never use re-anchor for ordinary iteration. Never use another editing mechanism.
 
-Run search, tests, builds, formatters, and generators with run_command. If a command changes the worktree outside the literate diff, you will receive a WORKTREE_INCONSISTENT warning. Incorporate each meaningful change into a patch or list a generated path with a reason using set_generated_ignores.
+Run search, tests, builds, formatters, and generators with run_command. If a command changes the worktree outside the literate diff, you will receive a WORKTREE_INCONSISTENT warning. Incorporate each meaningful change into a patch or list a genuinely generated path with a reason using set_generated_ignores. Never ignore an implementation or test file, and never ignore a path controlled by a patch block.
 
-${webEnabled ? "Use web_search when current or external information would help, then web_fetch to inspect the most relevant sources in depth. Cite source URLs in conversational answers and in the literate diff when web research informs a decision.\n\n" : ""}When the work and document are coherent, respond normally without another tool call.`;
+${webEnabled ? "Use web_search when current or external information would help, then web_fetch to inspect the most relevant sources in depth. Cite source URLs in conversational answers and in the literate diff when web research informs a decision.\n\n" : ""}Finish every run with finish_run. Never claim that the document or worktree changed unless edit_literate_diff succeeded during this run; finish_run enforces this.`;
 }
 
 function warningText(warnings: readonly WorktreeWarning[]): string {
@@ -266,10 +303,39 @@ function toolActivity(name: string, args: Record<string, unknown>): string {
       .join(" ");
     return `Running ${command.slice(0, 140)}`;
   }
+  if (name === "read_literate_diff") return "Reading the literate diff";
   if (name === "edit_literate_diff") return "Updating the literate diff";
+  if (name === "reanchor_literate_diff")
+    return "Re-anchoring the literate diff";
+  if (name === "finish_run") return "Finishing the run";
   if (name === "web_search") return "Searching the web";
   if (name === "web_fetch") return "Reading web sources";
   return `Using ${name}`;
+}
+
+function toolFailureDetail(
+  name: string,
+  args: Record<string, unknown>,
+  error: string,
+): string {
+  const detail =
+    ["edit_literate_diff", "reanchor_literate_diff"].includes(name) &&
+    Array.isArray(args.operations)
+      ? {
+          operations: args.operations.map((value) => {
+            const operation = value as Record<string, unknown>;
+            const block = operation.block as
+              Record<string, unknown> | undefined;
+            return {
+              type: operation.type,
+              id: operation.id,
+              blockId: block?.id,
+            };
+          }),
+          error,
+        }
+      : { tool: name, error };
+  return JSON.stringify(detail).slice(0, 8_000);
 }
 
 export interface LiterateAgent {
@@ -356,11 +422,12 @@ export function createLiterateAgent(options: {
       const activity = (
         status: AgentActivityEvent["status"],
         summary: string,
+        detail?: string,
       ) =>
         options.store.appendMessage(
           sessionId,
           "system",
-          encodeActivityEvent({ runId, status, summary }),
+          encodeActivityEvent({ runId, status, summary, detail }),
         );
       await options.store.appendMessage(sessionId, "user", feedback);
       await options.store.setStatus(sessionId, "running");
@@ -374,6 +441,8 @@ export function createLiterateAgent(options: {
         const tools = agentTools(repositories, Boolean(options.web));
         const snapshot = await options.store.getSession(sessionId);
         document = documentFromSnapshot(snapshot.revision);
+        const initialRevisionNumber = snapshot.revision?.number ?? 0;
+        let savedRevisions = 0;
         const initialWarnings = await options.project.checkConsistency(
           document?.generatedIgnores ?? [],
         );
@@ -408,10 +477,9 @@ export function createLiterateAgent(options: {
 
         for (let step = 0; ; step += 1) {
           signal?.throwIfAborted();
-          await activity(
-            "working",
-            step === 0 ? "Planning the first pass" : "Reviewing tool results",
-          );
+          if (step === 0) {
+            await activity("working", "Planning the first pass");
+          }
           const response = await options.gateway.complete({
             model: selectedAgent,
             messages,
@@ -424,27 +492,26 @@ export function createLiterateAgent(options: {
           messages.push(response);
           const calls = response.tool_calls ?? [];
           if (calls.length === 0) {
-            const reply = response.content?.trim();
-            if (!document && !reply)
-              throw new Error("Agent returned an empty response");
-            await options.store.setStatus(sessionId, "ready");
-            await activity(
-              "complete",
-              document ? "Work complete" : "Response complete",
-            );
-            await options.store.appendMessage(
-              sessionId,
-              "agent",
-              reply || document!.summary,
-            );
-            return document;
+            messages.push({
+              role: "user",
+              content:
+                "You must finish with finish_run. If you changed the document, call edit_literate_diff successfully before choosing outcome=changed. Do not claim changes that were not saved.",
+            });
+            continue;
           }
 
+          let finish:
+            | {
+                outcome: "changed" | "conversation" | "blocked";
+                message: string;
+              }
+            | undefined;
           for (const call of calls) {
             signal?.throwIfAborted();
             let output: unknown;
+            let args: Record<string, unknown> = {};
             try {
-              const args = JSON.parse(call.function.arguments) as Record<
+              args = JSON.parse(call.function.arguments) as Record<
                 string,
                 unknown
               >;
@@ -480,6 +547,11 @@ export function createLiterateAgent(options: {
                   args.args,
                   signal,
                 );
+              } else if (call.function.name === "read_literate_diff") {
+                output = {
+                  revision: initialRevisionNumber + savedRevisions,
+                  document,
+                };
               } else if (
                 call.function.name === "edit_literate_diff" &&
                 Array.isArray(args.operations)
@@ -491,10 +563,59 @@ export function createLiterateAgent(options: {
                 await options.project.syncPatches(document, next);
                 document = await options.project.enrichDocument(next);
                 await options.store.saveRevision(sessionId, document);
+                savedRevisions += 1;
                 output = {
                   ok: true,
+                  revision: initialRevisionNumber + savedRevisions,
                   summary: document.summary,
                   blocks: document.blocks.map((block) => block.id),
+                };
+              } else if (
+                call.function.name === "reanchor_literate_diff" &&
+                Array.isArray(args.operations)
+              ) {
+                const operations = documentOperationsSchema.parse(
+                  args.operations,
+                );
+                const next = editLiterateDiff(document, operations);
+                await options.project.reanchorPatches(next);
+                document = await options.project.enrichDocument(next);
+                await options.store.saveRevision(sessionId, document);
+                savedRevisions += 1;
+                output = {
+                  ok: true,
+                  revision: initialRevisionNumber + savedRevisions,
+                  summary: document.summary,
+                  blocks: document.blocks.map((block) => block.id),
+                };
+              } else if (
+                call.function.name === "finish_run" &&
+                ["changed", "conversation", "blocked"].includes(
+                  String(args.outcome),
+                ) &&
+                typeof args.message === "string" &&
+                args.message.trim()
+              ) {
+                if (calls.length !== 1) {
+                  throw new Error("finish_run must be called by itself");
+                }
+                const outcome = args.outcome as
+                  "changed" | "conversation" | "blocked";
+                if (outcome === "changed" && savedRevisions === 0) {
+                  throw new Error(
+                    "Cannot finish with outcome=changed because no literate-diff revision was saved during this run",
+                  );
+                }
+                if (outcome === "conversation" && savedRevisions > 0) {
+                  throw new Error(
+                    "The literate diff changed during this run; finish with outcome=changed or outcome=blocked",
+                  );
+                }
+                finish = { outcome, message: args.message.trim() };
+                output = {
+                  ok: true,
+                  outcome,
+                  revision: initialRevisionNumber + savedRevisions,
                 };
               } else if (
                 call.function.name === "web_search" &&
@@ -551,8 +672,15 @@ export function createLiterateAgent(options: {
               }
             } catch (error) {
               if (signal?.aborted) throw signal.reason;
+              const message =
+                error instanceof Error ? error.message : String(error);
+              await activity(
+                "working",
+                `${toolActivity(call.function.name, args)} failed`,
+                toolFailureDetail(call.function.name, args, message),
+              );
               output = {
-                error: error instanceof Error ? error.message : String(error),
+                error: message,
               };
             }
             messages.push({
@@ -561,6 +689,23 @@ export function createLiterateAgent(options: {
               content:
                 typeof output === "string" ? output : JSON.stringify(output),
             });
+          }
+          if (finish) {
+            await options.store.setStatus(sessionId, "ready");
+            await activity(
+              "complete",
+              finish.outcome === "changed"
+                ? "Work complete"
+                : finish.outcome === "blocked"
+                  ? "Work blocked"
+                  : "Response complete",
+            );
+            await options.store.appendMessage(
+              sessionId,
+              "agent",
+              finish.message,
+            );
+            return document;
           }
         }
       } catch (error) {
