@@ -21,6 +21,7 @@ import { render } from "solid-js/web";
 
 import { decodeActivityEvent, type AgentActivityEvent } from "./activity.js";
 import type { LiterateBlock } from "./domain.js";
+import { renderAgentMarkdown } from "./markdown.js";
 import type { HyagentRouter } from "./trpc.js";
 import "./styles.css";
 
@@ -96,6 +97,20 @@ function threadTimeline(messages: readonly ThreadMessage[]): ThreadItem[] {
     run.events.push({ activity, createdAt: message.createdAt });
   }
   return items;
+}
+
+function MessageBody(props: { message: ThreadMessage }) {
+  return (
+    <Show
+      when={props.message.role === "agent"}
+      fallback={<p>{props.message.content}</p>}
+    >
+      <div
+        class="message-markdown"
+        innerHTML={renderAgentMarkdown(props.message.content)}
+      />
+    </Show>
+  );
 }
 
 function ActivityStream(props: { run: ActivityRun }) {
@@ -749,7 +764,7 @@ function VariantA(props: WorkspaceProps) {
                       </span>
                       <time>{formatTime(message().createdAt)}</time>
                     </header>
-                    <p>{message().content}</p>
+                    <MessageBody message={message()} />
                   </article>
                 )}
               </Show>
@@ -868,7 +883,7 @@ function VariantB(props: WorkspaceProps) {
                 <span>{String(index() + 1).padStart(2, "0")}</span>
                 <div>
                   <b>{message.role}</b>
-                  <p>{message.content}</p>
+                  <MessageBody message={message} />
                 </div>
               </li>
             )}
@@ -967,7 +982,7 @@ function VariantC(props: WorkspaceProps) {
                   </b>
                   <time>{formatTime(message.createdAt)}</time>
                 </header>
-                <p>{message.content}</p>
+                <MessageBody message={message} />
               </article>
             )}
           </For>

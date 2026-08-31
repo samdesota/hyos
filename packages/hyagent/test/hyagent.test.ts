@@ -14,6 +14,7 @@ import { editLiterateDiff } from "../src/document.js";
 import type { LiterateDiff, SessionListItem } from "../src/domain.js";
 import type { GatewayMessage, GatewayTransport } from "../src/gateway.js";
 import { hyagentSchema } from "../src/model.js";
+import { renderAgentMarkdown } from "../src/markdown.js";
 import { createProjectTools, type ProjectTools } from "../src/project-tools.js";
 import { createHyagentStore } from "../src/store.js";
 import { createHyagentRouter } from "../src/trpc.js";
@@ -115,6 +116,17 @@ test("document operations preserve stable blocks and generated ignores", () => {
 
   assert.equal(second.blocks[0]?.id, "overview");
   assert.equal(second.generatedIgnores[0]?.path, "coverage/**");
+});
+
+test("agent Markdown renders as formatted, safe HTML", () => {
+  const rendered = renderAgentMarkdown(
+    "**Decision**\n\n- keep context\n- show `code`\n\n<script>alert(1)</script>",
+  );
+
+  assert.match(rendered, /<strong>Decision<\/strong>/);
+  assert.match(rendered, /<ul>/);
+  assert.match(rendered, /<code>code<\/code>/);
+  assert.doesNotMatch(rendered, /<script>/);
 });
 
 test("a configured workspace opens an empty thread", () => {

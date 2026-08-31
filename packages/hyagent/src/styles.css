@@ -293,6 +293,93 @@ button:disabled {
   color: #8c887e;
   font-style: italic;
 }
+
+.message-markdown > :first-child {
+  margin-top: 7px;
+}
+
+.message-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.message-markdown p,
+.message-markdown li {
+  color: inherit;
+  font-size: inherit;
+  line-height: 1.55;
+}
+
+.message-markdown p {
+  margin: 7px 0 0;
+}
+
+.message-markdown ul,
+.message-markdown ol {
+  margin: 7px 0 0;
+  padding-left: 20px;
+}
+
+.message-markdown li + li {
+  margin-top: 3px;
+}
+
+.message-markdown h1,
+.message-markdown h2,
+.message-markdown h3 {
+  margin: 12px 0 0;
+  color: #dfe3e8;
+  line-height: 1.35;
+}
+
+.message-markdown h1 {
+  font-size: 14px;
+}
+
+.message-markdown h2 {
+  font-size: 13px;
+}
+
+.message-markdown h3 {
+  font-size: 12px;
+}
+
+.message-markdown code {
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: #252b33;
+  color: #d9e2ec;
+  font:
+    0.92em "DM Mono",
+    monospace;
+}
+
+.message-markdown pre {
+  overflow-x: auto;
+  margin: 9px 0 0;
+  padding: 9px;
+  border: 1px solid #303842;
+  border-radius: 4px;
+  background: #0f1318;
+}
+
+.message-markdown pre code {
+  padding: 0;
+  background: transparent;
+  white-space: pre;
+}
+
+.message-markdown blockquote {
+  margin: 9px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid #4b5663;
+  color: #89939f;
+}
+
+.message-markdown a {
+  color: #9fb1f5;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .thinking p span {
   padding-left: 4px;
   letter-spacing: 3px;
