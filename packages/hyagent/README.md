@@ -14,6 +14,10 @@ AI_GATEWAY_API_KEY=... npm run dev:hyagent
 
 Open <http://127.0.0.1:5184/>. The agent server runs on port `4328`.
 
+Set `PARALLEL_API_KEY` alongside the gateway key to enable the agent's `web_search`
+and `web_fetch` tools. Search returns a bounded set of relevant sources and excerpts;
+fetch reads up to ten selected pages as focused or full Markdown content.
+
 The + button opens a new-task draft without creating a persisted session. Choose one
 or more Git repositories, decide whether to use the selected checkouts or create
 isolated worktrees, enter the initial prompt, and press Enter to start. The session is

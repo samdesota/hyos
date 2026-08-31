@@ -10,6 +10,7 @@ import type { LiterateDiff } from "./domain.js";
 import type { GatewayMessage, GatewayTransport } from "./gateway.js";
 import type { ProjectTools, WorktreeWarning } from "./project-tools.js";
 import type { HyagentStore } from "./store.js";
+import type { AgentWebTools } from "./web-tools.js";
 
 function tool(name: string, description: string, parameters: object) {
   return { type: "function", function: { name, description, parameters } };
@@ -55,7 +56,7 @@ const blockSchema = {
   ],
 };
 
-function agentTools(repositories: readonly string[]) {
+function agentTools(repositories: readonly string[], webEnabled: boolean) {
   const repository = { type: "string", enum: repositories };
   const operation = {
     oneOf: [
@@ -160,10 +161,63 @@ function agentTools(repositories: readonly string[]) {
         additionalProperties: false,
       },
     ),
+    ...(webEnabled
+      ? [
+          tool(
+            "web_search",
+            "Search the public web and return relevant URLs with focused excerpts.",
+            {
+              type: "object",
+              properties: {
+                objective: {
+                  type: "string",
+                  description:
+                    "A self-contained description of the question the search should answer.",
+                },
+                search_queries: {
+                  type: "array",
+                  minItems: 1,
+                  maxItems: 3,
+                  items: { type: "string" },
+                  description:
+                    "Concise keyword queries, ideally 3-6 words each.",
+                },
+              },
+              required: ["objective", "search_queries"],
+              additionalProperties: false,
+            },
+          ),
+          tool(
+            "web_fetch",
+            "Fetch one or more public URLs as clean Markdown, optionally focused on an objective.",
+            {
+              type: "object",
+              properties: {
+                urls: {
+                  type: "array",
+                  minItems: 1,
+                  maxItems: 10,
+                  items: { type: "string", format: "uri" },
+                },
+                objective: {
+                  type: "string",
+                  description:
+                    "What to extract from the pages. Omit to fetch full page content.",
+                },
+              },
+              required: ["urls"],
+              additionalProperties: false,
+            },
+          ),
+        ]
+      : []),
   ];
 }
 
-function systemPrompt(repositories: readonly string[]): string {
+function systemPrompt(
+  repositories: readonly string[],
+  webEnabled: boolean,
+): string {
   return `You are hyagent. Your product is a live literate diff, not a hidden implementation followed by a summary.
 
 Repositories: ${repositories.join(", ")}.
@@ -174,7 +228,7 @@ Patches are applied to the selected repository's current worktree as document bl
 
 Run search, tests, builds, formatters, and generators with run_command. If a command changes the worktree outside the literate diff, you will receive a WORKTREE_INCONSISTENT warning. Incorporate each meaningful change into a patch or list a generated path with a reason using set_generated_ignores.
 
-When the work and document are coherent, respond normally without another tool call.`;
+${webEnabled ? "Use web_search when current or external information would help, then web_fetch to inspect the most relevant sources in depth. Cite source URLs in conversational answers and in the literate diff when web research informs a decision.\n\n" : ""}When the work and document are coherent, respond normally without another tool call.`;
 }
 
 function warningText(warnings: readonly WorktreeWarning[]): string {
@@ -210,6 +264,8 @@ function toolActivity(name: string, args: Record<string, unknown>): string {
     return `Running ${command.slice(0, 140)}`;
   }
   if (name === "edit_literate_diff") return "Updating the literate diff";
+  if (name === "web_search") return "Searching the web";
+  if (name === "web_fetch") return "Reading web sources";
   return `Using ${name}`;
 }
 
@@ -232,6 +288,7 @@ export function createLiterateAgent(options: {
   store: HyagentStore;
   project: ProjectTools;
   gateway: GatewayTransport;
+  web?: AgentWebTools;
   model?: string;
   maxSteps?: number;
 }): LiterateAgent {
@@ -305,14 +362,17 @@ export function createLiterateAgent(options: {
       try {
         await options.project.initialize();
         const repositories = options.project.repositoryNames();
-        const tools = agentTools(repositories);
+        const tools = agentTools(repositories, Boolean(options.web));
         const snapshot = await options.store.getSession(sessionId);
         let document = documentFromSnapshot(snapshot.revision);
         const initialWarnings = await options.project.checkConsistency(
           document?.generatedIgnores ?? [],
         );
         const messages: GatewayMessage[] = [
-          { role: "system", content: systemPrompt(repositories) },
+          {
+            role: "system",
+            content: systemPrompt(repositories, Boolean(options.web)),
+          },
           ...snapshot.messages
             .filter(
               (message) =>
@@ -413,6 +473,37 @@ export function createLiterateAgent(options: {
                   summary: document.summary,
                   blocks: document.blocks.map((block) => block.id),
                 };
+              } else if (
+                call.function.name === "web_search" &&
+                options.web &&
+                typeof args.objective === "string" &&
+                Array.isArray(args.search_queries) &&
+                args.search_queries.every((query) => typeof query === "string")
+              ) {
+                output = await options.web.search(
+                  {
+                    objective: args.objective,
+                    searchQueries: args.search_queries,
+                  },
+                  runId,
+                );
+              } else if (
+                call.function.name === "web_fetch" &&
+                options.web &&
+                Array.isArray(args.urls) &&
+                args.urls.every((url) => typeof url === "string") &&
+                (args.objective === undefined ||
+                  typeof args.objective === "string")
+              ) {
+                output = await options.web.fetch(
+                  {
+                    urls: args.urls,
+                    ...(typeof args.objective === "string"
+                      ? { objective: args.objective }
+                      : {}),
+                  },
+                  runId,
+                );
               } else {
                 throw new Error("Invalid or unknown tool call");
               }

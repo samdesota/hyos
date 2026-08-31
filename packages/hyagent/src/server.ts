@@ -14,6 +14,7 @@ import { hyagentSchema } from "./model.js";
 import { createProjectTools, type RepositorySpec } from "./project-tools.js";
 import { createHyagentStore } from "./store.js";
 import { createHyagentRouter } from "./trpc.js";
+import { createParallelWebTools } from "./web-tools.js";
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.HYAGENT_PORT ?? 4328);
@@ -64,10 +65,14 @@ const gateway = apiKey
       baseUrl: process.env.AI_GATEWAY_BASE_URL,
     })
   : unavailableGateway;
+const parallelApiKey = process.env.PARALLEL_API_KEY;
 const agent = createLiterateAgent({
   store,
   project,
   gateway,
+  web: parallelApiKey
+    ? createParallelWebTools({ apiKey: parallelApiKey })
+    : undefined,
   model: process.env.HYAGENT_MODEL,
 });
 const router = createHyagentRouter({

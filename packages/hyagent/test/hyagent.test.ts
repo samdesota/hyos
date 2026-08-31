@@ -19,6 +19,7 @@ import { createProjectTools, type ProjectTools } from "../src/project-tools.js";
 import { createHyagentStore } from "../src/store.js";
 import { createHyagentRouter } from "../src/trpc.js";
 import { shouldShowWorkspacePicker } from "../src/workspace-state.js";
+import { createParallelWebTools } from "../src/web-tools.js";
 
 const exec = promisify(execFile);
 
@@ -127,6 +128,56 @@ test("agent Markdown renders as formatted, safe HTML", () => {
   assert.match(rendered, /<ul>/);
   assert.match(rendered, /<code>code<\/code>/);
   assert.doesNotMatch(rendered, /<script>/);
+});
+
+test("Parallel web tools send bounded search and fetch requests", async () => {
+  const requests: Array<{ url: string; init: RequestInit }> = [];
+  const web = createParallelWebTools({
+    apiKey: "parallel-test-key",
+    fetch: async (input, init) => {
+      requests.push({ url: String(input), init: init ?? {} });
+      return new Response(JSON.stringify({ results: [], errors: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  await web.search(
+    {
+      objective: "Find current TypeScript release notes",
+      searchQueries: ["TypeScript release notes"],
+    },
+    "run-1",
+  );
+  await web.fetch(
+    { urls: ["https://example.com/docs"], objective: "Read the API changes" },
+    "run-1",
+  );
+
+  assert.deepEqual(
+    requests.map(({ url }) => url),
+    ["https://api.parallel.ai/v1/search", "https://api.parallel.ai/v1/extract"],
+  );
+  assert.equal(
+    (requests[0]?.init.headers as Record<string, string>)["x-api-key"],
+    "parallel-test-key",
+  );
+  assert.deepEqual(JSON.parse(String(requests[0]?.init.body)), {
+    objective: "Find current TypeScript release notes",
+    search_queries: ["TypeScript release notes"],
+    advanced_settings: {
+      max_results: 6,
+      excerpt_settings: { max_chars_per_result: 3_000 },
+    },
+    session_id: "run-1",
+  });
+  assert.deepEqual(JSON.parse(String(requests[1]?.init.body)), {
+    urls: ["https://example.com/docs"],
+    objective: "Read the API changes",
+    max_chars_total: 30_000,
+    session_id: "run-1",
+  });
 });
 
 test("a configured workspace opens an empty thread", () => {
@@ -244,6 +295,90 @@ test("the custom loop publishes document edits before it finishes", async () => 
         "complete",
       ],
     );
+  } finally {
+    await database.close();
+  }
+});
+
+test("the custom loop exposes and routes web search and fetch tools", async () => {
+  const { database, store } = await setup();
+  const requests: GatewayMessage[] = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "search",
+          function: {
+            name: "web_search",
+            arguments: JSON.stringify({
+              objective: "Find the current documentation",
+              search_queries: ["current documentation"],
+            }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "fetch",
+          function: {
+            name: "web_fetch",
+            arguments: JSON.stringify({
+              urls: ["https://example.com/docs"],
+              objective: "Read the relevant interface",
+            }),
+          },
+        },
+      ],
+    },
+    { role: "assistant", content: "I found the current interface." },
+  ];
+  const offeredTools: string[] = [];
+  const gateway: GatewayTransport = {
+    async complete(request) {
+      if (offeredTools.length === 0) {
+        offeredTools.push(
+          ...(
+            (request.tools ?? []) as Array<{
+              function: { name: string };
+            }>
+          ).map((entry) => entry.function.name),
+        );
+      }
+      const response = requests.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+  const webCalls: string[] = [];
+  try {
+    const session = await store.createSession("Research an interface");
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+      web: {
+        async search() {
+          webCalls.push("search");
+          return { results: [] };
+        },
+        async fetch() {
+          webCalls.push("fetch");
+          return { results: [] };
+        },
+      },
+    });
+
+    await agent.run(session.id, "Look this up before changing anything");
+
+    assert.ok(offeredTools.includes("web_search"));
+    assert.ok(offeredTools.includes("web_fetch"));
+    assert.deepEqual(webCalls, ["search", "fetch"]);
+    assert.equal((await store.getSession(session.id)).status, "ready");
   } finally {
     await database.close();
   }

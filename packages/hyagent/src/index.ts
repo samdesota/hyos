@@ -1,4 +1,5 @@
 export { createLiterateAgent, type LiterateAgent } from "./agent.js";
+export { createParallelWebTools, type AgentWebTools } from "./web-tools.js";
 export {
   documentOperationSchema,
   documentOperationsSchema,
