@@ -77,4 +77,6 @@ remain available as read-only document tabs.
 
 Repositories may provide an executable root-level `yeet.sh` for their own merge or
 delivery workflow. Yeet is disabled when no selected repository has the script;
-otherwise it runs each available hook from that repository's root.
+otherwise it runs each available hook from that repository's root. If the worktree
+is dirty, Yeet opens the editable commit-message control as “Commit & Yeet” and runs
+the hook only after the literate diff is committed and the worktree is clean.

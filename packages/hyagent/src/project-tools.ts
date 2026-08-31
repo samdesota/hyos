@@ -366,6 +366,7 @@ export interface ProjectTools {
     document: LiterateDiff,
     messages: Readonly<Record<string, string>>,
   ): Promise<CommitResult[]>;
+  dirtyRepositories(specs?: readonly RepositorySpec[]): Promise<string[]>;
   yeetRepositories(specs?: readonly RepositorySpec[]): Promise<string[]>;
   yeet(): Promise<YeetResult[]>;
   enrichDocument(document: LiterateDiff): Promise<LiterateDiff>;
@@ -891,6 +892,16 @@ export function createProjectTools(
         });
       }
       return results;
+    },
+    async dirtyRepositories(specs) {
+      const dirty: string[] = [];
+      const candidates = specs
+        ? specs.map(({ name, root }) => [name, resolve(root)] as const)
+        : [...repositories];
+      for (const [repository, root] of candidates) {
+        if ((await changedPaths(root)).length > 0) dirty.push(repository);
+      }
+      return dirty;
     },
     async yeetRepositories(specs) {
       const available: string[] = [];

@@ -173,6 +173,7 @@ interface WorkspaceProps {
   following: boolean;
   commitOpen: boolean;
   commitLoading: boolean;
+  commitAndYeet: boolean;
   commitMessages: CommitMessages;
   yeetRepositories: readonly string[];
   yeeting: boolean;
@@ -500,7 +501,7 @@ function CommitControls(props: WorkspaceProps) {
                 disabled={props.busy || !validMessages()}
                 onClick={props.confirmCommit}
               >
-                Commit changes
+                {props.commitAndYeet ? "Commit & Yeet" : "Commit changes"}
               </button>
             </Show>
           </div>
@@ -1264,6 +1265,7 @@ function App() {
   const [initialized, setInitialized] = createSignal(false);
   const [commitOpen, setCommitOpen] = createSignal(false);
   const [commitLoading, setCommitLoading] = createSignal(false);
+  const [commitAndYeet, setCommitAndYeet] = createSignal(false);
   const [commitMessages, setCommitMessages] = createSignal<CommitMessages>({});
   const [yeetRepositories, setYeetRepositories] = createSignal<string[]>([]);
   const [yeeting, setYeeting] = createSignal(false);
@@ -1301,6 +1303,7 @@ function App() {
     setRepositories(recentRepositories().slice(0, 1));
     setComments([]);
     setCommitOpen(false);
+    setCommitAndYeet(false);
     setCommitMessages({});
     setYeetRepositories([]);
     setSelectedDiffId("");
@@ -1310,7 +1313,8 @@ function App() {
   }
   async function refreshYeetStatus(id: string) {
     try {
-      setYeetRepositories(await client.session.yeetStatus.query({ id }));
+      const status = await client.session.yeetStatus.query({ id });
+      setYeetRepositories([...status.availableRepositories]);
     } catch {
       setYeetRepositories([]);
     }
@@ -1328,6 +1332,7 @@ function App() {
       setRepositories([...opened.repositories]);
       setComments([]);
       setCommitOpen(false);
+      setCommitAndYeet(false);
       setCommitMessages({});
       void refreshYeetStatus(id);
       if (historyMode) setSessionUrl(id, historyMode);
@@ -1495,13 +1500,10 @@ function App() {
         .join("\n")}`,
       () => setComments([]),
     );
-  const toggleCommit = async () => {
+  const openCommit = async (andYeet: boolean) => {
     const current = session();
     if (!current || busy()) return;
-    if (commitOpen()) {
-      setCommitOpen(false);
-      return;
-    }
+    setCommitAndYeet(andYeet);
     setCommitOpen(true);
     setCommitLoading(true);
     setCommitMessages({});
@@ -1522,32 +1524,53 @@ function App() {
       setOperationBusy(false);
     }
   };
+  const toggleCommit = () => {
+    if (commitOpen()) {
+      setCommitOpen(false);
+      setCommitAndYeet(false);
+      return;
+    }
+    void openCommit(false);
+  };
   const confirmCommit = async () => {
     const current = session();
     if (!current || busy()) return;
+    const shouldYeet = commitAndYeet();
     setOperationBusy(true);
     setError("");
     try {
-      setSession(
-        await client.session.commit.mutate({
-          id: current.id,
-          messages: commitMessages(),
-        }),
-      );
+      const committed = await client.session.commit.mutate({
+        id: current.id,
+        messages: commitMessages(),
+      });
+      setSession(committed);
       setCommitOpen(false);
+      setCommitAndYeet(false);
+      if (shouldYeet) {
+        setYeeting(true);
+        await client.session.yeet.mutate({ id: current.id });
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Commit failed");
     } finally {
+      setYeeting(false);
       setOperationBusy(false);
     }
   };
   const yeet = async () => {
     const current = session();
     if (!current || busy() || yeetRepositories().length === 0) return;
-    setYeeting(true);
     setOperationBusy(true);
     setError("");
     try {
+      const status = await client.session.yeetStatus.query({ id: current.id });
+      setYeetRepositories([...status.availableRepositories]);
+      if (status.dirtyRepositories.length > 0) {
+        setOperationBusy(false);
+        await openCommit(true);
+        return;
+      }
+      setYeeting(true);
       await client.session.yeet.mutate({ id: current.id });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "yeet.sh failed");
@@ -1624,6 +1647,7 @@ function App() {
       setCreatingNew(false);
       setComments([]);
       setCommitOpen(false);
+      setCommitAndYeet(false);
       setCommitMessages({});
       void refreshYeetStatus(started.session.id);
       setSessionUrl(started.session.id, "replace");
@@ -1654,6 +1678,7 @@ function App() {
         setRepositories([...opened.repositories]);
         setComments([]);
         setCommitOpen(false);
+        setCommitAndYeet(false);
         setCommitMessages({});
         void refreshYeetStatus(next.id);
         setSessionUrl(next.id, "replace");
@@ -1747,6 +1772,7 @@ function App() {
                     following={following()}
                     commitOpen={commitOpen()}
                     commitLoading={commitLoading()}
+                    commitAndYeet={commitAndYeet()}
                     commitMessages={commitMessages()}
                     yeetRepositories={yeetRepositories()}
                     yeeting={yeeting()}

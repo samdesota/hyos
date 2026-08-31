@@ -378,7 +378,11 @@ export function createHyagentRouter(options: {
         .input(z.object({ id: z.string().min(1) }))
         .query(async ({ input }) => {
           const repositories = await options.store.getWorkspace(input.id);
-          return options.project.yeetRepositories(repositories);
+          const [availableRepositories, dirtyRepositories] = await Promise.all([
+            options.project.yeetRepositories(repositories),
+            options.project.dirtyRepositories(repositories),
+          ]);
+          return { availableRepositories, dirtyRepositories };
         }),
       yeet: t.procedure
         .input(z.object({ id: z.string().min(1) }))
@@ -389,6 +393,12 @@ export function createHyagentRouter(options: {
             );
           }
           await activateSession(input.id);
+          const dirtyRepositories = await options.project.dirtyRepositories();
+          if (dirtyRepositories.length > 0) {
+            throw new Error(
+              `Commit changes before running yeet.sh: ${dirtyRepositories.join(", ")}`,
+            );
+          }
           const results = await options.project.yeet();
           await options.store.appendMessage(
             input.id,

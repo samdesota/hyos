@@ -106,6 +106,7 @@ function fakeProject(overrides: Partial<ProjectTools> = {}): ProjectTools {
     }),
     checkConsistency: async () => [],
     commit: async () => [],
+    dirtyRepositories: async () => [],
     yeetRepositories: async () => [],
     yeet: async () => [],
     enrichDocument: async (document) => document,
@@ -1749,6 +1750,7 @@ test("project discovers and runs each root-level yeet.sh", async () => {
       { name: "first", root: firstRoot },
       { name: "second", root: secondRoot },
     ]);
+    assert.deepEqual(await project.dirtyRepositories(), []);
     assert.deepEqual(await project.yeetRepositories(), []);
     await assert.rejects(
       () => project.yeet(),
@@ -1762,6 +1764,7 @@ test("project discovers and runs each root-level yeet.sh", async () => {
     );
 
     assert.deepEqual(await project.yeetRepositories(), ["first"]);
+    assert.deepEqual(await project.dirtyRepositories(), ["first"]);
     assert.deepEqual(
       (await project.yeet()).map(({ repository }) => repository),
       ["first"],
@@ -1975,7 +1978,11 @@ test("commit messages are generated before an editable message is committed", as
 test("yeet reports availability and runs the project workflow", async () => {
   const { database, store } = await setup();
   let runs = 0;
+  let dirtyRepositories = ["workspace"];
   const project = fakeProject({
+    async dirtyRepositories() {
+      return dirtyRepositories;
+    },
     async yeetRepositories() {
       return ["workspace"];
     },
@@ -1992,9 +1999,17 @@ test("yeet reports availability and runs the project workflow", async () => {
     }).createCaller({});
     const session = await caller.session.bootstrap();
 
-    assert.deepEqual(await caller.session.yeetStatus({ id: session.id }), [
-      "workspace",
-    ]);
+    assert.deepEqual(await caller.session.yeetStatus({ id: session.id }), {
+      availableRepositories: ["workspace"],
+      dirtyRepositories: ["workspace"],
+    });
+    await assert.rejects(
+      () => caller.session.yeet({ id: session.id }),
+      /Commit changes before running yeet\.sh: workspace/,
+    );
+    assert.equal(runs, 0);
+
+    dirtyRepositories = [];
     assert.equal(
       (await caller.session.yeet({ id: session.id }))[0]?.stdout,
       "done",
