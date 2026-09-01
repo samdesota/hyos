@@ -198,6 +198,17 @@ function fakeProject(overrides: Partial<ProjectTools> = {}): ProjectTools {
     initialize: async () => undefined,
     readFile: async () => "",
     runCommand: async () => "",
+    backgroundCommand: async (_owner, action) => ({
+      processId: "processId" in action ? action.processId : "background-1",
+      status: action.type === "stop" ? "exited" : "running",
+      stdout: "",
+      stderr: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      exitCode: action.type === "stop" ? 0 : null,
+      signal: null,
+    }),
+    stopBackgroundCommands: async () => undefined,
     validateDocumentEdit: async () => undefined,
     movePatchCursor: async (_document, _appliedThrough, target) => ({
       appliedThrough: target,
@@ -1012,6 +1023,132 @@ test("run_command offers unrestricted executables to the agent", async () => {
   }
 });
 
+test("the agent starts, reads, writes, and stops background commands", async () => {
+  const { database, store } = await setup();
+  const responses: GatewayMessage[] = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "overview",
+          function: {
+            name: "edit_literate_diff",
+            arguments: JSON.stringify({
+              operations: [
+                { type: "set_summary", summary: "Run an interactive check" },
+              ],
+            }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "start",
+          function: {
+            name: "start_background_command",
+            arguments: JSON.stringify({
+              repository: "workspace",
+              command: "test-runner",
+              args: ["--watch"],
+            }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "write",
+          function: {
+            name: "write_background_stdin",
+            arguments: JSON.stringify({
+              process_id: "background-1",
+              input: "r\n",
+            }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "read",
+          function: {
+            name: "read_background_command",
+            arguments: JSON.stringify({
+              process_id: "background-1",
+              wait_ms: 1_000,
+            }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "stop",
+          function: {
+            name: "stop_background_command",
+            arguments: JSON.stringify({ process_id: "background-1" }),
+          },
+        },
+      ],
+    },
+    finishRun("The interactive command completed."),
+  ];
+  const actions: string[] = [];
+  const gateway: GatewayTransport = {
+    async complete() {
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+  try {
+    const session = await store.createSession("Run an interactive command");
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject({
+        async backgroundCommand(_owner, action) {
+          actions.push(action.type);
+          return {
+            processId:
+              "processId" in action ? action.processId : "background-1",
+            status: action.type === "stop" ? "exited" : "running",
+            stdout: action.type === "read" ? "tests passed\n" : "",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            exitCode: action.type === "stop" ? 0 : null,
+            signal: null,
+          };
+        },
+        async stopBackgroundCommands() {
+          actions.push("cleanup");
+        },
+      }),
+      gateway,
+    });
+
+    await agent.run(session.id, "Run tests interactively");
+
+    assert.deepEqual(actions, ["start", "write", "read", "stop", "cleanup"]);
+  } finally {
+    await database.close();
+  }
+});
+
 test("the custom loop exposes and routes web search and fetch tools", async () => {
   const { database, store } = await setup();
   const requests: GatewayMessage[] = [
@@ -1558,6 +1695,56 @@ test("manual command changes run and produce consistency warnings", async () => 
       ["state.txt"],
     );
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("background commands stream output and accept stdin", async () => {
+  const root = await createRepository("background-command");
+  const project = createProjectTools([{ name: "project", root }]);
+  const owner = "agent-run";
+  try {
+    await project.initialize();
+    const started = await project.backgroundCommand(owner, {
+      type: "start",
+      repository: "project",
+      command: process.execPath,
+      args: [
+        "-e",
+        "process.stdin.setEncoding('utf8'); process.stdin.on('data', value => { process.stdout.write('out:' + value); process.stderr.write('err:' + value); }); process.stdin.on('end', () => process.exit(0));",
+      ],
+    });
+    assert.equal(started.status, "running");
+
+    const written = await project.backgroundCommand(owner, {
+      type: "write",
+      processId: started.processId,
+      input: "hello\n",
+      closeStdin: true,
+    });
+    const reads = [];
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const result = await project.backgroundCommand(owner, {
+        type: "read",
+        processId: started.processId,
+        waitMs: 2_000,
+      });
+      reads.push(result);
+      if (result.status !== "running") break;
+    }
+
+    assert.match(
+      `${written.stdout}${reads.map((read) => read.stdout).join("")}`,
+      /out:hello/,
+    );
+    assert.match(
+      `${written.stderr}${reads.map((read) => read.stderr).join("")}`,
+      /err:hello/,
+    );
+    assert.equal(reads.at(-1)?.status, "exited");
+    assert.equal(reads.at(-1)?.exitCode, 0);
+  } finally {
+    await project.stopBackgroundCommands(owner);
     await rm(root, { recursive: true, force: true });
   }
 });

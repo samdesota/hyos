@@ -19,6 +19,10 @@ import type {
   LiterateBlock,
   WorkspaceRepository,
 } from "./domain.js";
+import {
+  createBackgroundCommandManager,
+  type BackgroundCommandSnapshot,
+} from "./background-commands.js";
 import { operationPaths, type FileOperation } from "./file-operations.js";
 
 const MAX_OUTPUT = 60_000;
@@ -63,6 +67,22 @@ export interface PatchCursorResult {
     error: string;
   };
 }
+
+export type BackgroundCommandAction =
+  | {
+      type: "start";
+      repository: string;
+      command: string;
+      args: readonly string[];
+    }
+  | { type: "read"; processId: string; waitMs?: number }
+  | {
+      type: "write";
+      processId: string;
+      input: string;
+      closeStdin?: boolean;
+    }
+  | { type: "stop"; processId: string };
 
 type PatchBlock = Extract<LiterateBlock, { kind: "apply_patch" }>;
 type PatchRef = Pick<PatchBlock, "id" | "repository" | "operations">;
@@ -329,6 +349,11 @@ export interface ProjectTools {
     args: readonly string[],
     signal?: AbortSignal,
   ): Promise<string>;
+  backgroundCommand(
+    owner: string,
+    action: BackgroundCommandAction,
+  ): Promise<BackgroundCommandSnapshot>;
+  stopBackgroundCommands(owner: string): Promise<void>;
   validateDocumentEdit(
     previous: LiterateDiff | null,
     next: LiterateDiff,
@@ -367,6 +392,7 @@ export function createProjectTools(
     specs.map((spec) => [spec.name, resolve(spec.root)] as const),
   );
   const expected = new Map<string, Snapshot>();
+  const backgroundCommands = createBackgroundCommandManager();
   const historyRoot = resolve(options.historyRoot ?? ".data/hyagent-baselines");
   let activeBaseline: string | undefined;
 
@@ -796,6 +822,33 @@ export function createProjectTools(
         await runProcess(command, args, rootFor(repository), undefined, signal),
       );
     },
+    async backgroundCommand(owner, action) {
+      switch (action.type) {
+        case "start":
+          return backgroundCommands.start(
+            owner,
+            rootFor(action.repository),
+            action.command,
+            action.args,
+          );
+        case "read":
+          return backgroundCommands.read(
+            owner,
+            action.processId,
+            action.waitMs,
+          );
+        case "write":
+          return backgroundCommands.write(
+            owner,
+            action.processId,
+            action.input,
+            action.closeStdin,
+          );
+        case "stop":
+          return backgroundCommands.stop(owner, action.processId);
+      }
+    },
+    stopBackgroundCommands: (owner) => backgroundCommands.stopOwner(owner),
     async validateDocumentEdit(previous, next, appliedThrough) {
       await initialize();
       assertGeneratedIgnoresDoNotHidePatches(next);

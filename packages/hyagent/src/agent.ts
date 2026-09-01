@@ -195,6 +195,57 @@ function agentTools(repositories: readonly string[], webEnabled: boolean) {
       additionalProperties: false,
     }),
     tool(
+      "start_background_command",
+      "Start a command in a repository and return a processId for later interaction",
+      {
+        type: "object",
+        properties: {
+          repository,
+          command: { type: "string" },
+          args: { type: "array", items: { type: "string" } },
+        },
+        required: ["repository", "command", "args"],
+        additionalProperties: false,
+      },
+    ),
+    tool(
+      "read_background_command",
+      "Read new stdout/stderr and status from a background command. Optionally wait for output or exit.",
+      {
+        type: "object",
+        properties: {
+          process_id: { type: "string" },
+          wait_ms: { type: "integer", minimum: 0, maximum: 30_000 },
+        },
+        required: ["process_id"],
+        additionalProperties: false,
+      },
+    ),
+    tool(
+      "write_background_stdin",
+      "Write text to a running background command's stdin, optionally closing stdin afterward",
+      {
+        type: "object",
+        properties: {
+          process_id: { type: "string" },
+          input: { type: "string" },
+          close_stdin: { type: "boolean" },
+        },
+        required: ["process_id", "input"],
+        additionalProperties: false,
+      },
+    ),
+    tool(
+      "stop_background_command",
+      "Stop a background command and return its final unread output",
+      {
+        type: "object",
+        properties: { process_id: { type: "string" } },
+        required: ["process_id"],
+        additionalProperties: false,
+      },
+    ),
+    tool(
       "read_literate_diff",
       "Read the authoritative current literate diff and revision number",
       {
@@ -321,7 +372,7 @@ Rewind and replay deterministically materialize a document state: Hyagent restor
 
 To revise an applied patch, call rewind_literate_diff with the id of the patch immediately before it, or null when revising the first patch. Future steps stay in the document but become unapplied. Edit the target or later steps, then call replay_literate_diff through one step, a group, or the end. Read_literate_diff returns the cursor and pending step ids. A failed rewind or replay is normal: repair the reported first failing step and continue. There is no recovery mode or re-anchor operation. Do not simulate this workflow with Git commands or use another editing mechanism.
 
-Run any needed command with run_command. Commands may directly create, edit, move, or remove worktree files when that is useful. This is allowed, but any change outside the literate diff produces a WORKTREE_INCONSISTENT warning. Incorporate each meaningful change into a patch or list a genuinely generated path with a reason using set_generated_ignores. Never ignore an implementation or test file, and never ignore a path controlled by a patch block.
+Run any needed command with run_command. For a long-running or interactive command, use start_background_command, then use its processId with read_background_command, write_background_stdin, or stop_background_command. A read returns only output accumulated since the previous interaction and can wait briefly for new output. Background commands are stopped automatically when this run ends. Commands may directly create, edit, move, or remove worktree files when that is useful. This is allowed, but any change outside the literate diff produces a WORKTREE_INCONSISTENT warning. Incorporate each meaningful change into a patch or list a genuinely generated path with a reason using set_generated_ignores. Never ignore an implementation or test file, and never ignore a path controlled by a patch block.
 
 ${webEnabled ? "Use web_search when current or external information would help, then web_fetch to inspect the most relevant sources in depth. Cite source URLs in conversational answers and in the literate diff when web research informs a decision.\n\n" : ""}Finish every run with finish_run. Outcome=changed is accepted only after a document or cursor change and only when every patch step is applied.`;
 }
@@ -374,6 +425,14 @@ function toolActivity(name: string, args: Record<string, unknown>): string {
       .join(" ");
     return `Running ${command.slice(0, 140)}`;
   }
+  if (name === "start_background_command") {
+    return `Starting ${String(args.command).slice(0, 120)} in the background`;
+  }
+  if (name === "read_background_command")
+    return "Reading background command output";
+  if (name === "write_background_stdin")
+    return "Writing to background command stdin";
+  if (name === "stop_background_command") return "Stopping background command";
   if (name === "read_literate_diff") return "Reading the literate diff";
   if (name === "edit_literate_diff") return "Updating the literate diff";
   if (name === "rewind_literate_diff") return "Rewinding the literate diff";
@@ -595,7 +654,8 @@ export function createLiterateAgent(options: {
               if (
                 !document &&
                 (call.function.name === "read_file" ||
-                  call.function.name === "run_command")
+                  call.function.name === "run_command" ||
+                  call.function.name === "start_background_command")
               ) {
                 throw new Error(
                   "Start the literate diff with a high-level overview before using repository tools",
@@ -623,6 +683,58 @@ export function createLiterateAgent(options: {
                   args.args,
                   signal,
                 );
+              } else if (
+                call.function.name === "start_background_command" &&
+                typeof args.repository === "string" &&
+                typeof args.command === "string" &&
+                Array.isArray(args.args) &&
+                args.args.every((arg) => typeof arg === "string")
+              ) {
+                output = await options.project.backgroundCommand(runId, {
+                  type: "start",
+                  repository: args.repository,
+                  command: args.command,
+                  args: args.args,
+                });
+              } else if (
+                call.function.name === "read_background_command" &&
+                typeof args.process_id === "string" &&
+                (args.wait_ms === undefined ||
+                  (typeof args.wait_ms === "number" &&
+                    Number.isInteger(args.wait_ms) &&
+                    args.wait_ms >= 0 &&
+                    args.wait_ms <= 30_000))
+              ) {
+                output = await options.project.backgroundCommand(runId, {
+                  type: "read",
+                  processId: args.process_id,
+                  ...(typeof args.wait_ms === "number"
+                    ? { waitMs: args.wait_ms }
+                    : {}),
+                });
+              } else if (
+                call.function.name === "write_background_stdin" &&
+                typeof args.process_id === "string" &&
+                typeof args.input === "string" &&
+                (args.close_stdin === undefined ||
+                  typeof args.close_stdin === "boolean")
+              ) {
+                output = await options.project.backgroundCommand(runId, {
+                  type: "write",
+                  processId: args.process_id,
+                  input: args.input,
+                  ...(typeof args.close_stdin === "boolean"
+                    ? { closeStdin: args.close_stdin }
+                    : {}),
+                });
+              } else if (
+                call.function.name === "stop_background_command" &&
+                typeof args.process_id === "string"
+              ) {
+                output = await options.project.backgroundCommand(runId, {
+                  type: "stop",
+                  processId: args.process_id,
+                });
               } else if (call.function.name === "read_literate_diff") {
                 output = {
                   revision: initialRevisionNumber + savedRevisions,
@@ -884,6 +996,8 @@ export function createLiterateAgent(options: {
         const message = error instanceof Error ? error.message : String(error);
         await activity("failed", `Run stopped: ${message.slice(0, 300)}`);
         throw error;
+      } finally {
+        await options.project.stopBackgroundCommands(runId);
       }
     },
   };
