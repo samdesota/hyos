@@ -27,22 +27,10 @@ const blockSchema = {
       type: "object",
       properties: {
         id: { type: "string" },
-        kind: { const: "prose" },
-        title: { type: "string" },
+        kind: { const: "markdown" },
         body: { type: "string" },
       },
-      required: ["id", "kind", "title", "body"],
-      additionalProperties: false,
-    },
-    {
-      type: "object",
-      properties: {
-        id: { type: "string" },
-        kind: { const: "diagram" },
-        title: { type: "string" },
-        body: { type: "string" },
-      },
-      required: ["id", "kind", "title", "body"],
+      required: ["id", "kind", "body"],
       additionalProperties: false,
     },
     {
@@ -366,7 +354,7 @@ function systemPrompt(
 
 Repositories: ${repositories.join(", ")}.
 
-You may reply conversationally without creating or editing the literate diff when the user is discussing the task, asking a question, or clarifying the approach. Once you begin implementation, use edit_literate_diff early to write a high-level overview, then keep the document current as you investigate and work. A good document reads as ordinary technical prose with explanations next to the patches they justify. It is the final review artifact, not an append-only activity log: replace or remove probes, temporary scripts, failed approaches, duplicate file creations, and obsolete explanations as soon as they stop contributing to the final change. Use diagrams only when they clarify a real relationship.
+You may reply conversationally without creating or editing the literate diff when the user is discussing the task, asking a question, or clarifying the approach. Once you begin implementation, use edit_literate_diff early to write a high-level overview, then keep the document current as you investigate and work. A good document uses Markdown blocks for headings, prose, lists, links, code, and explanations next to the patches they justify. Put a diagram in a fenced \`\`\`mermaid code block inside a Markdown block when it clarifies a real relationship. The Mermaid fence must stand on its own; never wrap it in an outer text or Markdown code fence. The literate diff is the final review artifact, not an append-only activity log: replace or remove probes, temporary scripts, failed approaches, duplicate file creations, and obsolete explanations as soon as they stop contributing to the final change.
 
 Before using read_file or run_command, start the literate diff with a high-level overview. Repository work must remain visible in the document as it happens; do not investigate the repository invisibly and write the document afterward.
 

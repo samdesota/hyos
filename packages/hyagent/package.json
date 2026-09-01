@@ -23,6 +23,7 @@
     "@hyos/hydb": "0.0.0",
     "@trpc/client": "^11.18.0",
     "@trpc/server": "^11.18.0",
+    "mermaid": "^11.17.2",
     "micromark": "^4.0.2",
     "solid-js": "^1.9.15",
     "ws": "^8.21.3",

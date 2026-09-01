@@ -2,17 +2,9 @@ import { z } from "zod";
 
 import { fileOperationSchema } from "./file-operations.js";
 
-export const proseBlockSchema = z.object({
+export const markdownBlockSchema = z.object({
   id: z.string().min(1),
-  kind: z.literal("prose"),
-  title: z.string().min(1).max(200),
-  body: z.string().min(1).max(40_000),
-});
-
-export const diagramBlockSchema = z.object({
-  id: z.string().min(1),
-  kind: z.literal("diagram"),
-  title: z.string().min(1).max(200),
+  kind: z.literal("markdown"),
   body: z.string().min(1).max(40_000),
 });
 
@@ -26,8 +18,7 @@ export const applyPatchBlockSchema = z.object({
 });
 
 export const literateBlockSchema = z.discriminatedUnion("kind", [
-  proseBlockSchema,
-  diagramBlockSchema,
+  markdownBlockSchema,
   applyPatchBlockSchema,
 ]);
 

@@ -25,7 +25,7 @@ import type { AgentOption } from "./agent-options.js";
 import type { LiterateBlock } from "./domain.js";
 import type { ReasoningEffort } from "./gateway.js";
 import { renderOperationsAsPatch } from "./file-operations.js";
-import { renderAgentMarkdown } from "./markdown.js";
+import { mountMarkdown, renderAgentMarkdown } from "./markdown.js";
 import {
   literateFileCollapsed,
   literateScrollTop,
@@ -370,6 +370,15 @@ function PatchFileView(props: {
   );
 }
 
+function MarkdownContent(props: { body: string }) {
+  let element!: HTMLDivElement;
+  createEffect(() => {
+    const dispose = mountMarkdown(element, props.body);
+    onCleanup(dispose);
+  });
+  return <div ref={element} class="message-markdown document-markdown" />;
+}
+
 function Block(props: {
   block: LiterateBlock;
   editing: boolean;
@@ -392,33 +401,22 @@ function Block(props: {
   };
   return (
     <article class={`diff-block block-${props.block.kind}`}>
-      <h3 class="document-section-title">{props.block.title}</h3>
       <Switch>
-        <Match when={props.block.kind === "prose"}>
+        <Match when={props.block.kind === "markdown"}>
           <div class="commentable-content">
-            <p>
-              {(props.block as Extract<LiterateBlock, { kind: "prose" }>).body}
-              <Show when={props.editing}>
-                <span class="agent-caret" />
-              </Show>
-            </p>
-            <button
-              class="add-comment"
-              onClick={() => startComment("Document text")}
-            >
-              +
-            </button>
-          </div>
-        </Match>
-        <Match when={props.block.kind === "diagram"}>
-          <div class="commentable-content">
-            <pre class="diagram">
-              {
-                (props.block as Extract<LiterateBlock, { kind: "diagram" }>)
+            <MarkdownContent
+              body={
+                (props.block as Extract<LiterateBlock, { kind: "markdown" }>)
                   .body
               }
-            </pre>
-            <button class="add-comment" onClick={() => setCommenting(true)}>
+            />
+            <Show when={props.editing}>
+              <span class="agent-caret markdown-caret" />
+            </Show>
+            <button
+              class="add-comment"
+              onClick={() => startComment("Document Markdown")}
+            >
               +
             </button>
           </div>
@@ -434,6 +432,7 @@ function Block(props: {
             );
             return (
               <>
+                <h3 class="document-section-title">{block.title}</h3>
                 <p class="rationale">{block.rationale}</p>
                 <For each={files}>
                   {(section, index) => (

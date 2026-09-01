@@ -3,9 +3,10 @@
 ## Goal
 
 Hyagent's output is a **literate diff**: a document the agent writes while it works.
-It begins with a high-level overview, then develops into prose, diagrams, and code
-patches. The explanation and implementation are one live artifact, so the engineer
-can review and redirect the work before it is finished.
+It begins with a high-level overview, then develops into Markdown and code patches.
+Markdown carries the explanation and can embed Mermaid diagrams. The explanation and
+implementation are one live artifact, so the engineer can review and redirect the
+work before it is finished.
 
 A single literate diff may span multiple repositories.
 
@@ -19,7 +20,7 @@ working surface.
 The literate diff contains:
 
 1. an overview of the intended change;
-2. an ordered body of prose, optional diagrams, and patch blocks; and
+2. an ordered body of Markdown and patch blocks; and
 3. an optional footer of generated worktree changes excluded from the patch.
 
 A patch block has a stable identity, repository, title, explanation, and ordered

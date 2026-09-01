@@ -1,8 +1,9 @@
 # hyagent POC
 
 `hyagent` is a server-side coding agent that works through a live literate diff: an
-ordered document of prose, optional diagrams, and patches. Document edits persist as
-the model works, and patch blocks synchronize the current worktree immediately.
+ordered document of Markdown and executable patch blocks. Markdown blocks support
+Mermaid diagrams through fenced `mermaid` code blocks. Document edits persist as the
+model works, and patch blocks synchronize the current worktree immediately.
 
 See [DESIGN.md](./DESIGN.md) for the minimal design.
 

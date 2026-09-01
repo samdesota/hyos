@@ -20,9 +20,10 @@ builds, formatting, and generation remain ordinary commands rather than becoming
 validation framework.
 
 `edit_literate_diff` is the only code-writing path. It can change the document summary,
-insert or revise prose and diagrams, manipulate patch blocks, and maintain the visible
-generated-file ignore footer. This keeps file mutation attached to the explanation
-that justifies it.
+insert or revise Markdown blocks, manipulate patch blocks, and maintain the visible
+generated-file ignore footer. Mermaid diagrams live inside fenced `mermaid` code blocks,
+so narrative content has one format. This keeps file mutation attached to the
+explanation that justifies it.
 
 The previous tool surface ended the turn with a complete replacement:
 

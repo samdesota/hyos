@@ -27,7 +27,11 @@ import { migrateLegacyBlocks } from "../src/store.js";
 import type { LiterateDiff, SessionListItem } from "../src/domain.js";
 import type { GatewayMessage, GatewayTransport } from "../src/gateway.js";
 import { hyagentSchema } from "../src/model.js";
-import { renderAgentMarkdown } from "../src/markdown.js";
+import {
+  mermaidDefinition,
+  mermaidZoomScale,
+  renderAgentMarkdown,
+} from "../src/markdown.js";
 import {
   literateFileCollapsed,
   literateScrollTop,
@@ -47,9 +51,8 @@ const proposedDocument: LiterateDiff = {
   blocks: [
     {
       id: "intent",
-      kind: "prose",
-      title: "Keep review in the loop",
-      body: "The document changes while the model works.",
+      kind: "markdown",
+      body: "### Keep review in the loop\n\nThe document changes while the model works.",
     },
     {
       id: "change",
@@ -212,6 +215,37 @@ test("legacy revisions become structured operations despite bad hunk counts", ()
   assert.equal("patch" in block, false);
 });
 
+test("legacy prose and diagram blocks migrate to Markdown", () => {
+  const migrated = migrateLegacyBlocks([
+    {
+      id: "overview",
+      kind: "prose",
+      title: "Overview",
+      body: "Explain **why** this changes.",
+    },
+    {
+      id: "flow",
+      kind: "diagram",
+      title: "Request flow",
+      body: "browser --> server",
+    },
+  ]);
+
+  assert.equal(migrated.changed, true);
+  assert.deepEqual(migrated.blocks, [
+    {
+      id: "overview",
+      kind: "markdown",
+      body: "### Overview\n\nExplain **why** this changes.",
+    },
+    {
+      id: "flow",
+      kind: "markdown",
+      body: "### Request flow\n\n```text\nbrowser --> server\n```",
+    },
+  ]);
+});
+
 async function setup() {
   const storage = await memoryStorage({ schema: hyagentSchema });
   const database = await hydb.database({ schema: hyagentSchema, storage });
@@ -293,9 +327,8 @@ test("document operations preserve stable blocks and generated ignores", () => {
       type: "insert_block",
       block: {
         id: "overview",
-        kind: "prose",
-        title: "Overview",
-        body: "Start with intent.",
+        kind: "markdown",
+        body: "### Overview\n\nStart with intent.",
       },
     },
   ]);
@@ -305,9 +338,8 @@ test("document operations preserve stable blocks and generated ignores", () => {
       id: "overview",
       block: {
         id: "overview",
-        kind: "prose",
-        title: "Overview",
-        body: "Keep the intent current.",
+        kind: "markdown",
+        body: "### Overview\n\nKeep the intent current.",
       },
     },
     {
@@ -328,13 +360,35 @@ test("document operations preserve stable blocks and generated ignores", () => {
 
 test("agent Markdown renders as formatted, safe HTML", () => {
   const rendered = renderAgentMarkdown(
-    "**Decision**\n\n- keep context\n- show `code`\n\n<script>alert(1)</script>",
+    "**Decision**\n\n- keep context\n- show `code`\n\n```mermaid\ngraph LR\n  A --> B\n```\n\n<script>alert(1)</script>",
   );
 
   assert.match(rendered, /<strong>Decision<\/strong>/);
   assert.match(rendered, /<ul>/);
   assert.match(rendered, /<code>code<\/code>/);
+  assert.match(rendered, /class="language-mermaid"/);
   assert.doesNotMatch(rendered, /<script>/);
+});
+
+test("Mermaid definitions tolerate an agent-wrapped text fence", () => {
+  const source = "flowchart LR\n  A --> B";
+
+  assert.equal(mermaidDefinition("mermaid", source), source);
+  assert.equal(
+    mermaidDefinition("text", `\`\`\`mermaid\n${source}\n\`\`\``),
+    source,
+  );
+  assert.equal(
+    mermaidDefinition("typescript", `\`\`\`mermaid\n${source}\n\`\`\``),
+    undefined,
+  );
+});
+
+test("Mermaid trackpad zoom is smooth and bounded", () => {
+  assert.ok(mermaidZoomScale(1, -20) > 1);
+  assert.ok(mermaidZoomScale(1, 20) < 1);
+  assert.equal(mermaidZoomScale(5, -1_000), 5);
+  assert.equal(mermaidZoomScale(0.25, 1_000), 0.25);
 });
 
 test("Parallel web tools send bounded search and fetch requests", async () => {

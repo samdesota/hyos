@@ -133,9 +133,54 @@ const legacyPatchBlockSchema = z.object({
   patch: z.string(),
 });
 
+const legacyProseBlockSchema = z.object({
+  id: z.string(),
+  kind: z.literal("prose"),
+  title: z.string(),
+  body: z.string(),
+});
+
+const legacyDiagramBlockSchema = z.object({
+  id: z.string(),
+  kind: z.literal("diagram"),
+  title: z.string(),
+  body: z.string(),
+});
+
+function markdownHeading(title: string): string {
+  return `### ${title.replace(/\s+/g, " ").trim()}`;
+}
+
+function fencedText(body: string): string {
+  const longestFence = Math.max(
+    2,
+    ...[...body.matchAll(/`+/g)].map(([fence]) => fence.length),
+  );
+  const fence = "`".repeat(longestFence + 1);
+  return `${fence}text\n${body}${body.endsWith("\n") ? "" : "\n"}${fence}`;
+}
+
 export function migrateLegacyBlocks(blocks: readonly unknown[]) {
   let changed = false;
   const migrated = blocks.map((block) => {
+    const prose = legacyProseBlockSchema.safeParse(block);
+    if (prose.success) {
+      changed = true;
+      return {
+        id: prose.data.id,
+        kind: "markdown",
+        body: `${markdownHeading(prose.data.title)}\n\n${prose.data.body}`,
+      };
+    }
+    const diagram = legacyDiagramBlockSchema.safeParse(block);
+    if (diagram.success) {
+      changed = true;
+      return {
+        id: diagram.data.id,
+        kind: "markdown",
+        body: `${markdownHeading(diagram.data.title)}\n\n${fencedText(diagram.data.body)}`,
+      };
+    }
     const legacy = legacyPatchBlockSchema.safeParse(block);
     if (!legacy.success) return block;
     changed = true;

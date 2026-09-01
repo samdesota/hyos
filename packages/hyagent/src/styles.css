@@ -1080,12 +1080,222 @@ button:disabled {
   position: relative;
 }
 
-.block-prose p,
-.variant-c .block-prose p {
+.document-markdown,
+.variant-c .document-markdown {
   color: #c4c9d1;
   font-size: 13px;
   line-height: 1.75;
-  white-space: pre-wrap;
+}
+
+.document-markdown > :first-child {
+  margin-top: 0;
+}
+
+.document-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.document-markdown p,
+.document-markdown li {
+  max-width: 78ch;
+  color: inherit;
+  font-size: inherit;
+  line-height: 1.75;
+  white-space: normal;
+}
+
+.document-markdown h1,
+.document-markdown h2,
+.document-markdown h3,
+.document-markdown h4 {
+  max-width: 78ch;
+  margin: 22px 0 9px;
+  color: #f1f3f6;
+  font-family: Manrope, sans-serif;
+  line-height: 1.35;
+}
+
+.document-markdown h1 {
+  font-size: 22px;
+}
+
+.document-markdown h2 {
+  font-size: 19px;
+}
+
+.document-markdown h3,
+.document-markdown h4 {
+  font-size: 17px;
+}
+
+.document-markdown ul,
+.document-markdown ol {
+  margin: 9px 0;
+  padding-left: 24px;
+}
+
+.document-markdown pre {
+  margin: 12px 0;
+  padding: 13px 15px;
+  border: 1px solid #292f37;
+  border-radius: 5px;
+  background: #0b0e12;
+}
+
+.document-markdown code {
+  font-family: "DM Mono", monospace;
+}
+
+.document-markdown blockquote {
+  max-width: 78ch;
+}
+
+.mermaid-diagram {
+  position: relative;
+  overflow-x: auto;
+  min-height: 96px;
+  margin: 14px 0;
+  padding: 18px;
+  border: 1px solid #303842;
+  border-radius: 6px;
+  background: #0b0e12;
+}
+
+.mermaid-diagram.rendering {
+  display: grid;
+  place-items: center;
+  color: #77818d;
+  font:
+    10px "DM Mono",
+    monospace;
+}
+
+.mermaid-diagram svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.mermaid-diagram.error p {
+  margin: 0 0 9px;
+  color: #e49a9f;
+  font:
+    11px Manrope,
+    sans-serif;
+}
+
+.mermaid-diagram.error pre {
+  margin: 0;
+}
+
+.mermaid-fullscreen-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid #38414c;
+  border-radius: 5px;
+  background: #11161cdd;
+  color: #c5ccd5;
+  font:
+    17px/1 Manrope,
+    sans-serif;
+  opacity: 0;
+  transition:
+    border-color 120ms ease,
+    opacity 120ms ease;
+}
+
+.mermaid-diagram:hover .mermaid-fullscreen-button,
+.mermaid-fullscreen-button:focus-visible {
+  opacity: 1;
+}
+
+.mermaid-fullscreen-button:hover {
+  border-color: #687482;
+}
+
+.mermaid-viewer {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: #080b0fef;
+  backdrop-filter: blur(6px);
+}
+
+.mermaid-viewer-toolbar {
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-height: 52px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #252b33;
+  background: #0d1116e8;
+}
+
+.mermaid-viewer-toolbar button {
+  min-width: 58px;
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid #343d47;
+  border-radius: 5px;
+  background: #151b22;
+  color: #d7dce2;
+  font:
+    11px "DM Mono",
+    monospace;
+}
+
+.mermaid-viewer-toolbar .mermaid-viewer-close {
+  min-width: 32px;
+  width: 32px;
+  padding: 0;
+  font:
+    20px/1 Manrope,
+    sans-serif;
+}
+
+.mermaid-viewer-hint {
+  margin-right: auto;
+  color: #7e8895;
+  font:
+    10px "DM Mono",
+    monospace;
+}
+
+.mermaid-viewer-stage {
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+  overscroll-behavior: none;
+  touch-action: none;
+}
+
+.mermaid-viewer-canvas {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  transform-origin: center;
+  will-change: transform;
+}
+
+.mermaid-viewer-canvas svg {
+  display: block;
+  width: auto !important;
+  max-width: 92vw !important;
+  height: auto !important;
+  max-height: calc(100vh - 92px) !important;
 }
 
 .add-comment {
@@ -1324,7 +1534,6 @@ button:disabled {
     sans-serif;
 }
 
-.block-diagram .document-section-title,
 .block-apply_patch .document-section-title {
   margin-top: 4px;
 }
@@ -2105,15 +2314,20 @@ body {
   line-height: 1.6;
 }
 
-.variant-a .block-prose p,
+.variant-a .document-markdown,
 .variant-a .diff-block .rationale {
   max-width: 78ch;
 }
 
-.variant-a .diagram {
-  margin: 0;
-  padding-top: 14px;
-  padding-bottom: 14px;
+.variant-a .document-markdown {
+  color: #c8cdd5;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.variant-a .document-markdown p,
+.variant-a .document-markdown li {
+  line-height: 1.6;
 }
 
 .variant-a .block-apply_patch {
