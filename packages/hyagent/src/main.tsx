@@ -24,6 +24,12 @@ import type { AgentOption } from "./agent-options.js";
 import type { LiterateBlock } from "./domain.js";
 import { renderOperationsAsPatch } from "./file-operations.js";
 import { renderAgentMarkdown } from "./markdown.js";
+import {
+  literateFileCollapsed,
+  literateScrollTop,
+  saveLiterateFileCollapsed,
+  saveLiterateScrollTop,
+} from "./literate-view-state.js";
 import type { HyagentRouter } from "./trpc.js";
 import {
   diffRows,
@@ -274,14 +280,36 @@ function PatchFileView(props: {
   repository: string;
   section: PatchFileSection;
   fullFile?: string;
+  sessionId: string;
+  diffId: string;
+  fileKey: string;
   onComment(): void;
 }) {
   const [showFullFile, setShowFullFile] = createSignal(false);
+  const [open, setOpen] = createSignal(true);
+  createEffect(() => {
+    setOpen(
+      !literateFileCollapsed(props.sessionId, props.diffId, props.fileKey),
+    );
+  });
   const stats = () => patchStats(props.section.patch);
   const fullFile = () =>
     props.fullFile ?? fullFileFromAddedPatch(props.section.patch);
   return (
-    <details class="file-diff" open>
+    <details
+      class="file-diff"
+      open={open()}
+      onToggle={(event) => {
+        const nextOpen = event.currentTarget.open;
+        setOpen(nextOpen);
+        saveLiterateFileCollapsed(
+          props.sessionId,
+          props.diffId,
+          props.fileKey,
+          !nextOpen,
+        );
+      }}
+    >
       <summary>
         <span class="file-chevron">›</span>
         <strong>{`${props.repository}/${props.section.path}`}</strong>
@@ -321,6 +349,8 @@ function PatchFileView(props: {
 function Block(props: {
   block: LiterateBlock;
   editing: boolean;
+  sessionId: string;
+  diffId: string;
   onComment(target: string, body: string): void;
 }) {
   const [commenting, setCommenting] = createSignal(false);
@@ -386,6 +416,9 @@ function Block(props: {
                     <PatchFileView
                       repository={block.repository}
                       section={section}
+                      sessionId={props.sessionId}
+                      diffId={props.diffId}
+                      fileKey={`${block.id}:${index()}:${section.path}`}
                       fullFile={(() => {
                         const operation = block.operations[index()];
                         return operation?.type === "create_file"
@@ -984,6 +1017,8 @@ function VariantA(props: WorkspaceProps) {
               <Block
                 block={block}
                 editing={props.busy && viewingActiveDiff()}
+                sessionId={props.session.id}
+                diffId={selectedDiff()!.id}
                 onComment={props.addComment}
               />
             )}
@@ -1057,6 +1092,8 @@ function VariantB(props: WorkspaceProps) {
               <Block
                 block={block}
                 editing={props.busy}
+                sessionId={props.session.id}
+                diffId={props.selectedDiffId || props.session.activeDiffId}
                 onComment={props.addComment}
               />
             )}
@@ -1147,6 +1184,8 @@ function VariantC(props: WorkspaceProps) {
               <Block
                 block={block}
                 editing={props.busy}
+                sessionId={props.session.id}
+                diffId={props.selectedDiffId || props.session.activeDiffId}
                 onComment={props.addComment}
               />
             )}
@@ -1286,6 +1325,10 @@ function App() {
   const [yeetRepositories, setYeetRepositories] = createSignal<string[]>([]);
   const [yeeting, setYeeting] = createSignal(false);
   const [selectedDiffId, setSelectedDiffId] = createSignal("");
+  let sessionStage: HTMLElement | undefined;
+  let restoringLiterateScroll = false;
+  let restoreScrollFrame: number | undefined;
+  let saveScrollFrame: number | undefined;
   const busy = createMemo(
     () =>
       operationBusy() ||
@@ -1293,6 +1336,38 @@ function App() {
       stopping() ||
       session()?.status === "running",
   );
+  const literateScopeKey = createMemo(() => {
+    const current = session();
+    if (!current || creatingNew()) return null;
+    return `${current.id}:${selectedDiffId() || current.activeDiffId}`;
+  });
+  const currentLiterateScope = (): [string, string] | null => {
+    const key = literateScopeKey();
+    if (!key) return null;
+    const separator = key.indexOf(":");
+    return [key.slice(0, separator), key.slice(separator + 1)];
+  };
+  const restoreLiterateScroll = () => {
+    if (!sessionStage) return;
+    const scope = currentLiterateScope();
+    restoringLiterateScroll = true;
+    sessionStage.scrollTop = scope ? literateScrollTop(scope[0], scope[1]) : 0;
+    if (restoreScrollFrame !== undefined) {
+      cancelAnimationFrame(restoreScrollFrame);
+    }
+    restoreScrollFrame = requestAnimationFrame(() => {
+      restoringLiterateScroll = false;
+    });
+  };
+  createEffect(() => {
+    literateScopeKey();
+    queueMicrotask(restoreLiterateScroll);
+  });
+  onCleanup(() => {
+    if (restoreScrollFrame !== undefined)
+      cancelAnimationFrame(restoreScrollFrame);
+    if (saveScrollFrame !== undefined) cancelAnimationFrame(saveScrollFrame);
+  });
   createEffect(() => {
     if (!busy() || !following()) return;
     queueMicrotask(() =>
@@ -1746,7 +1821,25 @@ function App() {
             create={() => showNewThread("push")}
             archive={(id) => void archiveSession(id)}
           />
-          <section class="session-stage">
+          <section
+            class="session-stage"
+            ref={(element) => {
+              sessionStage = element;
+              restoreLiterateScroll();
+            }}
+            onScroll={(event) => {
+              if (restoringLiterateScroll) return;
+              const scope = currentLiterateScope();
+              if (!scope) return;
+              const scrollTop = event.currentTarget.scrollTop;
+              if (saveScrollFrame !== undefined) {
+                cancelAnimationFrame(saveScrollFrame);
+              }
+              saveScrollFrame = requestAnimationFrame(() =>
+                saveLiterateScrollTop(scope[0], scope[1], scrollTop),
+              );
+            }}
+          >
             <Switch>
               <Match when={creatingNew() || !session()}>
                 <NewThreadPage

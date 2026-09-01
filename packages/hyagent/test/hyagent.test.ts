@@ -22,6 +22,12 @@ import type { LiterateDiff, SessionListItem } from "../src/domain.js";
 import type { GatewayMessage, GatewayTransport } from "../src/gateway.js";
 import { hyagentSchema } from "../src/model.js";
 import { renderAgentMarkdown } from "../src/markdown.js";
+import {
+  literateFileCollapsed,
+  literateScrollTop,
+  saveLiterateFileCollapsed,
+  saveLiterateScrollTop,
+} from "../src/literate-view-state.js";
 import { createProjectTools, type ProjectTools } from "../src/project-tools.js";
 import { createHyagentStore, type HyagentStore } from "../src/store.js";
 import { createHyagentRouter } from "../src/trpc.js";
@@ -57,6 +63,49 @@ const proposedDocument: LiterateDiff = {
   ],
   generatedIgnores: [],
 };
+
+test("literate view state persists independently per session and diff", () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const values = new Map<string, string>();
+  const storage: Storage = {
+    get length() {
+      return values.size;
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, value),
+  };
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: storage,
+  });
+  try {
+    saveLiterateScrollTop("session-a", "diff-1", 438);
+    saveLiterateFileCollapsed("session-a", "diff-1", "block:file.ts", true);
+
+    assert.equal(literateScrollTop("session-a", "diff-1"), 438);
+    assert.equal(
+      literateFileCollapsed("session-a", "diff-1", "block:file.ts"),
+      true,
+    );
+    assert.equal(literateScrollTop("session-a", "diff-2"), 0);
+    assert.equal(
+      literateFileCollapsed("session-b", "diff-1", "block:file.ts"),
+      false,
+    );
+
+    saveLiterateFileCollapsed("session-a", "diff-1", "block:file.ts", false);
+    assert.equal(
+      literateFileCollapsed("session-a", "diff-1", "block:file.ts"),
+      false,
+    );
+  } finally {
+    if (original) Object.defineProperty(globalThis, "localStorage", original);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});
 
 test("multi-file patches render as separate file sections", () => {
   const patch = [
