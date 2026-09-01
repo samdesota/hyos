@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { fileOperationSchema } from "./file-operations.js";
+
 export const proseBlockSchema = z.object({
   id: z.string().min(1),
   kind: z.literal("prose"),
@@ -20,9 +22,7 @@ export const applyPatchBlockSchema = z.object({
   repository: z.string().min(1).max(200),
   title: z.string().min(1).max(200),
   rationale: z.string().min(1).max(20_000),
-  file: z.string().min(1).max(1_000).optional(),
-  patch: z.string().min(1).max(200_000),
-  fullFile: z.string().max(500_000).optional(),
+  operations: z.array(fileOperationSchema).min(1).max(100),
 });
 
 export const literateBlockSchema = z.discriminatedUnion("kind", [

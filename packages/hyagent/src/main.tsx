@@ -22,6 +22,7 @@ import { render } from "solid-js/web";
 import { decodeActivityEvent, type AgentActivityEvent } from "./activity.js";
 import type { AgentOption } from "./agent-options.js";
 import type { LiterateBlock } from "./domain.js";
+import { renderOperationsAsPatch } from "./file-operations.js";
 import { renderAgentMarkdown } from "./markdown.js";
 import type { HyagentRouter } from "./trpc.js";
 import {
@@ -374,7 +375,9 @@ function Block(props: {
               LiterateBlock,
               { kind: "apply_patch" }
             >;
-            const files = splitPatchFiles(block.patch);
+            const files = block.operations.flatMap((operation) =>
+              splitPatchFiles(renderOperationsAsPatch([operation])),
+            );
             return (
               <>
                 <p class="rationale">{block.rationale}</p>
@@ -383,12 +386,12 @@ function Block(props: {
                     <PatchFileView
                       repository={block.repository}
                       section={section}
-                      fullFile={
-                        block.file === section.path ||
-                        (!block.file && index() === 0)
-                          ? block.fullFile
-                          : undefined
-                      }
+                      fullFile={(() => {
+                        const operation = block.operations[index()];
+                        return operation?.type === "create_file"
+                          ? operation.content
+                          : undefined;
+                      })()}
                       onComment={() =>
                         startComment(`${block.repository}/${section.path}`)
                       }

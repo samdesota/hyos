@@ -46,9 +46,14 @@ A patch block names its repository and keeps a stable block ID:
   repository: "web",
   title: "Load the active session",
   rationale: "The thread and document need one shared source of truth.",
-  patch: "...unified patch...",
+  operations: [
+    { type: "replace_text", path: "src/session.ts", before: "...", after: "..." },
+  ],
 }
 ```
+
+The UI renders these operations as a diff. The stored and replayed form remains
+structured, so the agent never has to calculate unified-diff hunk metadata.
 
 The runtime compares the previous and next patch stacks for each repository. An
 unchanged prefix stays applied. The changed suffix is reversed, the replacement is

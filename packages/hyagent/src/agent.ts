@@ -49,9 +49,53 @@ const blockSchema = {
         repository: { type: "string" },
         title: { type: "string" },
         rationale: { type: "string" },
-        patch: { type: "string" },
+        operations: {
+          type: "array",
+          minItems: 1,
+          items: {
+            oneOf: [
+              {
+                type: "object",
+                properties: {
+                  type: { const: "create_file" },
+                  path: { type: "string" },
+                  content: { type: "string" },
+                },
+                required: ["type", "path", "content"],
+                additionalProperties: false,
+              },
+              {
+                type: "object",
+                properties: {
+                  type: { const: "replace_text" },
+                  path: { type: "string" },
+                  before: { type: "string" },
+                  after: { type: "string" },
+                },
+                required: ["type", "path", "before", "after"],
+                additionalProperties: false,
+              },
+              {
+                type: "object",
+                properties: {
+                  type: { const: "delete_file" },
+                  path: { type: "string" },
+                },
+                required: ["type", "path"],
+                additionalProperties: false,
+              },
+            ],
+          },
+        },
       },
-      required: ["id", "kind", "repository", "title", "rationale", "patch"],
+      required: [
+        "id",
+        "kind",
+        "repository",
+        "title",
+        "rationale",
+        "operations",
+      ],
       additionalProperties: false,
     },
   ],
@@ -271,7 +315,7 @@ You may reply conversationally without creating or editing the literate diff whe
 
 Before using read_file or run_command, start the literate diff with a high-level overview. Repository work must remain visible in the document as it happens; do not investigate the repository invisibly and write the document afterward.
 
-Apply-patch blocks are ordered executable steps with stable ids. The literate diff has a persisted appliedThrough cursor. The worktree equals the document immediately after that patch step; every later patch remains visible but unapplied. Adding or editing an unapplied patch changes only the document.
+Apply-patch blocks are ordered executable steps with stable ids. Each contains structured file operations: create_file writes a complete new file, replace_text replaces one exact unique string with another, and delete_file removes a file. Do not write unified diffs or hunk headers. Include enough unchanged text in replace_text.before to make it unique. The literate diff has a persisted appliedThrough cursor. The worktree equals the document immediately after that patch step; every later patch remains visible but unapplied. Adding or editing an unapplied patch changes only the document.
 
 Rewind and replay deterministically materialize a document state: Hyagent restores the session's original baseline, then applies patch steps forward from the beginning through the requested step id. This does not depend on the current worktree or on reverse-applying patches. If any step fails, materialization stops before that step and leaves the cursor at the last successful step. Edit or remove the failed and later steps by stable id, then continue replaying.
 
@@ -417,7 +461,7 @@ export function createLiterateAgent(options: {
             .map((block) => ({
               title: block.title,
               rationale: block.rationale,
-              patch: block.patch,
+              operations: block.operations,
             }));
           const response = await options.gateway.complete({
             model,

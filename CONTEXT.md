@@ -15,8 +15,15 @@ The repositories participating in one literate diff.
 _Avoid_: Monorepo, checkout
 
 **Patch block**:
-One explained code change targeting one repository within a literate diff.
+One explained code change targeting one repository and containing ordered file
+operations within a literate diff.
 _Avoid_: Edit, apply_patch call
+
+**File operation**:
+One structured `create_file`, `replace_text`, or `delete_file` instruction inside a
+patch block. Unified diff syntax is a generated review view, not stored executable
+state.
+_Avoid_: Hunk, raw patch
 
 **Patch stack**:
 The ordered patch blocks represented in one repository's worktree.

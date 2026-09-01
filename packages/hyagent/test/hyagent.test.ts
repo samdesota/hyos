@@ -16,6 +16,8 @@ import {
   fullFileFromAddedPatch,
   splitPatchFiles,
 } from "../src/diff-view.js";
+import { operationsFromLegacyPatch } from "../src/file-operations.js";
+import { migrateLegacyBlocks } from "../src/store.js";
 import type { LiterateDiff, SessionListItem } from "../src/domain.js";
 import type { GatewayMessage, GatewayTransport } from "../src/gateway.js";
 import { hyagentSchema } from "../src/model.js";
@@ -43,8 +45,14 @@ const proposedDocument: LiterateDiff = {
       repository: "workspace",
       title: "Change one file",
       rationale: "This is the smallest testable proposal.",
-      patch:
-        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-before\n+after\n",
+      operations: [
+        {
+          type: "replace_text",
+          path: "a.txt",
+          before: "before",
+          after: "after",
+        },
+      ],
     },
   ],
   generatedIgnores: [],
@@ -81,6 +89,47 @@ test("multi-file patches render as separate file sections", () => {
     fullFileFromAddedPatch(files[1]!.patch),
     "export * from './schema';\n",
   );
+});
+
+test("legacy revisions become structured operations despite bad hunk counts", () => {
+  const migrated = migrateLegacyBlocks([
+    {
+      id: "wal",
+      kind: "apply_patch",
+      repository: "project",
+      title: "Write WAL files",
+      rationale: "Persist the transaction log.",
+      patch: [
+        "--- /dev/null",
+        "+++ b/src/wal.ts",
+        "@@ -0,0 +1,99 @@",
+        "+export const wal = true;",
+        "--- /dev/null",
+        "+++ b/src/index.ts",
+        "@@ -0,0 +1,1 @@",
+        "+export * from './wal';",
+        "",
+      ].join("\n"),
+    },
+  ]);
+
+  assert.equal(migrated.changed, true);
+  const block = migrated.blocks[0];
+  assert.equal(block?.kind, "apply_patch");
+  if (block?.kind !== "apply_patch") return;
+  assert.deepEqual(block.operations, [
+    {
+      type: "create_file",
+      path: "src/wal.ts",
+      content: "export const wal = true;\n",
+    },
+    {
+      type: "create_file",
+      path: "src/index.ts",
+      content: "export * from './wal';\n",
+    },
+  ]);
+  assert.equal("patch" in block, false);
 });
 
 async function setup() {
@@ -545,7 +594,7 @@ test("an aborted agent run becomes ready and records that it stopped", async () 
   }
 });
 
-test("a rejected patch returns a repairable error to the agent tool call", async () => {
+test("a rejected operation returns a repairable error to the agent tool call", async () => {
   const { database, store } = await setup();
   const root = await createRepository("agent-patch-error");
   const historyRoot = await mkdtemp(join(tmpdir(), "hyagent-baselines-"));
@@ -579,11 +628,21 @@ test("a rejected patch returns a repairable error to the agent tool call", async
               operations: [
                 {
                   type: "insert_block",
-                  block: patchBlock(
-                    "contextless",
-                    "project",
-                    "@@ -1 +1 @@\n-one\n+ONE",
-                  ),
+                  block: {
+                    id: "ambiguous",
+                    kind: "apply_patch",
+                    repository: "project",
+                    title: "ambiguous",
+                    rationale: "Use an intentionally ambiguous anchor",
+                    operations: [
+                      {
+                        type: "replace_text",
+                        path: "state.txt",
+                        before: "o",
+                        after: "O",
+                      },
+                    ],
+                  },
                 },
               ],
             }),
@@ -638,20 +697,20 @@ test("a rejected patch returns a repairable error to the agent tool call", async
       )?.content;
     assert.match(
       toolError ?? "",
-      /modification hunk with no unchanged surrounding context/,
+      /more than once; include more surrounding text/,
     );
     const snapshot = await store.getSession(session.id);
     assert.equal(snapshot.revision?.summary, "Visible first pass");
     assert.deepEqual(
       snapshot.revision?.blocks.map((block) => block.id),
-      ["contextless"],
+      ["ambiguous"],
     );
     assert.equal(snapshot.appliedThrough, null);
     assert.match(
       snapshot.messages
         .map((message) => decodeActivityEvent(message.content)?.detail ?? "")
-        .find((detail) => detail.includes("contextless")) ?? "",
-      /modification hunk with no unchanged surrounding context/,
+        .find((detail) => detail.includes("ambiguous")) ?? "",
+      /more than once; include more surrounding text/,
     );
     assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
   } finally {
@@ -1454,7 +1513,7 @@ test("manual command changes run and produce consistency warnings", async () => 
   }
 });
 
-test("patch errors identify modification hunks without context", async () => {
+test("operation errors identify ambiguous replacement anchors", async () => {
   const root = await createRepository("contextless-patch");
   let historyRoot: string | undefined;
   try {
@@ -1467,13 +1526,29 @@ test("patch errors identify modification hunks without context", async () => {
     const document: LiterateDiff = {
       summary: "Rejected patch",
       generatedIgnores: [],
-      blocks: [patchBlock("contextless", "project", "@@ -1 +1 @@\n-one\n+ONE")],
+      blocks: [
+        {
+          id: "ambiguous",
+          kind: "apply_patch",
+          repository: "project",
+          title: "Ambiguous replacement",
+          rationale: "The anchor needs more context.",
+          operations: [
+            {
+              type: "replace_text",
+              path: "state.txt",
+              before: "o",
+              after: "O",
+            },
+          ],
+        },
+      ],
     };
 
-    const result = await project.movePatchCursor(document, null, "contextless");
+    const result = await project.movePatchCursor(document, null, "ambiguous");
     assert.match(
       result.failed?.error ?? "",
-      /modification hunk with no unchanged surrounding context/,
+      /more than once; include more surrounding text/,
     );
     assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
   } finally {
@@ -1482,7 +1557,7 @@ test("patch errors identify modification hunks without context", async () => {
   }
 });
 
-test("patch errors identify context that no longer matches", async () => {
+test("operation errors identify source text that no longer matches", async () => {
   const root = await createRepository("stale-patch");
   let historyRoot: string | undefined;
   try {
@@ -1503,7 +1578,7 @@ test("patch errors identify context that no longer matches", async () => {
     const result = await project.movePatchCursor(document, null, "stale");
     assert.match(
       result.failed?.error ?? "",
-      /context does not match the current file/,
+      /does not contain the requested text/,
     );
     assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
   } finally {
@@ -1573,7 +1648,9 @@ function patchBlock(
     repository,
     title: id,
     rationale: `Apply ${id}`,
-    patch: `diff --git a/state.txt b/state.txt\n--- a/state.txt\n+++ b/state.txt\n${hunk}\n`,
+    operations: operationsFromLegacyPatch(
+      `diff --git a/state.txt b/state.txt\n--- a/state.txt\n+++ b/state.txt\n${hunk}\n`,
+    ),
   };
 }
 
@@ -1716,9 +1793,15 @@ test("a failed replay does not mark pending tracked patches as unrecorded", asyn
           kind: "apply_patch",
           repository: "project",
           title: "Fail replay",
-          rationale: "The declared hunk length is intentionally corrupt.",
-          patch:
-            "diff --git a/broken.ts b/broken.ts\n--- /dev/null\n+++ b/broken.ts\n@@ -0,0 +1,2 @@\n+only one line\n",
+          rationale: "The requested source text intentionally does not exist.",
+          operations: [
+            {
+              type: "replace_text",
+              path: "broken.ts",
+              before: "not present",
+              after: "only one line",
+            },
+          ],
         },
         {
           id: "pending",
@@ -1726,8 +1809,14 @@ test("a failed replay does not mark pending tracked patches as unrecorded", asyn
           repository: "project",
           title: "Update the later file",
           rationale: "This patch must remain pending after the failure.",
-          patch:
-            "diff --git a/later.ts b/later.ts\n--- a/later.ts\n+++ b/later.ts\n@@ -1 +1 @@\n-export const later = false;\n+export const later = true;\n",
+          operations: [
+            {
+              type: "replace_text",
+              path: "later.ts",
+              before: "export const later = false;",
+              after: "export const later = true;",
+            },
+          ],
         },
       ],
     };

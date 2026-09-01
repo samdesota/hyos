@@ -29,6 +29,10 @@ const storage = await openNodeStorage({
 });
 const database = await hydb.database({ schema: hyagentSchema, storage });
 const store = createHyagentStore(database);
+const migratedRevisions = await store.migrateLegacyRevisions();
+if (migratedRevisions > 0) {
+  console.log(`Migrated ${migratedRevisions} legacy literate diff revisions`);
+}
 
 function repositorySpecs(): RepositorySpec[] {
   const configured = process.env.HYAGENT_REPOSITORIES;

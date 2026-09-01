@@ -22,8 +22,10 @@ The literate diff contains:
 2. an ordered body of prose, optional diagrams, and patch blocks; and
 3. an optional footer of generated worktree changes excluded from the patch.
 
-A patch block has a stable identity, repository, title, explanation, and unified
-patch. Its explanation preserves the intent when its code needs to change.
+A patch block has a stable identity, repository, title, explanation, and ordered
+create, replace, or delete operations. Its explanation preserves the intent when its
+code needs to change. The UI derives a familiar diff from those operations; unified
+diff text is not executable state.
 
 The document may be incomplete while the agent is working. Hydb persists each update
 and the UI renders it immediately.

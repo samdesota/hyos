@@ -15,6 +15,7 @@ import {
   type WorkspaceRepository,
 } from "./domain.js";
 import { messages, revisions, sessions } from "./model.js";
+import { operationsFromLegacyPatch } from "./file-operations.js";
 
 const WORKSPACE_MESSAGE_PREFIX = "HYAGENT_WORKSPACE:";
 const SOURCE_REPOSITORIES_MESSAGE_PREFIX = "HYAGENT_SOURCE_REPOSITORIES:";
@@ -114,7 +115,49 @@ const saveRevisionCommand = hydb.command({
   },
 });
 
+const migrateRevisionCommand = hydb.command({
+  input: z.object({ id: z.string(), blocks: z.array(z.unknown()) }),
+  async handler(transaction, input) {
+    await transaction.update(revisions, [input.id], {
+      blocks: literateDiffSchema.shape.blocks.parse(input.blocks),
+    });
+  },
+});
+
+const legacyPatchBlockSchema = z.object({
+  id: z.string(),
+  kind: z.literal("apply_patch"),
+  repository: z.string(),
+  title: z.string(),
+  rationale: z.string(),
+  patch: z.string(),
+});
+
+export function migrateLegacyBlocks(blocks: readonly unknown[]) {
+  let changed = false;
+  const migrated = blocks.map((block) => {
+    const legacy = legacyPatchBlockSchema.safeParse(block);
+    if (!legacy.success) return block;
+    changed = true;
+    const { patch, ...metadata } = legacy.data;
+    let operations;
+    try {
+      operations = operationsFromLegacyPatch(patch);
+    } catch (error) {
+      throw new Error(
+        `Could not migrate legacy block ${legacy.data.id}: ${error instanceof Error ? error.message : String(error)}. Patch starts: ${JSON.stringify(patch.slice(0, 300))}`,
+      );
+    }
+    return {
+      ...metadata,
+      operations,
+    };
+  });
+  return { changed, blocks: literateDiffSchema.shape.blocks.parse(migrated) };
+}
+
 export interface HyagentStore {
+  migrateLegacyRevisions(): Promise<number>;
   createSession(title: string): Promise<SessionSnapshot>;
   getSession(id: string): Promise<SessionSnapshot>;
   listSessions(): Promise<SessionListItem[]>;
@@ -331,6 +374,27 @@ export function createHyagentStore(database: Database): HyagentStore {
     };
   }
 
+  async function migrateLegacyRevisions(): Promise<number> {
+    const rows = await database.fetch(hydb.query(revisions).many());
+    // Parse every legacy revision before writing any of them. A malformed
+    // historical document therefore fails the migration without a partial DB.
+    const pending = rows.flatMap((revision) => {
+      const migrated = migrateLegacyBlocks(
+        revision.blocks as readonly unknown[],
+      );
+      return migrated.changed
+        ? [{ id: revision.id, blocks: migrated.blocks }]
+        : [];
+    });
+    for (const revision of pending) {
+      await database.execute(migrateRevisionCommand, {
+        id: revision.id,
+        blocks: revision.blocks,
+      });
+    }
+    return pending.length;
+  }
+
   const sessionListQuery = () =>
     hydb
       .query(sessions)
@@ -352,6 +416,7 @@ export function createHyagentStore(database: Database): HyagentStore {
   }
 
   return {
+    migrateLegacyRevisions,
     async createSession(title) {
       const id = randomUUID();
       await database.execute(createSessionCommand, {

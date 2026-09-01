@@ -19,6 +19,7 @@ import type {
   LiterateBlock,
   WorkspaceRepository,
 } from "./domain.js";
+import { operationPaths, type FileOperation } from "./file-operations.js";
 
 const MAX_OUTPUT = 60_000;
 const MAX_FILES_PER_WARNING_FOLDER = 10;
@@ -64,7 +65,7 @@ export interface PatchCursorResult {
 }
 
 type PatchBlock = Extract<LiterateBlock, { kind: "apply_patch" }>;
-type PatchRef = Pick<PatchBlock, "id" | "repository" | "patch">;
+type PatchRef = Pick<PatchBlock, "id" | "repository" | "operations">;
 type Snapshot = Map<string, string>;
 
 function runProcess(
@@ -115,77 +116,17 @@ function assertRelativeProjectPath(path: string): void {
   }
 }
 
-function patchFilePaths(patch: string): string[] {
-  const paths = new Set<string>();
-  for (const line of patch.split("\n")) {
-    const match = line.match(/^\+\+\+ b\/(.+)$/) ?? line.match(/^--- a\/(.+)$/);
-    if (match?.[1] && match[1] !== "/dev/null") paths.add(match[1]);
-  }
-  return [...paths];
-}
-
-interface ContextlessHunk {
-  path: string;
-  header: string;
-}
-
-function contextlessModificationHunk(
-  patch: string,
-): ContextlessHunk | undefined {
-  for (const section of patch.split(/(?=^diff --git )/m)) {
-    if (!section.startsWith("diff --git ")) continue;
-    if (
-      /^--- \/dev\/null$/m.test(section) ||
-      /^\+\+\+ \/dev\/null$/m.test(section)
-    ) {
-      continue;
-    }
-    const path = section.match(/^\+\+\+ b\/(.+)$/m)?.[1] ?? "unknown file";
-    const lines = section.split("\n");
-    for (let index = 0; index < lines.length; index += 1) {
-      const header = lines[index]!;
-      if (!header.startsWith("@@ ")) continue;
-      let hasContext = false;
-      for (let body = index + 1; body < lines.length; body += 1) {
-        const line = lines[body]!;
-        if (line.startsWith("@@ ") || line.startsWith("diff --git ")) break;
-        if (line.startsWith(" ")) {
-          hasContext = true;
-          break;
-        }
-      }
-      if (!hasContext) return { path, header };
-    }
-  }
-  return undefined;
-}
-
-function patchFailureMessage(patch: string, stderr: string): string {
-  const contextless = contextlessModificationHunk(patch);
-  if (contextless) {
-    return `Patch was rejected before the literate diff was updated: ${contextless.path} has a modification hunk with no unchanged surrounding context (${contextless.header}). Include at least one unchanged line, prefixed with a space, before or after the edit.`;
-  }
-  const detail = stderr.trim();
-  if (/patch (failed|does not apply)/i.test(detail)) {
-    return `Patch was rejected before the literate diff was updated because its context does not match the current file. Read the file again and regenerate the hunk with unchanged surrounding lines. Git reported: ${detail}`;
-  }
-  if (/corrupt patch|unrecognized input/i.test(detail)) {
-    return `Patch was rejected before the literate diff was updated because it is not a valid unified diff. Git reported: ${detail}`;
-  }
-  return `Patch was rejected before the literate diff was updated. Git reported: ${detail || "the patch does not apply cleanly"}`;
-}
-
 function patchBlocks(document: LiterateDiff | null): PatchRef[] {
   return (document?.blocks ?? [])
     .filter((block): block is PatchBlock => block.kind === "apply_patch")
-    .map(({ id, repository, patch }) => ({ id, repository, patch }));
+    .map(({ id, repository, operations }) => ({ id, repository, operations }));
 }
 
 function samePatch(left: PatchRef, right: PatchRef): boolean {
   return (
     left.id === right.id &&
     left.repository === right.repository &&
-    left.patch === right.patch
+    JSON.stringify(left.operations) === JSON.stringify(right.operations)
   );
 }
 
@@ -200,7 +141,7 @@ function ignored(path: string, entries: readonly GeneratedIgnore[]): boolean {
 
 function assertGeneratedIgnoresDoNotHidePatches(document: LiterateDiff): void {
   for (const patch of patchBlocks(document)) {
-    for (const path of patchFilePaths(patch.patch)) {
+    for (const path of operationPaths(patch.operations)) {
       const entry = document.generatedIgnores.find(
         (candidate) =>
           candidate.repository === patch.repository &&
@@ -309,29 +250,61 @@ async function takeSnapshot(root: string): Promise<Snapshot> {
   );
 }
 
-async function applyPatch(
+async function applyOperations(
   root: string,
-  patch: string,
-  options: { reverse?: boolean } = {},
+  operations: readonly FileOperation[],
 ): Promise<void> {
-  const reverse = options.reverse ? ["--reverse"] : [];
-  const check = await runProcess(
-    "git",
-    ["apply", ...reverse, "--check", "-"],
-    root,
-    patch,
-  );
-  if (check.exitCode !== 0) {
-    throw new Error(patchFailureMessage(patch, check.stderr));
-  }
-  const result = await runProcess(
-    "git",
-    ["apply", ...reverse, "--whitespace=nowarn", "-"],
-    root,
-    patch,
-  );
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr || "Could not apply patch");
+  for (const operation of operations) {
+    assertRelativeProjectPath(operation.path);
+    const target = join(root, operation.path);
+    if (operation.type === "create_file") {
+      try {
+        await lstat(target);
+        throw new Error(`${operation.path} already exists`);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, operation.content, "utf8");
+      continue;
+    }
+    if (operation.type === "delete_file") {
+      try {
+        await lstat(target);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          throw new Error(`${operation.path} does not exist`);
+        }
+        throw error;
+      }
+      await rm(target, { recursive: true });
+      continue;
+    }
+    let contents: string;
+    try {
+      contents = await readFile(target, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(`${operation.path} does not exist`);
+      }
+      throw error;
+    }
+    const first = contents.indexOf(operation.before);
+    if (first < 0) {
+      throw new Error(`${operation.path} does not contain the requested text`);
+    }
+    if (
+      contents.indexOf(operation.before, first + operation.before.length) >= 0
+    ) {
+      throw new Error(
+        `${operation.path} contains the requested text more than once; include more surrounding text`,
+      );
+    }
+    await writeFile(
+      target,
+      `${contents.slice(0, first)}${operation.after}${contents.slice(first + operation.before.length)}`,
+      "utf8",
+    );
   }
 }
 
@@ -565,7 +538,7 @@ export function createProjectTools(
     const repositoryPaths = new Map<string, Set<string>>();
     for (const patch of patches) {
       const paths = repositoryPaths.get(patch.repository) ?? new Set<string>();
-      for (const path of patchFilePaths(patch.patch)) paths.add(path);
+      for (const path of operationPaths(patch.operations)) paths.add(path);
       repositoryPaths.set(patch.repository, paths);
     }
     for (const [repository, paths] of repositoryPaths) {
@@ -728,7 +701,7 @@ export function createProjectTools(
     const repositoryPaths = new Map<string, Set<string>>();
     for (const patch of patches) {
       const paths = repositoryPaths.get(patch.repository) ?? new Set<string>();
-      for (const path of patchFilePaths(patch.patch)) paths.add(path);
+      for (const path of operationPaths(patch.operations)) paths.add(path);
       repositoryPaths.set(patch.repository, paths);
     }
     for (const [repository, paths] of repositoryPaths) {
@@ -760,7 +733,9 @@ export function createProjectTools(
         const root = join(temporaryRoot, safeSegment(repository));
         const baseline = repositoryBaseline(activeBaseline, repository);
         const paths = [
-          ...new Set(patches.flatMap((patch) => patchFilePaths(patch.patch))),
+          ...new Set(
+            patches.flatMap((patch) => operationPaths(patch.operations)),
+          ),
         ];
         await mkdir(root, { recursive: true });
         for (const path of paths) {
@@ -775,7 +750,8 @@ export function createProjectTools(
             if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
           }
         }
-        for (const patch of patches) await applyPatch(root, patch.patch);
+        for (const patch of patches)
+          await applyOperations(root, patch.operations);
         result.set(
           repository,
           new Map(
@@ -856,8 +832,18 @@ export function createProjectTools(
       for (let index = 0; index <= targetIndex; index += 1) {
         const patch = patches[index]!;
         try {
-          await applyPatch(rootFor(patch.repository), patch.patch);
+          await applyOperations(rootFor(patch.repository), patch.operations);
         } catch (error) {
+          // A block is atomic from the document's perspective. Remove any
+          // operations it applied before failing, then restore the valid prefix.
+          await restoreControlledPaths(patches);
+          for (let replayIndex = 0; replayIndex < index; replayIndex += 1) {
+            const previous = patches[replayIndex]!;
+            await applyOperations(
+              rootFor(previous.repository),
+              previous.operations,
+            );
+          }
           await recordPatchState(patches);
           return {
             appliedThrough: patches[index - 1]?.id ?? null,
@@ -913,7 +899,7 @@ export function createProjectTools(
           ...new Set([
             ...patches
               .filter((patch) => patch.repository === repository)
-              .flatMap((patch) => patchFilePaths(patch.patch)),
+              .flatMap((patch) => operationPaths(patch.operations)),
             ...(await changedPaths(rootFor(repository))).filter((path) =>
               ignored(path, entries),
             ),
@@ -1054,23 +1040,7 @@ export function createProjectTools(
       return results;
     },
     async enrichDocument(document) {
-      const blocks = await Promise.all(
-        document.blocks.map(async (block) => {
-          if (block.kind !== "apply_patch") return block;
-          const file = block.file ?? patchFilePaths(block.patch)[0];
-          if (!file) return block;
-          try {
-            return {
-              ...block,
-              file,
-              fullFile: await this.readFile(block.repository, file),
-            };
-          } catch {
-            return { ...block, file };
-          }
-        }),
-      );
-      return { ...document, blocks };
+      return document;
     },
   };
 }
