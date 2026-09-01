@@ -23,10 +23,12 @@ export { createVercelGateway, type GatewayTransport } from "./gateway.js";
 export { hyagentSchema } from "./model.js";
 export {
   createProjectTools,
+  type BackgroundCommandAction,
   type CommitResult,
   type ProjectTools,
   type RepositorySpec,
   type WorktreeWarning,
 } from "./project-tools.js";
+export type { BackgroundCommandSnapshot } from "./background-commands.js";
 export { createHyagentStore, type HyagentStore } from "./store.js";
 export { createHyagentRouter, type HyagentRouter } from "./trpc.js";

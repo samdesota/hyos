@@ -21,6 +21,11 @@ Set `PARALLEL_API_KEY` alongside the gateway key to enable the agent's `web_sear
 and `web_fetch` tools. Search returns a bounded set of relevant sources and excerpts;
 fetch reads up to ten selected pages as focused or full Markdown content.
 
+Long-running and interactive repository commands can run in the background. The agent
+receives a stable process ID, can read incremental stdout and stderr, write to stdin,
+or stop the process. Background processes are scoped to one agent run and are cleaned
+up automatically when that run finishes or is stopped.
+
 Each prompt has an agent selector, including on the new-task page. The selection
 applies to that turn and is remembered per thread, so a thread can switch models
 between messages without resetting on reload. The default is
@@ -60,6 +65,7 @@ scoped per repository while all changes remain in one document.
 ```text
 two-column UI ──tRPC──▶ custom agent loop ──▶ read_file
        │                       │             run_command
+       │                       │             background commands
        │                       └──────────── edit_literate_diff
        │                                      │
        └────────────────── hydb ◀─────────────┘
