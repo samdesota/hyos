@@ -7,6 +7,7 @@
     "examples/*"
   ],
   "scripts": {
+    "demo:hyos": "npm run dev --workspace @hyos/hyos",
     "demo:project-management": "npm run dev --workspace @hyos/hydb-project-management-example",
     "dev": "npm run build --workspace @hyos/ui-agent && npm run dev --workspace @hyos/components",
     "dev:ui-agent": "npm run sandbox --workspace @hyos/ui-agent",

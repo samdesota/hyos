@@ -1,0 +1,24 @@
+{
+  "name": "@hyos/hyos",
+  "private": true,
+  "version": "0.0.0",
+  "description": "HyOS Electron shell with typed process-split modules",
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "smoke": "electron . --smoke-test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check": "node --check main.js && node --check application-loader.js && node --check isomorphic-compiler.js && node --check runtime.js && node --check remote-capabilities.js && node --check preload.js && node --check renderer/renderer.js && npm run typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "electron": "^38.0.0",
+    "esbuild": "^0.25.0",
+    "esbuild-plugin-solid": "^0.6.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "solid-js": "^1.9.15"
+  }
+}
