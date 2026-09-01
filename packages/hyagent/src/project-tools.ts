@@ -734,9 +734,10 @@ export function createProjectTools(
     for (const [repository, paths] of repositoryPaths) {
       const root = rootFor(repository);
       const baseline = expected.get(repository)!;
+      const changed = await takeSnapshot(root);
       for (const path of paths) {
-        const fingerprint = await fileFingerprint(root, path);
-        if (fingerprint === "deleted") baseline.delete(path);
+        const fingerprint = changed.get(path);
+        if (fingerprint === undefined) baseline.delete(path);
         else baseline.set(path, fingerprint);
       }
     }

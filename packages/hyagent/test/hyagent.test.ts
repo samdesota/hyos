@@ -1693,6 +1693,56 @@ test("the patch cursor rewinds and replays stable step ids across repositories",
   }
 });
 
+test("a failed replay does not mark pending tracked patches as unrecorded", async () => {
+  const root = await createRepository("partial-replay-consistency");
+  let historyRoot: string | undefined;
+  try {
+    await writeFile(join(root, "later.ts"), "export const later = false;\n");
+    await git(root, "add", "later.ts");
+    await git(root, "commit", "-qm", "add later file");
+    const prepared = await createBaselineProject(
+      [{ name: "project", root }],
+      "partial-replay-consistency",
+    );
+    historyRoot = prepared.historyRoot;
+    const { project } = prepared;
+    const document: LiterateDiff = {
+      summary: "Stop partway through replay",
+      generatedIgnores: [],
+      blocks: [
+        patchBlock("early", "project", "@@ -1,2 +1,2 @@\n-one\n+ONE\n two"),
+        {
+          id: "broken",
+          kind: "apply_patch",
+          repository: "project",
+          title: "Fail replay",
+          rationale: "The declared hunk length is intentionally corrupt.",
+          patch:
+            "diff --git a/broken.ts b/broken.ts\n--- /dev/null\n+++ b/broken.ts\n@@ -0,0 +1,2 @@\n+only one line\n",
+        },
+        {
+          id: "pending",
+          kind: "apply_patch",
+          repository: "project",
+          title: "Update the later file",
+          rationale: "This patch must remain pending after the failure.",
+          patch:
+            "diff --git a/later.ts b/later.ts\n--- a/later.ts\n+++ b/later.ts\n@@ -1 +1 @@\n-export const later = false;\n+export const later = true;\n",
+        },
+      ],
+    };
+
+    const replay = await project.movePatchCursor(document, null, "pending");
+
+    assert.equal(replay.appliedThrough, "early");
+    assert.equal(replay.failed?.stepId, "broken");
+    assert.deepEqual(await project.checkConsistency([]), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    if (historyRoot) await rm(historyRoot, { recursive: true, force: true });
+  }
+});
+
 test("project commits patch and explicitly ignored paths", async () => {
   const root = await createRepository("commit");
   let historyRoot: string | undefined;
