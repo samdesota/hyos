@@ -114,7 +114,8 @@ button:disabled {
   align-items: center;
 }
 
-.composer-options {
+.composer-options,
+.prompt-selectors {
   gap: 10px;
 }
 
@@ -435,61 +436,107 @@ button:disabled {
   border-top: 1px solid #222831;
   color: #9ba3ae;
 }
-.activity-stream summary {
-  display: grid;
-  grid-template-columns: 8px 1fr auto 12px;
+.activity-stream > summary {
+  display: flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
   list-style: none;
   font-size: 10px;
 }
-.activity-stream summary::-webkit-details-marker {
+.activity-stream > summary::-webkit-details-marker {
   display: none;
 }
-.activity-stream summary i {
+.activity-stream > summary i {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: #68717d;
 }
-.activity-stream summary i.working {
+.activity-stream > summary i.working {
   background: #c7f36b;
   box-shadow: 0 0 0 3px #c7f36b18;
   animation: pulse 1.4s infinite;
 }
-.activity-stream summary i.failed {
+.activity-stream > summary i.failed {
   background: #d97878;
 }
-.activity-stream summary strong {
+.activity-stream > summary strong {
+  flex: 1;
   color: #c5cbd3;
   font-weight: 500;
 }
-.activity-stream summary span,
-.activity-stream time {
-  color: #606976;
-  font:
-    9px "DM Mono",
-    monospace;
-}
-.activity-stream summary b {
+.activity-stream > summary > b {
   color: #66707c;
   font-size: 16px;
   font-weight: 400;
   transition: transform 120ms ease;
 }
-.activity-stream[open] summary b {
+.activity-stream[open] > summary > b {
   transform: rotate(90deg);
 }
-.activity-stream ol {
+.activity-timeline {
+  display: grid;
+  gap: 13px;
+  margin: 10px 0 2px 14px;
+}
+.thinking-summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+}
+.thinking-markdown {
+  min-width: 0;
+  color: #aeb6c1;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.thinking-markdown > :first-child {
+  margin-top: 0;
+}
+.thinking-markdown p,
+.thinking-markdown li {
+  line-height: 1.6;
+}
+.activity-stream time,
+.command-stream summary span {
+  color: #606976;
+  font:
+    9px "DM Mono",
+    monospace;
+}
+.command-stream {
+  margin: 0;
+}
+.command-stream summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: max-content;
+  cursor: pointer;
+  list-style: none;
+}
+.command-stream summary::-webkit-details-marker {
+  display: none;
+}
+.command-stream summary b {
+  color: #66707c;
+  font-size: 16px;
+  font-weight: 400;
+  transition: transform 120ms ease;
+}
+.command-stream[open] summary b {
+  transform: rotate(90deg);
+}
+.command-stream ol {
   display: grid;
   gap: 7px;
-  margin: 10px 0 1px 4px;
+  margin: 7px 0 1px 4px;
   padding: 0 0 0 12px;
   border-left: 1px solid #2b323b;
   list-style: none;
 }
-.activity-stream li {
+.command-stream li {
   display: flex;
   justify-content: space-between;
   gap: 12px;

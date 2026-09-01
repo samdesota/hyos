@@ -8,7 +8,11 @@ import {
 import { DEFAULT_AGENT } from "./agent-options.js";
 import { documentOperationsSchema, editLiterateDiff } from "./document.js";
 import type { LiterateDiff } from "./domain.js";
-import type { GatewayMessage, GatewayTransport } from "./gateway.js";
+import type {
+  GatewayMessage,
+  GatewayTransport,
+  ReasoningEffort,
+} from "./gateway.js";
 import type { ProjectTools, WorktreeWarning } from "./project-tools.js";
 import type { HyagentStore } from "./store.js";
 import type { AgentWebTools } from "./web-tools.js";
@@ -414,6 +418,7 @@ export interface LiterateAgent {
     feedback: string,
     agent?: string,
     signal?: AbortSignal,
+    reasoningEffort?: ReasoningEffort,
   ): Promise<LiterateDiff | null>;
   writeCommitMessages(document: LiterateDiff): Promise<Record<string, string>>;
 }
@@ -490,18 +495,25 @@ export function createLiterateAgent(options: {
       );
       return Object.fromEntries(entries);
     },
-    async run(sessionId, feedback, selectedAgent = model, signal) {
+    async run(
+      sessionId,
+      feedback,
+      selectedAgent = model,
+      signal,
+      reasoningEffort = "medium",
+    ) {
       const runId = randomUUID();
       let document: LiterateDiff | null = null;
       const activity = (
         status: AgentActivityEvent["status"],
         summary: string,
         detail?: string,
+        kind: AgentActivityEvent["kind"] = "status",
       ) =>
         options.store.appendMessage(
           sessionId,
           "system",
-          encodeActivityEvent({ runId, status, summary, detail }),
+          encodeActivityEvent({ runId, status, kind, summary, detail }),
         );
       await options.store.appendMessage(sessionId, "user", feedback);
       await options.store.setStatus(sessionId, "running");
@@ -561,10 +573,20 @@ export function createLiterateAgent(options: {
             messages,
             tools,
             tool_choice: "auto",
+            reasoning: { effort: reasoningEffort },
             stream: false,
             signal,
           });
           signal?.throwIfAborted();
+          const thinking = response.reasoning?.trim();
+          if (thinking) {
+            await activity(
+              "working",
+              thinking.replace(/\s+/g, " ").slice(0, 1_000),
+              undefined,
+              "thinking",
+            );
+          }
           messages.push(response);
           const calls = response.tool_calls ?? [];
           if (calls.length === 0) {
@@ -591,7 +613,12 @@ export function createLiterateAgent(options: {
                 string,
                 unknown
               >;
-              await activity("working", toolActivity(call.function.name, args));
+              await activity(
+                "working",
+                toolActivity(call.function.name, args),
+                undefined,
+                "command",
+              );
               if (
                 !document &&
                 (call.function.name === "read_file" ||
@@ -844,6 +871,7 @@ export function createLiterateAgent(options: {
                 "working",
                 `${toolActivity(call.function.name, args)} failed`,
                 toolFailureDetail(call.function.name, args, message),
+                "command",
               );
               output = {
                 error: message,

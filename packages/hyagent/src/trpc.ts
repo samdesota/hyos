@@ -2,6 +2,7 @@ import { initTRPC } from "@trpc/server";
 import { z } from "zod";
 
 import type { LiterateAgent } from "./agent.js";
+import type { ReasoningEffort } from "./gateway.js";
 import {
   DEFAULT_AGENT,
   availableAgents,
@@ -34,10 +35,18 @@ export function createHyagentRouter(options: {
     .trim()
     .refine((agent) => agentIds.has(agent), "Unknown agent")
     .default(defaultAgent);
-  function launchAgent(sessionId: string, prompt: string, agent: string) {
+  const reasoningEffortInput = z
+    .enum(["low", "medium", "high"])
+    .default("medium");
+  function launchAgent(
+    sessionId: string,
+    prompt: string,
+    agent: string,
+    reasoningEffort: ReasoningEffort,
+  ) {
     const controller = new AbortController();
     const run = options.agent
-      .run(sessionId, prompt, agent, controller.signal)
+      .run(sessionId, prompt, agent, controller.signal, reasoningEffort)
       .then(() => undefined)
       .catch(() => undefined)
       .finally(() => activeRuns.delete(sessionId));
@@ -243,6 +252,7 @@ export function createHyagentRouter(options: {
             baseOnLatestRemoteMain: z.boolean().default(false),
             prompt: z.string().trim().min(1).max(20_000),
             agent: agentInput,
+            reasoningEffort: reasoningEffortInput,
           }),
         )
         .mutation(async ({ input }) => {
@@ -271,7 +281,12 @@ export function createHyagentRouter(options: {
             `${input.mode === "worktree" ? "Worktree" : "Workspace"} ready: ${repositories.map((repository) => repository.name).join(", ")}`,
           );
           await options.store.setModel(session.id, input.agent);
-          launchAgent(session.id, input.prompt, input.agent);
+          launchAgent(
+            session.id,
+            input.prompt,
+            input.agent,
+            input.reasoningEffort,
+          );
           return {
             repositories,
             session: await options.store.getSession(session.id),
@@ -305,6 +320,7 @@ export function createHyagentRouter(options: {
             id: z.string().min(1),
             feedback: z.string().trim().min(1).max(20_000),
             agent: agentInput,
+            reasoningEffort: reasoningEffortInput,
           }),
         )
         .mutation(async ({ input }) => {
@@ -329,7 +345,12 @@ export function createHyagentRouter(options: {
             );
           }
           await options.store.setModel(input.id, input.agent);
-          launchAgent(input.id, input.feedback, input.agent);
+          launchAgent(
+            input.id,
+            input.feedback,
+            input.agent,
+            input.reasoningEffort,
+          );
           return { accepted: true as const };
         }),
       stop: t.procedure

@@ -10,7 +10,8 @@
     }
   },
   "scripts": {
-    "dev": "concurrently --kill-others-on-fail npm:dev:server npm:dev:client",
+    "dev": "tsx src/dev.ts",
+    "dev:services": "concurrently --kill-others-on-fail npm:dev:server npm:dev:client",
     "dev:client": "vite",
     "dev:server": "node --watch --env-file-if-exists=../../.env --import tsx src/server.ts",
     "migrate:storage": "node --import tsx src/migrate-storage.ts",
