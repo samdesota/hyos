@@ -18,10 +18,7 @@ async function importGenerated(filename) {
 }
 
 async function loadDefinition(entry) {
-  const filename = entry.file
-    .split("/")
-    .at(-1)
-    .replace(/\.tsx?$/, ".js");
+  const filename = `${entry.id.replaceAll(".", "-")}.js`;
   await importGenerated(filename);
   return registeredModule(entry.id);
 }

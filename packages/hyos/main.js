@@ -106,9 +106,14 @@ async function reloadChangedFile(filename) {
     }
 
     loader.refreshManifest();
-    const entry = loader.manifest.modules.find(
-      (candidate) => candidate.file.replace(/^\.\//, "") === changedFile,
-    );
+    const entry = loader.manifest.modules.find((candidate) => {
+      const entryFile = candidate.file.replace(/^\.\//, "");
+      const entryDirectory = path.posix.dirname(entryFile);
+      return (
+        entryFile === changedFile ||
+        changedFile.startsWith(`${entryDirectory}/`)
+      );
+    });
     if (!entry) {
       if (changedFile.startsWith("capabilities/")) {
         for (const cachedPath of Object.keys(require.cache)) {

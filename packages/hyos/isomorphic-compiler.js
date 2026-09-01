@@ -3,8 +3,8 @@ const path = require("node:path");
 const { build } = require("esbuild");
 const { solidPlugin } = require("esbuild-plugin-solid");
 
-function compiledRendererFilename(sourceFile) {
-  return `${path.basename(sourceFile, path.extname(sourceFile))}.js`;
+function compiledRendererFilename(moduleId) {
+  return `${moduleId.replaceAll(".", "-")}.js`;
 }
 
 async function buildRendererArtifacts({
@@ -39,7 +39,7 @@ async function buildRendererArtifacts({
   );
   const entryPoints = Object.fromEntries(
     rendererEntries.map((entry) => [
-      path.basename(compiledRendererFilename(entry.file), ".js"),
+      path.basename(compiledRendererFilename(entry.id), ".js"),
       path.resolve(projectDirectory, entry.file),
     ]),
   );

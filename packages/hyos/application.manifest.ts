@@ -5,7 +5,7 @@ export const applicationManifest = defineApplicationManifest({
   modules: [
     {
       id: "electron.window",
-      file: "./modules/electron-window.ts",
+      file: "./modules/electron-window/index.ts",
       host: "main",
       reload: "restart",
       config: {
@@ -16,7 +16,7 @@ export const applicationManifest = defineApplicationManifest({
     },
     {
       id: "browser.main",
-      file: "./modules/browser-main.ts",
+      file: "./modules/browser-main/index.ts",
       host: "main",
       reload: "hot",
       config: {
@@ -25,19 +25,19 @@ export const applicationManifest = defineApplicationManifest({
     },
     {
       id: "browser.remote-client",
-      file: "./modules/browser-client.ts",
+      file: "./modules/browser-client/index.ts",
       host: "renderer",
       reload: "hot",
     },
     {
       id: "browser.view",
-      file: "./modules/browser-view.tsx",
+      file: "./modules/browser-view/index.ts",
       host: "renderer",
       reload: "hot",
     },
     {
       id: "browser.renderer",
-      file: "./modules/browser-ui.tsx",
+      file: "./modules/browser-ui/index.tsx",
       host: "renderer",
       reload: "hot",
     },

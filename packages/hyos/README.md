@@ -47,7 +47,7 @@ A root manifest placement looks like this:
 ```ts
 {
   "id": "browser.main",
-  "file": "./modules/browser-main.ts",
+  "file": "./modules/browser-main/index.ts",
   "host": "main",
   "reload": "hot",
   "config": {
@@ -56,8 +56,9 @@ A root manifest placement looks like this:
 }
 ```
 
-The module file declares its dependencies, provided capabilities, and implementation.
-It does not declare its process placement. Main imports the TypeScript manifest
+Each module is a folder with a thin `index.ts` or `index.tsx` entrypoint. That
+entrypoint declares injected and provided capabilities while private files hold the
+implementation. The module does not declare its process placement. Main imports the TypeScript manifest
 directly. The renderer dynamically imports browser builds of the manifest,
 capabilities, and renderer-hosted modules.
 

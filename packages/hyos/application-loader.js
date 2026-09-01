@@ -41,7 +41,15 @@ class MainApplicationLoader {
 
   loadDefinition(entry) {
     const modulePath = path.resolve(this.modulesDirectory, entry.file);
-    delete require.cache[require.resolve(modulePath)];
+    const moduleDirectory = path.dirname(modulePath);
+    for (const cachedPath of Object.keys(require.cache)) {
+      if (
+        cachedPath === modulePath ||
+        cachedPath.startsWith(`${moduleDirectory}${path.sep}`)
+      ) {
+        delete require.cache[cachedPath];
+      }
+    }
     const definition = require(modulePath);
     if (!definition?.apply) {
       throw new Error(`${entry.file} does not export a module definition`);
