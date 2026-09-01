@@ -47,3 +47,8 @@ _Avoid_: Dirty file, stray change
 A visible declaration that a generated worktree change is intentionally excluded from
 the patch stack.
 _Avoid_: Gitignore entry, hidden change
+
+**Background command**:
+A long-running or interactive child process owned by one agent run. Its bounded output
+and stdin remain available through a stable process ID until it exits or the run ends.
+_Avoid_: Daemon, job
