@@ -1,0 +1,2507 @@
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { promisify } from "node:util";
+
+import { hydb, memoryStorage } from "@hyos/hydb";
+
+import { createLiterateAgent, type LiterateAgent } from "../src/agent.js";
+import { decodeActivityEvent, encodeActivityEvent } from "../src/activity.js";
+import { editLiterateDiff } from "../src/document.js";
+import {
+  diffRows,
+  fullFileFromAddedPatch,
+  splitPatchFiles,
+} from "../src/diff-view.js";
+import { operationsFromLegacyPatch } from "../src/file-operations.js";
+import { migrateLegacyBlocks } from "../src/store.js";
+import type { LiterateDiff, SessionListItem } from "../src/domain.js";
+import type { GatewayMessage, GatewayTransport } from "../src/gateway.js";
+import { hyagentSchema } from "../src/model.js";
+import { renderAgentMarkdown } from "../src/markdown.js";
+import {
+  literateFileCollapsed,
+  literateScrollTop,
+  saveLiterateFileCollapsed,
+  saveLiterateScrollTop,
+} from "../src/literate-view-state.js";
+import { createProjectTools, type ProjectTools } from "../src/project-tools.js";
+import { createHyagentStore, type HyagentStore } from "../src/store.js";
+import { createHyagentRouter } from "../src/trpc.js";
+import { shouldShowWorkspacePicker } from "../src/workspace-state.js";
+import { createParallelWebTools } from "../src/web-tools.js";
+
+const exec = promisify(execFile);
+
+const proposedDocument: LiterateDiff = {
+  summary: "Explain the seam before proposing the code.",
+  blocks: [
+    {
+      id: "intent",
+      kind: "prose",
+      title: "Keep review in the loop",
+      body: "The document changes while the model works.",
+    },
+    {
+      id: "change",
+      kind: "apply_patch",
+      repository: "workspace",
+      title: "Change one file",
+      rationale: "This is the smallest testable proposal.",
+      operations: [
+        {
+          type: "replace_text",
+          path: "a.txt",
+          before: "before",
+          after: "after",
+        },
+      ],
+    },
+  ],
+  generatedIgnores: [],
+};
+
+test("literate view state persists independently per session and diff", () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const values = new Map<string, string>();
+  const storage: Storage = {
+    get length() {
+      return values.size;
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, value),
+  };
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: storage,
+  });
+  try {
+    saveLiterateScrollTop("session-a", "diff-1", 438);
+    saveLiterateFileCollapsed("session-a", "diff-1", "block:file.ts", true);
+
+    assert.equal(literateScrollTop("session-a", "diff-1"), 438);
+    assert.equal(
+      literateFileCollapsed("session-a", "diff-1", "block:file.ts"),
+      true,
+    );
+    assert.equal(literateScrollTop("session-a", "diff-2"), 0);
+    assert.equal(
+      literateFileCollapsed("session-b", "diff-1", "block:file.ts"),
+      false,
+    );
+
+    saveLiterateFileCollapsed("session-a", "diff-1", "block:file.ts", false);
+    assert.equal(
+      literateFileCollapsed("session-a", "diff-1", "block:file.ts"),
+      false,
+    );
+  } finally {
+    if (original) Object.defineProperty(globalThis, "localStorage", original);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});
+
+test("multi-file patches render as separate file sections", () => {
+  const patch = [
+    "diff --git a/src/schema/schema.ts b/src/schema/schema.ts",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/src/schema/schema.ts",
+    "@@ -0,0 +1 @@",
+    "+export const schema = {};",
+    "diff --git a/src/schema/index.ts b/src/schema/index.ts",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/src/schema/index.ts",
+    "@@ -0,0 +1 @@",
+    "+export * from './schema';",
+    "",
+  ].join("\n");
+
+  const files = splitPatchFiles(patch);
+
+  assert.deepEqual(
+    files.map(({ path }) => path),
+    ["src/schema/schema.ts", "src/schema/index.ts"],
+  );
+  assert.deepEqual(
+    diffRows(files[1]!.patch).map(({ code }) => code),
+    ["export * from './schema';"],
+  );
+  assert.equal(
+    fullFileFromAddedPatch(files[1]!.patch),
+    "export * from './schema';\n",
+  );
+});
+
+test("legacy revisions become structured operations despite bad hunk counts", () => {
+  const migrated = migrateLegacyBlocks([
+    {
+      id: "wal",
+      kind: "apply_patch",
+      repository: "project",
+      title: "Write WAL files",
+      rationale: "Persist the transaction log.",
+      patch: [
+        "--- /dev/null",
+        "+++ b/src/wal.ts",
+        "@@ -0,0 +1,99 @@",
+        "+export const wal = true;",
+        "--- /dev/null",
+        "+++ b/src/index.ts",
+        "@@ -0,0 +1,1 @@",
+        "+export * from './wal';",
+        "",
+      ].join("\n"),
+    },
+  ]);
+
+  assert.equal(migrated.changed, true);
+  const block = migrated.blocks[0];
+  assert.equal(block?.kind, "apply_patch");
+  if (block?.kind !== "apply_patch") return;
+  assert.deepEqual(block.operations, [
+    {
+      type: "create_file",
+      path: "src/wal.ts",
+      content: "export const wal = true;\n",
+    },
+    {
+      type: "create_file",
+      path: "src/index.ts",
+      content: "export * from './wal';\n",
+    },
+  ]);
+  assert.equal("patch" in block, false);
+});
+
+async function setup() {
+  const storage = await memoryStorage({ schema: hyagentSchema });
+  const database = await hydb.database({ schema: hyagentSchema, storage });
+  return { database, store: createHyagentStore(database) };
+}
+
+function fakeProject(overrides: Partial<ProjectTools> = {}): ProjectTools {
+  return {
+    repositoryNames: () => ["workspace"],
+    repositorySpecs: () => [{ name: "workspace", root: "/workspace" }],
+    configureRepositories: async () => undefined,
+    canBaseOnLatestRemoteMain: async () => false,
+    prepareRepositories: async (repositories) => repositories,
+    prepareBaseline: async () => undefined,
+    initialize: async () => undefined,
+    readFile: async () => "",
+    runCommand: async () => "",
+    validateDocumentEdit: async () => undefined,
+    movePatchCursor: async (_document, _appliedThrough, target) => ({
+      appliedThrough: target,
+    }),
+    checkConsistency: async () => [],
+    commit: async () => [],
+    inspectChanges: async () => ({
+      dirtyRepositories: [],
+      unaccountedChanges: [],
+    }),
+    yeetRepositories: async () => [],
+    yeet: async () => [],
+    enrichDocument: async (document) => document,
+    ...overrides,
+  };
+}
+
+function fakeAgent(overrides: Partial<LiterateAgent> = {}): LiterateAgent {
+  return {
+    run: async () => proposedDocument,
+    writeCommitMessages: async () => ({
+      workspace: "feat: apply literate change",
+    }),
+    ...overrides,
+  };
+}
+
+function finishRun(
+  message: string,
+  outcome: "changed" | "conversation" | "blocked" = "changed",
+): GatewayMessage {
+  return {
+    role: "assistant",
+    content: null,
+    tool_calls: [
+      {
+        id: "finish",
+        function: {
+          name: "finish_run",
+          arguments: JSON.stringify({ outcome, message }),
+        },
+      },
+    ],
+  };
+}
+
+test("document operations preserve stable blocks and generated ignores", () => {
+  const first = editLiterateDiff(null, [
+    { type: "set_summary", summary: "Live draft" },
+    {
+      type: "insert_block",
+      block: {
+        id: "overview",
+        kind: "prose",
+        title: "Overview",
+        body: "Start with intent.",
+      },
+    },
+  ]);
+  const second = editLiterateDiff(first, [
+    {
+      type: "replace_block",
+      id: "overview",
+      block: {
+        id: "overview",
+        kind: "prose",
+        title: "Overview",
+        body: "Keep the intent current.",
+      },
+    },
+    {
+      type: "set_generated_ignores",
+      entries: [
+        {
+          repository: "workspace",
+          path: "coverage/**",
+          reason: "Generated by tests",
+        },
+      ],
+    },
+  ]);
+
+  assert.equal(second.blocks[0]?.id, "overview");
+  assert.equal(second.generatedIgnores[0]?.path, "coverage/**");
+});
+
+test("agent Markdown renders as formatted, safe HTML", () => {
+  const rendered = renderAgentMarkdown(
+    "**Decision**\n\n- keep context\n- show `code`\n\n<script>alert(1)</script>",
+  );
+
+  assert.match(rendered, /<strong>Decision<\/strong>/);
+  assert.match(rendered, /<ul>/);
+  assert.match(rendered, /<code>code<\/code>/);
+  assert.doesNotMatch(rendered, /<script>/);
+});
+
+test("Parallel web tools send bounded search and fetch requests", async () => {
+  const requests: Array<{ url: string; init: RequestInit }> = [];
+  const web = createParallelWebTools({
+    apiKey: "parallel-test-key",
+    fetch: async (input, init) => {
+      requests.push({ url: String(input), init: init ?? {} });
+      return new Response(JSON.stringify({ results: [], errors: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  await web.search(
+    {
+      objective: "Find current TypeScript release notes",
+      searchQueries: ["TypeScript release notes"],
+    },
+    "run-1",
+  );
+  await web.fetch(
+    { urls: ["https://example.com/docs"], objective: "Read the API changes" },
+    "run-1",
+  );
+
+  assert.deepEqual(
+    requests.map(({ url }) => url),
+    ["https://api.parallel.ai/v1/search", "https://api.parallel.ai/v1/extract"],
+  );
+  assert.equal(
+    (requests[0]?.init.headers as Record<string, string>)["x-api-key"],
+    "parallel-test-key",
+  );
+  assert.deepEqual(JSON.parse(String(requests[0]?.init.body)), {
+    objective: "Find current TypeScript release notes",
+    search_queries: ["TypeScript release notes"],
+    advanced_settings: {
+      max_results: 6,
+      excerpt_settings: { max_chars_per_result: 3_000 },
+    },
+    session_id: "run-1",
+  });
+  assert.deepEqual(JSON.parse(String(requests[1]?.init.body)), {
+    urls: ["https://example.com/docs"],
+    objective: "Read the API changes",
+    max_chars_total: 30_000,
+    session_id: "run-1",
+  });
+});
+
+test("a configured workspace opens an empty thread", () => {
+  assert.equal(shouldShowWorkspacePicker(true), false);
+  assert.equal(shouldShowWorkspacePicker(false), true);
+});
+
+test("hydb stores every incremental literate-diff revision", async () => {
+  const { database, store } = await setup();
+  try {
+    const session = await store.createSession("Review a change");
+    await store.saveRevision(session.id, {
+      summary: "First pass",
+      blocks: proposedDocument.blocks.slice(0, 1),
+      generatedIgnores: [],
+    });
+    await store.saveRevision(session.id, proposedDocument);
+    await store.setStatus(session.id, "ready");
+
+    const snapshot = await store.getSession(session.id);
+    assert.equal(snapshot.status, "ready");
+    assert.equal(snapshot.revision?.number, 2);
+    assert.equal(snapshot.revision?.blocks.length, 2);
+    assert.equal(snapshot.appliedThrough, "change");
+    await store.setAppliedThrough(session.id, null);
+    assert.equal((await store.getSession(session.id)).appliedThrough, null);
+  } finally {
+    await database.close();
+  }
+});
+
+test("hydb remembers the selected model without exposing metadata in chat", async () => {
+  const { database, store } = await setup();
+  try {
+    const session = await store.createSession("Remember my model");
+    assert.equal(session.model, null);
+
+    await store.setModel(session.id, "zai/glm-5.3-flash");
+    const reloadedStore = createHyagentStore(database);
+    const reloaded = await reloadedStore.getSession(session.id);
+
+    assert.equal(reloaded.model, "zai/glm-5.3-flash");
+    assert.deepEqual(reloaded.messages, []);
+  } finally {
+    await database.close();
+  }
+});
+
+test("a session keeps committed diffs while a new active diff starts", async () => {
+  const { database, store } = await setup();
+  try {
+    const session = await store.createSession("Iterate after commit");
+    await store.saveRevision(session.id, proposedDocument, "change");
+    const first = await store.getSession(session.id);
+    await store.commitDiff(
+      session.id,
+      first.revision!.id,
+      first.appliedThrough,
+    );
+
+    const committed = await store.getSession(session.id);
+    assert.equal(committed.status, "committed");
+    assert.deepEqual(
+      committed.diffs.map(({ id, status, revision }) => ({
+        id,
+        status,
+        summary: revision?.summary,
+      })),
+      [
+        {
+          id: session.id,
+          status: "committed",
+          summary: proposedDocument.summary,
+        },
+      ],
+    );
+
+    const next = await store.startDiff(session.id);
+    assert.notEqual(next.activeDiffId, session.id);
+    assert.equal(next.revision, null);
+    assert.equal(next.appliedThrough, null);
+    assert.deepEqual(
+      next.diffs.map(({ status, revision }) => ({
+        status,
+        summary: revision?.summary ?? null,
+      })),
+      [
+        { status: "committed", summary: proposedDocument.summary },
+        { status: "active", summary: null },
+      ],
+    );
+
+    await store.saveRevision(next.id, {
+      summary: "Follow-up change",
+      blocks: [proposedDocument.blocks[0]!],
+      generatedIgnores: [],
+    });
+    const updated = await store.getSession(session.id);
+    assert.equal(updated.revision?.summary, "Follow-up change");
+    assert.equal(updated.latestRevisionNumber, 2);
+    assert.equal(updated.diffs[0]?.revision?.summary, proposedDocument.summary);
+    assert.equal(updated.diffs[1]?.revision?.summary, "Follow-up change");
+  } finally {
+    await database.close();
+  }
+});
+
+test("a legacy committed session becomes the first tab when work resumes", async () => {
+  const { database, store } = await setup();
+  try {
+    const session = await store.createSession("Legacy committed task");
+    await store.saveRevision(session.id, proposedDocument, "change");
+    await store.setStatus(session.id, "committed");
+
+    const next = await store.startDiff(session.id);
+
+    assert.deepEqual(
+      next.diffs.map(({ id, status, revision }) => ({
+        id,
+        status,
+        summary: revision?.summary ?? null,
+      })),
+      [
+        {
+          id: session.id,
+          status: "committed",
+          summary: proposedDocument.summary,
+        },
+        { id: next.activeDiffId, status: "active", summary: null },
+      ],
+    );
+  } finally {
+    await database.close();
+  }
+});
+
+test("the custom loop publishes document edits before it finishes", async () => {
+  const { database, store } = await setup();
+  const responses: GatewayMessage[] = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "overview",
+          function: {
+            name: "edit_literate_diff",
+            arguments: JSON.stringify({
+              operations: [
+                { type: "set_summary", summary: "Understand the change" },
+                {
+                  type: "insert_block",
+                  block: proposedDocument.blocks[0],
+                },
+              ],
+            }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "patch",
+          function: {
+            name: "edit_literate_diff",
+            arguments: JSON.stringify({
+              operations: [
+                { type: "set_summary", summary: proposedDocument.summary },
+                {
+                  type: "insert_block",
+                  after: "intent",
+                  block: proposedDocument.blocks[1],
+                },
+              ],
+            }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "replay",
+          function: {
+            name: "replay_literate_diff",
+            arguments: JSON.stringify({}),
+          },
+        },
+      ],
+    },
+    finishRun("The first pass is ready."),
+  ];
+  const gateway: GatewayTransport = {
+    async complete() {
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+  const validated: number[] = [];
+  const cursorTargets: Array<string | null> = [];
+  const project = fakeProject({
+    async validateDocumentEdit(_previous, next) {
+      validated.push(next.blocks.length);
+    },
+    async movePatchCursor(_document, _appliedThrough, target) {
+      cursorTargets.push(target);
+      return { appliedThrough: target };
+    },
+  });
+  try {
+    const session = await store.createSession("Review a change");
+    const agent = createLiterateAgent({ store, project, gateway });
+    await agent.run(session.id, "Make the change understandable");
+
+    const snapshot = await store.getSession(session.id);
+    assert.deepEqual(validated, [1, 2]);
+    assert.deepEqual(cursorTargets, ["change"]);
+    assert.equal(snapshot.appliedThrough, "change");
+    assert.equal(snapshot.revision?.number, 2);
+    assert.equal(snapshot.status, "ready");
+    assert.equal(
+      snapshot.messages.filter((message) => message.role === "agent").at(-1)
+        ?.content,
+      "The first pass is ready.",
+    );
+    assert.deepEqual(
+      snapshot.messages
+        .map((message) => decodeActivityEvent(message.content)?.status)
+        .filter(Boolean),
+      [
+        "working",
+        "working",
+        "working",
+        "working",
+        "working",
+        "working",
+        "complete",
+      ],
+    );
+  } finally {
+    await database.close();
+  }
+});
+
+test("an aborted agent run becomes ready and records that it stopped", async () => {
+  const { database, store } = await setup();
+  let requestStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    requestStarted = resolve;
+  });
+  const gateway: GatewayTransport = {
+    complete(request) {
+      requestStarted();
+      return new Promise((_resolve, reject) => {
+        assert.ok(request.signal);
+        request.signal.addEventListener(
+          "abort",
+          () => reject(request.signal?.reason),
+          { once: true },
+        );
+      });
+    },
+  };
+  const controller = new AbortController();
+
+  try {
+    const session = await store.createSession("Stop this run");
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+    });
+    const run = agent.run(
+      session.id,
+      "Start working",
+      undefined,
+      controller.signal,
+    );
+    await started;
+
+    controller.abort();
+    assert.equal(await run, null);
+
+    const snapshot = await store.getSession(session.id);
+    assert.equal(snapshot.status, "ready");
+    assert.equal(
+      decodeActivityEvent(snapshot.messages.at(-1)?.content ?? "")?.status,
+      "stopped",
+    );
+  } finally {
+    await database.close();
+  }
+});
+
+test("a rejected operation returns a repairable error to the agent tool call", async () => {
+  const { database, store } = await setup();
+  const root = await createRepository("agent-patch-error");
+  const historyRoot = await mkdtemp(join(tmpdir(), "hyagent-baselines-"));
+  const responses: GatewayMessage[] = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "overview",
+          function: {
+            name: "edit_literate_diff",
+            arguments: JSON.stringify({
+              operations: [
+                { type: "set_summary", summary: "Visible first pass" },
+              ],
+            }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "bad-patch",
+          function: {
+            name: "edit_literate_diff",
+            arguments: JSON.stringify({
+              operations: [
+                {
+                  type: "insert_block",
+                  block: {
+                    id: "ambiguous",
+                    kind: "apply_patch",
+                    repository: "project",
+                    title: "ambiguous",
+                    rationale: "Use an intentionally ambiguous anchor",
+                    operations: [
+                      {
+                        type: "replace_text",
+                        path: "state.txt",
+                        before: "o",
+                        after: "O",
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "apply-bad-patch",
+          function: {
+            name: "replay_literate_diff",
+            arguments: JSON.stringify({}),
+          },
+        },
+      ],
+    },
+    finishRun("I need to regenerate that patch.", "blocked"),
+  ];
+  const requests: GatewayMessage[][] = [];
+  const gateway: GatewayTransport = {
+    async complete(request) {
+      requests.push([...request.messages]);
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+
+  try {
+    const session = await store.createSession("Reject malformed patch");
+    const project = createProjectTools([{ name: "project", root }], {
+      historyRoot,
+    });
+    await project.prepareBaseline(session.id, "worktree");
+    const agent = createLiterateAgent({
+      store,
+      project,
+      gateway,
+    });
+
+    await agent.run(session.id, "Make the change");
+
+    const toolError = requests
+      .at(-1)
+      ?.find(
+        (message) =>
+          message.role === "tool" && message.tool_call_id === "apply-bad-patch",
+      )?.content;
+    assert.match(
+      toolError ?? "",
+      /more than once; include more surrounding text/,
+    );
+    const snapshot = await store.getSession(session.id);
+    assert.equal(snapshot.revision?.summary, "Visible first pass");
+    assert.deepEqual(
+      snapshot.revision?.blocks.map((block) => block.id),
+      ["ambiguous"],
+    );
+    assert.equal(snapshot.appliedThrough, null);
+    assert.match(
+      snapshot.messages
+        .map((message) => decodeActivityEvent(message.content)?.detail ?? "")
+        .find((detail) => detail.includes("ambiguous")) ?? "",
+      /more than once; include more surrounding text/,
+    );
+    assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
+  } finally {
+    await Promise.all([
+      database.close(),
+      rm(root, { recursive: true, force: true }),
+      rm(historyRoot, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("the agent can rewind to a stable step id before editing history", async () => {
+  const { database, store } = await setup();
+  const responses: GatewayMessage[] = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "rewind-before-change",
+          function: {
+            name: "rewind_literate_diff",
+            arguments: JSON.stringify({ to_step_id: null }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "remove-change",
+          function: {
+            name: "edit_literate_diff",
+            arguments: JSON.stringify({
+              operations: [{ type: "remove_block", id: "change" }],
+            }),
+          },
+        },
+      ],
+    },
+    finishRun("The applied step is removed."),
+  ];
+  const moves: Array<{ from: string | null; to: string | null }> = [];
+  const gateway: GatewayTransport = {
+    async complete() {
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+
+  try {
+    const session = await store.createSession("Edit applied history");
+    await store.saveRevision(session.id, proposedDocument);
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject({
+        async movePatchCursor(_document, from, to) {
+          moves.push({ from, to });
+          return { appliedThrough: to };
+        },
+      }),
+      gateway,
+    });
+
+    await agent.run(session.id, "Remove the applied change");
+
+    assert.deepEqual(moves, [{ from: "change", to: null }]);
+    const snapshot = await store.getSession(session.id);
+    assert.equal(snapshot.appliedThrough, null);
+    assert.deepEqual(
+      snapshot.revision?.blocks.map((block) => block.id),
+      ["intent"],
+    );
+  } finally {
+    await database.close();
+  }
+});
+
+test("the custom loop has no fixed model-turn limit", async () => {
+  const { database, store } = await setup();
+  const inspections: GatewayMessage[] = Array.from(
+    { length: 24 },
+    (_, index) => ({
+      role: "assistant" as const,
+      content: null,
+      tool_calls: [
+        {
+          id: `inspect-${index}`,
+          function: {
+            name: "read_file",
+            arguments: JSON.stringify({
+              repository: "workspace",
+              path: "state.txt",
+            }),
+          },
+        },
+      ],
+    }),
+  );
+  const responses: GatewayMessage[] = [
+    ...inspections,
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "overview-after-inspection",
+          function: {
+            name: "edit_literate_diff",
+            arguments: JSON.stringify({
+              operations: [{ type: "set_summary", summary: "Late first pass" }],
+            }),
+          },
+        },
+      ],
+    },
+    finishRun("The first pass is ready."),
+  ];
+  const gateway: GatewayTransport = {
+    async complete() {
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+  try {
+    const session = await store.createSession("Long investigation");
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+    });
+
+    await agent.run(session.id, "Investigate thoroughly");
+
+    const snapshot = await store.getSession(session.id);
+    assert.equal(snapshot.status, "ready");
+    assert.equal(snapshot.revision?.summary, "Late first pass");
+  } finally {
+    await database.close();
+  }
+});
+
+test("repository work waits until the literate diff has an overview", async () => {
+  const { database, store } = await setup();
+  const responses: GatewayMessage[] = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "premature-read",
+          function: {
+            name: "read_file",
+            arguments: JSON.stringify({
+              repository: "workspace",
+              path: "state.txt",
+            }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "overview",
+          function: {
+            name: "edit_literate_diff",
+            arguments: JSON.stringify({
+              operations: [
+                { type: "set_summary", summary: "Visible first pass" },
+              ],
+            }),
+          },
+        },
+      ],
+    },
+    finishRun("The overview is visible."),
+  ];
+  const gateway: GatewayTransport = {
+    async complete() {
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+  let reads = 0;
+  try {
+    const session = await store.createSession("Visible work");
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject({
+        async readFile() {
+          reads += 1;
+          return "hidden work";
+        },
+      }),
+      gateway,
+    });
+
+    await agent.run(session.id, "Start working visibly");
+
+    assert.equal(reads, 0);
+    assert.equal(
+      (await store.getSession(session.id)).revision?.summary,
+      "Visible first pass",
+    );
+  } finally {
+    await database.close();
+  }
+});
+
+test("run_command offers unrestricted executables to the agent", async () => {
+  const { database, store } = await setup();
+  let commandSchema: Record<string, unknown> | undefined;
+  const gateway: GatewayTransport = {
+    async complete(request) {
+      const runCommand = (
+        (request.tools ?? []) as Array<{
+          function: {
+            name: string;
+            parameters: {
+              properties: { command: Record<string, unknown> };
+            };
+          };
+        }>
+      ).find((entry) => entry.function.name === "run_command");
+      commandSchema = runCommand?.function.parameters.properties.command;
+      return finishRun("No repository work was requested.", "conversation");
+    },
+  };
+  try {
+    const session = await store.createSession("Inspect command access");
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+    });
+
+    await agent.run(session.id, "What commands can you run?");
+
+    assert.deepEqual(commandSchema, { type: "string" });
+  } finally {
+    await database.close();
+  }
+});
+
+test("the custom loop exposes and routes web search and fetch tools", async () => {
+  const { database, store } = await setup();
+  const requests: GatewayMessage[] = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "search",
+          function: {
+            name: "web_search",
+            arguments: JSON.stringify({
+              objective: "Find the current documentation",
+              search_queries: ["current documentation"],
+            }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "fetch",
+          function: {
+            name: "web_fetch",
+            arguments: JSON.stringify({
+              urls: ["https://example.com/docs"],
+              objective: "Read the relevant interface",
+            }),
+          },
+        },
+      ],
+    },
+    finishRun("I found the current interface.", "conversation"),
+  ];
+  const offeredTools: string[] = [];
+  const requestedModels: string[] = [];
+  const gateway: GatewayTransport = {
+    async complete(request) {
+      requestedModels.push(request.model);
+      if (offeredTools.length === 0) {
+        offeredTools.push(
+          ...(
+            (request.tools ?? []) as Array<{
+              function: { name: string };
+            }>
+          ).map((entry) => entry.function.name),
+        );
+      }
+      const response = requests.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+  const webCalls: string[] = [];
+  try {
+    const session = await store.createSession("Research an interface");
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+      web: {
+        async search() {
+          webCalls.push("search");
+          return { results: [] };
+        },
+        async fetch() {
+          webCalls.push("fetch");
+          return { results: [] };
+        },
+      },
+    });
+
+    await agent.run(
+      session.id,
+      "Look this up before changing anything",
+      "zai/glm-5.3-flash",
+    );
+
+    assert.ok(offeredTools.includes("web_search"));
+    assert.ok(offeredTools.includes("web_fetch"));
+    assert.deepEqual(webCalls, ["search", "fetch"]);
+    assert.deepEqual(requestedModels, [
+      "zai/glm-5.3-flash",
+      "zai/glm-5.3-flash",
+      "zai/glm-5.3-flash",
+    ]);
+    assert.equal((await store.getSession(session.id)).status, "ready");
+  } finally {
+    await database.close();
+  }
+});
+
+test("the agent can reply conversationally before starting a literate diff", async () => {
+  const { database, store } = await setup();
+  const reply =
+    "Before I start changing code, which behavior should remain compatible?";
+  const gateway: GatewayTransport = {
+    async complete() {
+      return finishRun(reply, "conversation");
+    },
+  };
+  try {
+    const session = await store.createSession("Discuss the change first");
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+    });
+
+    await agent.run(session.id, "Let's talk through the approach first");
+
+    const snapshot = await store.getSession(session.id);
+    assert.equal(snapshot.revision, null);
+    assert.equal(snapshot.status, "ready");
+    assert.equal(
+      snapshot.messages.filter((message) => message.role === "agent").at(-1)
+        ?.content,
+      reply,
+    );
+    assert.equal(
+      snapshot.messages.some((message) =>
+        message.content.includes(
+          "Agent stopped before starting the literate diff",
+        ),
+      ),
+      false,
+    );
+  } finally {
+    await database.close();
+  }
+});
+
+test("the agent can reread the authoritative literate diff", async () => {
+  const { database, store } = await setup();
+  const responses: GatewayMessage[] = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "read-document",
+          function: {
+            name: "read_literate_diff",
+            arguments: "{}",
+          },
+        },
+      ],
+    },
+    finishRun("The current document is revision 1.", "conversation"),
+  ];
+  let readResult = "";
+  const gateway: GatewayTransport = {
+    async complete(request) {
+      readResult =
+        request.messages.find(
+          (message) =>
+            message.role === "tool" && message.tool_call_id === "read-document",
+        )?.content ?? readResult;
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+  try {
+    const session = await store.createSession("Read the diff");
+    await store.saveRevision(session.id, proposedDocument);
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+    });
+
+    await agent.run(session.id, "What is in the current document?");
+
+    const result = JSON.parse(readResult) as {
+      revision: number;
+      document: LiterateDiff;
+    };
+    assert.equal(result.revision, 1);
+    assert.deepEqual(result.document.blocks, proposedDocument.blocks);
+  } finally {
+    await database.close();
+  }
+});
+
+test("the agent cannot claim a document change without saving a revision", async () => {
+  const { database, store } = await setup();
+  const responses: GatewayMessage[] = [
+    { role: "assistant", content: "I've cleaned up the document." },
+    finishRun("I've cleaned up the document."),
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "rewind-change",
+          function: {
+            name: "rewind_literate_diff",
+            arguments: JSON.stringify({ to_step_id: null }),
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "remove-noise",
+          function: {
+            name: "edit_literate_diff",
+            arguments: JSON.stringify({
+              operations: [{ type: "remove_block", id: "change" }],
+            }),
+          },
+        },
+      ],
+    },
+    finishRun("The noisy block is now removed."),
+  ];
+  const requests: GatewayMessage[][] = [];
+  const gateway: GatewayTransport = {
+    async complete(request) {
+      requests.push([...request.messages]);
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected model step");
+      return response;
+    },
+  };
+  try {
+    const session = await store.createSession("Clean the diff");
+    await store.saveRevision(session.id, proposedDocument);
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+    });
+
+    await agent.run(session.id, "Remove the noisy change block");
+
+    assert.equal(requests.length, 5);
+    assert.match(
+      requests[1]?.at(-1)?.content ?? "",
+      /must finish with finish_run/,
+    );
+    assert.match(
+      requests[2]?.find(
+        (message) =>
+          message.role === "tool" && message.tool_call_id === "finish",
+      )?.content ?? "",
+      /neither the document nor its applied cursor changed/,
+    );
+    const snapshot = await store.getSession(session.id);
+    assert.equal(snapshot.revision?.number, 2);
+    assert.deepEqual(
+      snapshot.revision?.blocks.map((block) => block.id),
+      ["intent"],
+    );
+    assert.equal(
+      snapshot.messages.at(-1)?.content,
+      "The noisy block is now removed.",
+    );
+  } finally {
+    await database.close();
+  }
+});
+
+test("the custom loop becomes visible before project inspection finishes", async () => {
+  const { database, store } = await setup();
+  let releaseInspection!: () => void;
+  let inspectionStarted!: () => void;
+  const inspection = new Promise<void>((resolve) => {
+    releaseInspection = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    inspectionStarted = resolve;
+  });
+  const project = fakeProject({
+    async initialize() {
+      inspectionStarted();
+      await inspection;
+    },
+  });
+  const gateway: GatewayTransport = {
+    async complete() {
+      throw new Error("Stop after inspection");
+    },
+  };
+  try {
+    const session = await store.createSession("Review a change");
+    const agent = createLiterateAgent({ store, project, gateway });
+    const run = agent.run(session.id, "Start the first pass");
+    await started;
+
+    const running = await store.getSession(session.id);
+    assert.equal(running.status, "running");
+    assert.equal(
+      [...running.messages].reverse().find((message) => message.role === "user")
+        ?.content,
+      "Start the first pass",
+    );
+    assert.equal(
+      decodeActivityEvent(running.messages.at(-1)?.content ?? "")?.status,
+      "working",
+    );
+
+    releaseInspection();
+    await assert.rejects(run, /Stop after inspection/);
+  } finally {
+    releaseInspection();
+    await database.close();
+  }
+});
+
+test("session changes stream from Hydb subscriptions", async () => {
+  const { database, store } = await setup();
+  const abort = new AbortController();
+  try {
+    const session = await store.createSession("Watch a change");
+    const iterator = store
+      .subscribeSession(session.id, abort.signal)
+      [Symbol.asyncIterator]();
+    const initial = await iterator.next();
+    assert.equal(initial.value?.id, session.id);
+
+    await store.appendMessage(session.id, "user", "Stream this update");
+    let updated = await iterator.next();
+    while (
+      !updated.done &&
+      !updated.value.messages.some(
+        (message) => message.content === "Stream this update",
+      )
+    ) {
+      updated = await iterator.next();
+    }
+    assert.equal(updated.done, false);
+    assert.equal(updated.value?.messages.at(-1)?.content, "Stream this update");
+
+    await store.saveRevision(session.id, {
+      summary: "Stream this literate diff",
+      blocks: [],
+      generatedIgnores: [],
+    });
+    updated = await iterator.next();
+    while (
+      !updated.done &&
+      updated.value.revision?.summary !== "Stream this literate diff"
+    ) {
+      updated = await iterator.next();
+    }
+    assert.equal(updated.done, false);
+    assert.equal(updated.value?.revision?.summary, "Stream this literate diff");
+    abort.abort();
+    await iterator.return?.();
+  } finally {
+    abort.abort();
+    await database.close();
+  }
+});
+
+test("the session index streams creation and title changes", async () => {
+  const { database, store } = await setup();
+  const abort = new AbortController();
+  try {
+    const first = await store.createSession("First task");
+    const iterator = store
+      .subscribeSessions(abort.signal)
+      [Symbol.asyncIterator]();
+    assert.deepEqual(
+      (await iterator.next()).value?.map((item: SessionListItem) => item.id),
+      [first.id],
+    );
+
+    const second = await store.createSession("New agent task");
+    let latest: SessionListItem[] = (await iterator.next()).value ?? [];
+    while (!latest.some((item: SessionListItem) => item.id === second.id)) {
+      latest = (await iterator.next()).value ?? [];
+    }
+    assert.equal(latest[0]?.id, second.id);
+
+    await store.setTitle(second.id, "A useful session title");
+    do {
+      latest = (await iterator.next()).value ?? [];
+    } while (latest[0]?.title !== "A useful session title");
+    assert.equal(latest[0]?.title, "A useful session title");
+
+    await store.archiveSession(first.id);
+    do {
+      latest = (await iterator.next()).value ?? [];
+    } while (latest.some((item) => item.id === first.id));
+    assert.deepEqual(
+      latest.map((item) => item.id),
+      [second.id],
+    );
+    assert.deepEqual((await store.getSession(first.id)).messages, []);
+    abort.abort();
+    await iterator.return?.();
+  } finally {
+    abort.abort();
+    await database.close();
+  }
+});
+
+test("recent repositories prefer source checkouts over generated worktrees", async () => {
+  const { database, store } = await setup();
+  try {
+    const first = await store.createSession("First task");
+    await store.saveWorkspace(first.id, [
+      { name: "project", root: "/managed/project-worktree" },
+    ]);
+    await store.saveSourceRepositories(first.id, [
+      { name: "project", root: "/code/project" },
+    ]);
+    const second = await store.createSession("Second task");
+    await store.saveSourceRepositories(second.id, [
+      { name: "other", root: "/code/other" },
+      { name: "project", root: "/code/project" },
+    ]);
+
+    assert.deepEqual(await store.recentRepositories(), [
+      { name: "other", root: "/code/other" },
+      { name: "project", root: "/code/project" },
+    ]);
+    assert.deepEqual((await store.getSession(second.id)).messages, []);
+  } finally {
+    await database.close();
+  }
+});
+
+test("the custom loop replaces stale consistency warnings", async () => {
+  const { database, store } = await setup();
+  let gatewayMessages: GatewayMessage[] = [];
+  const gateway: GatewayTransport = {
+    async complete(request) {
+      gatewayMessages = request.messages;
+      throw new Error("Captured model context");
+    },
+  };
+  const project = fakeProject({
+    async checkConsistency() {
+      return [
+        {
+          repository: "project",
+          path: "generated/**",
+          message:
+            "project:generated/** contains 42 changes outside the literate diff",
+        },
+      ];
+    },
+  });
+  try {
+    const session = await store.createSession("Review a change");
+    await store.appendMessage(
+      session.id,
+      "system",
+      "WORKTREE_INCONSISTENT: stale oversized warning",
+    );
+    await store.appendMessage(
+      session.id,
+      "system",
+      encodeActivityEvent({
+        runId: "old-run",
+        status: "complete",
+        summary: "Old internal activity",
+      }),
+    );
+    const agent = createLiterateAgent({ store, project, gateway });
+    await assert.rejects(
+      agent.run(session.id, "Continue the work"),
+      /Captured model context/,
+    );
+
+    const context = gatewayMessages
+      .map((message) => message.content)
+      .join("\n");
+    assert.doesNotMatch(context, /stale oversized warning/);
+    assert.doesNotMatch(context, /Old internal activity/);
+    assert.match(context, /generated\/\*\* contains 42 changes/);
+  } finally {
+    await database.close();
+  }
+});
+
+async function git(root: string, ...args: string[]) {
+  await exec("git", args, { cwd: root });
+}
+
+async function createRepository(name: string) {
+  const root = await mkdtemp(join(tmpdir(), `hyagent-${name}-`));
+  await git(root, "init", "-q");
+  await git(root, "config", "user.email", "hyagent@example.test");
+  await git(root, "config", "user.name", "Hyagent Test");
+  await writeFile(join(root, "state.txt"), "one\ntwo\n");
+  await git(root, "add", "state.txt");
+  await git(root, "commit", "-qm", "baseline");
+  return root;
+}
+
+async function createBaselineProject(
+  repositories: readonly { name: string; root: string }[],
+  sessionId: string,
+  source: "worktree" | "head" = "worktree",
+) {
+  const historyRoot = await mkdtemp(join(tmpdir(), "hyagent-baselines-"));
+  const project = createProjectTools(repositories, { historyRoot });
+  await project.prepareBaseline(sessionId, source);
+  return { historyRoot, project };
+}
+
+test("a repository with no commits can be opened", async () => {
+  const root = await mkdtemp(join(tmpdir(), "hyagent-unborn-"));
+  try {
+    await git(root, "init", "-q");
+    await writeFile(join(root, "README.md"), "# New project\n");
+
+    const project = createProjectTools([{ name: "new-project", root }]);
+    await project.initialize();
+
+    assert.deepEqual(
+      (await project.checkConsistency([])).map(({ path }) => path),
+      [],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("manual command changes run and produce consistency warnings", async () => {
+  const root = await createRepository("manual-command");
+  try {
+    const project = createProjectTools([{ name: "project", root }]);
+    await project.initialize();
+
+    const result = JSON.parse(
+      await project.runCommand("project", "rm", ["state.txt"]),
+    ) as { exitCode: number };
+
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(
+      (await project.checkConsistency([])).map(({ path }) => path),
+      ["state.txt"],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("operation errors identify ambiguous replacement anchors", async () => {
+  const root = await createRepository("contextless-patch");
+  let historyRoot: string | undefined;
+  try {
+    const prepared = await createBaselineProject(
+      [{ name: "project", root }],
+      "contextless-patch",
+    );
+    historyRoot = prepared.historyRoot;
+    const { project } = prepared;
+    const document: LiterateDiff = {
+      summary: "Rejected patch",
+      generatedIgnores: [],
+      blocks: [
+        {
+          id: "ambiguous",
+          kind: "apply_patch",
+          repository: "project",
+          title: "Ambiguous replacement",
+          rationale: "The anchor needs more context.",
+          operations: [
+            {
+              type: "replace_text",
+              path: "state.txt",
+              before: "o",
+              after: "O",
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = await project.movePatchCursor(document, null, "ambiguous");
+    assert.match(
+      result.failed?.error ?? "",
+      /more than once; include more surrounding text/,
+    );
+    assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    if (historyRoot) await rm(historyRoot, { recursive: true, force: true });
+  }
+});
+
+test("operation errors identify source text that no longer matches", async () => {
+  const root = await createRepository("stale-patch");
+  let historyRoot: string | undefined;
+  try {
+    const prepared = await createBaselineProject(
+      [{ name: "project", root }],
+      "stale-patch",
+    );
+    historyRoot = prepared.historyRoot;
+    const { project } = prepared;
+    const document: LiterateDiff = {
+      summary: "Rejected patch",
+      generatedIgnores: [],
+      blocks: [
+        patchBlock("stale", "project", "@@ -1,2 +1,2 @@\n-stale\n+ONE\n two"),
+      ],
+    };
+
+    const result = await project.movePatchCursor(document, null, "stale");
+    assert.match(
+      result.failed?.error ?? "",
+      /does not contain the requested text/,
+    );
+    assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    if (historyRoot) await rm(historyRoot, { recursive: true, force: true });
+  }
+});
+
+test("generated ignores cannot hide patch-controlled files", async () => {
+  const root = await createRepository("overlapping-ignore");
+  try {
+    const project = createProjectTools([{ name: "project", root }]);
+    await project.initialize();
+    const document: LiterateDiff = {
+      summary: "Invalid ignore",
+      blocks: [
+        patchBlock("state", "project", "@@ -1,2 +1,2 @@\n-one\n+ONE\n two"),
+      ],
+      generatedIgnores: [
+        {
+          repository: "project",
+          path: "state.txt",
+          reason: "This path is controlled by a patch",
+        },
+      ],
+    };
+
+    await assert.rejects(
+      () => project.validateDocumentEdit(null, document, null),
+      /overlaps patch-controlled file project:state\.txt in block state/,
+    );
+    assert.equal(await readFile(join(root, "state.txt"), "utf8"), "one\ntwo\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("consistency warnings collapse large changed folders", async () => {
+  const root = await createRepository("compact-warnings");
+  try {
+    const project = createProjectTools([{ name: "project", root }]);
+    await project.initialize();
+    await mkdir(join(root, "generated"));
+    await Promise.all(
+      Array.from({ length: 11 }, (_, index) =>
+        writeFile(join(root, "generated", `${index}.json`), "{}\n"),
+      ),
+    );
+
+    const warnings = await project.checkConsistency([]);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0]?.path, "generated/**");
+    assert.match(warnings[0]?.message ?? "", /contains 11 changes/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+function patchBlock(
+  id: string,
+  repository: string,
+  hunk: string,
+): LiterateDiff["blocks"][number] {
+  return {
+    id,
+    kind: "apply_patch",
+    repository,
+    title: id,
+    rationale: `Apply ${id}`,
+    operations: operationsFromLegacyPatch(
+      `diff --git a/state.txt b/state.txt\n--- a/state.txt\n+++ b/state.txt\n${hunk}\n`,
+    ),
+  };
+}
+
+test("the patch cursor rewinds and replays stable step ids across repositories", async () => {
+  const firstRoot = await createRepository("cursor-first");
+  const secondRoot = await createRepository("cursor-second");
+  let historyRoot: string | undefined;
+  try {
+    const prepared = await createBaselineProject(
+      [
+        { name: "first", root: firstRoot },
+        { name: "second", root: secondRoot },
+      ],
+      "cursor-history",
+    );
+    historyRoot = prepared.historyRoot;
+    let { project } = prepared;
+    const patchA = patchBlock(
+      "a",
+      "first",
+      "@@ -1,2 +1,2 @@\n-one\n+ONE\n two",
+    );
+    const patchOther = patchBlock(
+      "other",
+      "second",
+      "@@ -1,2 +1,2 @@\n-one\n+OTHER\n two",
+    );
+    const patchB = patchBlock(
+      "b",
+      "first",
+      "@@ -1,2 +1,2 @@\n ONE\n-two\n+TWO",
+    );
+    const document: LiterateDiff = {
+      summary: "Cursor history",
+      blocks: [patchA, patchOther, patchB],
+      generatedIgnores: [],
+    };
+
+    assert.deepEqual(await project.movePatchCursor(document, null, "b"), {
+      appliedThrough: "b",
+    });
+    assert.equal(
+      await readFile(join(firstRoot, "state.txt"), "utf8"),
+      "ONE\nTWO\n",
+    );
+    assert.equal(
+      await readFile(join(secondRoot, "state.txt"), "utf8"),
+      "OTHER\ntwo\n",
+    );
+
+    await writeFile(join(firstRoot, "state.txt"), "out-of-band drift\n");
+    project = createProjectTools(
+      [
+        { name: "first", root: firstRoot },
+        { name: "second", root: secondRoot },
+      ],
+      { historyRoot },
+    );
+    await project.prepareBaseline("cursor-history", "head");
+    assert.deepEqual(await project.movePatchCursor(document, "b", "a"), {
+      appliedThrough: "a",
+    });
+    assert.equal(
+      await readFile(join(firstRoot, "state.txt"), "utf8"),
+      "ONE\ntwo\n",
+    );
+    assert.equal(
+      await readFile(join(secondRoot, "state.txt"), "utf8"),
+      "one\ntwo\n",
+    );
+    await assert.rejects(
+      () =>
+        project.validateDocumentEdit(
+          document,
+          { ...document, blocks: [patchOther, patchB] },
+          "a",
+        ),
+      /Patch step a is currently applied.*Rewind to the beginning/,
+    );
+
+    const revised: LiterateDiff = {
+      ...document,
+      blocks: [
+        patchA,
+        patchBlock("other", "second", "@@ -1,2 +1,2 @@\n-one\n+OTHER2\n two"),
+        patchBlock("b", "first", "@@ -1,2 +1,2 @@\n WRONG\n-two\n+TWO"),
+      ],
+    };
+    await project.validateDocumentEdit(document, revised, "a");
+    assert.deepEqual(await project.movePatchCursor(revised, "a", "other"), {
+      appliedThrough: "other",
+    });
+    const failed = await project.movePatchCursor(revised, "other", "b");
+    assert.equal(failed.appliedThrough, "other");
+    assert.equal(failed.failed?.stepId, "b");
+    assert.equal(failed.failed?.direction, "replay");
+    assert.equal(
+      await readFile(join(secondRoot, "state.txt"), "utf8"),
+      "OTHER2\ntwo\n",
+    );
+    await writeFile(join(secondRoot, "coverage.txt"), "generated\n");
+    assert.deepEqual(
+      (await project.checkConsistency([])).map(({ repository, path }) => ({
+        repository,
+        path,
+      })),
+      [{ repository: "second", path: "coverage.txt" }],
+    );
+  } finally {
+    await Promise.all([
+      rm(firstRoot, { recursive: true, force: true }),
+      rm(secondRoot, { recursive: true, force: true }),
+      historyRoot
+        ? rm(historyRoot, { recursive: true, force: true })
+        : Promise.resolve(),
+    ]);
+  }
+});
+
+test("a failed replay does not mark pending tracked patches as unrecorded", async () => {
+  const root = await createRepository("partial-replay-consistency");
+  let historyRoot: string | undefined;
+  try {
+    await writeFile(join(root, "later.ts"), "export const later = false;\n");
+    await git(root, "add", "later.ts");
+    await git(root, "commit", "-qm", "add later file");
+    const prepared = await createBaselineProject(
+      [{ name: "project", root }],
+      "partial-replay-consistency",
+    );
+    historyRoot = prepared.historyRoot;
+    const { project } = prepared;
+    const document: LiterateDiff = {
+      summary: "Stop partway through replay",
+      generatedIgnores: [],
+      blocks: [
+        patchBlock("early", "project", "@@ -1,2 +1,2 @@\n-one\n+ONE\n two"),
+        {
+          id: "broken",
+          kind: "apply_patch",
+          repository: "project",
+          title: "Fail replay",
+          rationale: "The requested source text intentionally does not exist.",
+          operations: [
+            {
+              type: "replace_text",
+              path: "broken.ts",
+              before: "not present",
+              after: "only one line",
+            },
+          ],
+        },
+        {
+          id: "pending",
+          kind: "apply_patch",
+          repository: "project",
+          title: "Update the later file",
+          rationale: "This patch must remain pending after the failure.",
+          operations: [
+            {
+              type: "replace_text",
+              path: "later.ts",
+              before: "export const later = false;",
+              after: "export const later = true;",
+            },
+          ],
+        },
+      ],
+    };
+
+    const replay = await project.movePatchCursor(document, null, "pending");
+
+    assert.equal(replay.appliedThrough, "early");
+    assert.equal(replay.failed?.stepId, "broken");
+    assert.deepEqual(await project.checkConsistency([]), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    if (historyRoot) await rm(historyRoot, { recursive: true, force: true });
+  }
+});
+
+test("project commits patch and explicitly ignored paths", async () => {
+  const root = await createRepository("commit");
+  let historyRoot: string | undefined;
+  try {
+    const prepared = await createBaselineProject(
+      [{ name: "project", root }],
+      "commit",
+    );
+    historyRoot = prepared.historyRoot;
+    const { project } = prepared;
+    const document: LiterateDiff = {
+      summary: "Update state",
+      blocks: [
+        patchBlock("state", "project", "@@ -1,2 +1,2 @@\n-one\n+ONE\n two"),
+      ],
+      generatedIgnores: [
+        {
+          repository: "project",
+          path: "generated.txt",
+          reason: "Validation output",
+        },
+      ],
+    };
+    await project.movePatchCursor(document, null, "state");
+    await writeFile(join(root, "generated.txt"), "generated\n");
+    await git(root, "add", "generated.txt");
+
+    assert.deepEqual(await project.inspectChanges(document), {
+      dirtyRepositories: ["project"],
+      unaccountedChanges: [],
+    });
+    await writeFile(join(root, "state.txt"), "ONE\ntwo\nmanual\n");
+    assert.deepEqual(
+      (await project.inspectChanges(document)).unaccountedChanges.map(
+        ({ path }) => path,
+      ),
+      ["state.txt"],
+    );
+    await writeFile(join(root, "state.txt"), "ONE\ntwo\n");
+
+    const commits = await project.commit(document, {
+      project: "feat: update immutable state",
+    });
+
+    assert.equal(commits.length, 1);
+    assert.equal(
+      (
+        await exec("git", ["log", "-1", "--pretty=%B"], { cwd: root })
+      ).stdout.trim(),
+      "feat: update immutable state",
+    );
+    assert.equal(
+      (await exec("git", ["status", "--porcelain"], { cwd: root })).stdout,
+      "",
+    );
+    assert.equal(
+      (
+        await exec("git", ["ls-files", "generated.txt"], { cwd: root })
+      ).stdout.trim(),
+      "generated.txt",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    if (historyRoot) await rm(historyRoot, { recursive: true, force: true });
+  }
+});
+
+test("project discovers and runs each root-level yeet.sh", async () => {
+  const firstRoot = await createRepository("yeet-first");
+  const secondRoot = await createRepository("yeet-second");
+  try {
+    const project = createProjectTools([
+      { name: "first", root: firstRoot },
+      { name: "second", root: secondRoot },
+    ]);
+    assert.deepEqual(await project.inspectChanges(null), {
+      dirtyRepositories: [],
+      unaccountedChanges: [],
+    });
+    assert.deepEqual(await project.yeetRepositories(), []);
+    await assert.rejects(
+      () => project.yeet(),
+      /No selected repository has a root-level yeet\.sh/,
+    );
+
+    await writeFile(
+      join(firstRoot, "yeet.sh"),
+      "#!/bin/sh\nprintf first > yeeted.txt\n",
+      { mode: 0o755 },
+    );
+
+    assert.deepEqual(await project.yeetRepositories(), ["first"]);
+    assert.deepEqual(await project.inspectChanges(null), {
+      dirtyRepositories: ["first"],
+      unaccountedChanges: [
+        {
+          repository: "first",
+          path: "yeet.sh",
+          message: "first:yeet.sh changed outside the literate diff",
+        },
+      ],
+    });
+    assert.deepEqual(
+      (await project.yeet()).map(({ repository }) => repository),
+      ["first"],
+    );
+    assert.equal(
+      await readFile(join(firstRoot, "yeeted.txt"), "utf8"),
+      "first",
+    );
+  } finally {
+    await Promise.all([
+      rm(firstRoot, { recursive: true, force: true }),
+      rm(secondRoot, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("project can prepare an isolated worktree and copy included files", async () => {
+  const root = await createRepository("worktree-source");
+  const worktreeRoot = await mkdtemp(join(tmpdir(), "hyagent-worktrees-"));
+  try {
+    await writeFile(join(root, ".gitignore"), ".env\n");
+    await writeFile(join(root, ".worktreeinclude"), ".env\n");
+    await writeFile(join(root, ".env"), "LOCAL_ONLY=test\n");
+    await git(root, "add", ".gitignore", ".worktreeinclude");
+    await git(root, "commit", "-qm", "configure worktrees");
+    const project = createProjectTools([{ name: "project", root }], {
+      worktreeRoot,
+    });
+
+    assert.equal(
+      await project.canBaseOnLatestRemoteMain([{ name: "project", root }]),
+      false,
+    );
+
+    const prepared = await project.prepareRepositories(
+      [{ name: "project", root }],
+      { mode: "worktree", baseOnLatestRemoteMain: true },
+    );
+
+    assert.notEqual(prepared[0]?.root, root);
+    assert.equal(
+      await readFile(join(prepared[0]!.root, ".env"), "utf8"),
+      "LOCAL_ONLY=test\n",
+    );
+    assert.match(
+      (
+        await exec("git", ["branch", "--show-current"], {
+          cwd: prepared[0]!.root,
+        })
+      ).stdout.trim(),
+      /^hyagent\/project-/,
+    );
+  } finally {
+    await Promise.all([
+      rm(root, { recursive: true, force: true }),
+      rm(worktreeRoot, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("a worktree can start from the latest remote main", async () => {
+  const root = await createRepository("remote-main-source");
+  const remote = await mkdtemp(join(tmpdir(), "hyagent-remote-"));
+  const worktreeRoot = await mkdtemp(join(tmpdir(), "hyagent-worktrees-"));
+  try {
+    await git(root, "branch", "-M", "main");
+    await exec("git", ["init", "--bare", "-q", remote]);
+    await git(root, "remote", "add", "origin", remote);
+    await git(root, "push", "-u", "origin", "main");
+    await writeFile(join(root, "state.txt"), "local only\n");
+    await git(root, "add", "state.txt");
+    await git(root, "commit", "-qm", "local unpushed change");
+    const project = createProjectTools([{ name: "project", root }], {
+      worktreeRoot,
+    });
+
+    assert.equal(
+      await project.canBaseOnLatestRemoteMain([{ name: "project", root }]),
+      true,
+    );
+
+    const prepared = await project.prepareRepositories(
+      [{ name: "project", root }],
+      { mode: "worktree", baseOnLatestRemoteMain: true },
+    );
+
+    assert.equal(
+      (
+        await exec("git", ["rev-parse", "HEAD"], { cwd: prepared[0]!.root })
+      ).stdout.trim(),
+      (
+        await exec("git", ["rev-parse", "origin/main"], {
+          cwd: prepared[0]!.root,
+        })
+      ).stdout.trim(),
+    );
+    assert.equal(
+      await readFile(join(prepared[0]!.root, "state.txt"), "utf8"),
+      "one\ntwo\n",
+    );
+  } finally {
+    await Promise.all([
+      rm(root, { recursive: true, force: true }),
+      rm(remote, { recursive: true, force: true }),
+      rm(worktreeRoot, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("the agent writes focused commit messages for affected repositories", async () => {
+  const { database, store } = await setup();
+  const requests: string[] = [];
+  const gateway: GatewayTransport = {
+    async complete(request) {
+      requests.push(request.messages.at(-1)?.content ?? "");
+      return {
+        role: "assistant",
+        content: "```text\nfeat: explain the project seam\n```",
+      };
+    },
+  };
+  try {
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+    });
+    const messages = await agent.writeCommitMessages(proposedDocument);
+    assert.deepEqual(messages, {
+      workspace: "feat: explain the project seam",
+    });
+    assert.equal(requests.length, 1);
+    assert.match(requests[0] ?? "", /Change one file/);
+  } finally {
+    await database.close();
+  }
+});
+
+test("commit messages are generated before an editable message is committed", async () => {
+  const { database, store } = await setup();
+  let checks = 0;
+  let committedMessage = "";
+  const project = fakeProject({
+    async inspectChanges() {
+      checks += 1;
+      return { dirtyRepositories: ["workspace"], unaccountedChanges: [] };
+    },
+    async commit(_document, messages) {
+      committedMessage = messages.workspace ?? "";
+      return [
+        {
+          repository: "workspace",
+          hash: "1234567890abcdef",
+          message: committedMessage,
+        },
+      ];
+    },
+  });
+  let startedSnapshot:
+    Awaited<ReturnType<HyagentStore["getSession"]>> | undefined;
+  let resolveStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    resolveStarted = resolve;
+  });
+  const agent = fakeAgent({
+    async run(sessionId) {
+      startedSnapshot = await store.getSession(sessionId);
+      resolveStarted();
+      return null;
+    },
+  });
+  try {
+    const router = createHyagentRouter({ store, project, agent });
+    const caller = router.createCaller({});
+    const session = await caller.session.bootstrap();
+    assert.equal(session.revision, null);
+    await store.saveRevision(session.id, proposedDocument, null);
+    await assert.rejects(
+      () => caller.session.commitMessages({ id: session.id }),
+      /Replay every patch step before committing/,
+    );
+    await store.setAppliedThrough(session.id, "change");
+    assert.deepEqual(await caller.session.commitMessages({ id: session.id }), {
+      workspace: "feat: apply literate change",
+    });
+    const committed = await caller.session.commit({
+      id: session.id,
+      messages: { workspace: "feat: edited by reviewer" },
+    });
+    assert.equal(checks, 1);
+    assert.equal(committedMessage, "feat: edited by reviewer");
+    assert.equal(committed.status, "committed");
+
+    assert.deepEqual(
+      await caller.session.feedback({
+        id: session.id,
+        feedback: "Start the next change",
+        agent: "anthropic/claude-sonnet-4.5",
+      }),
+      { accepted: true },
+    );
+    await started;
+    assert.equal(startedSnapshot?.revision, null);
+    assert.equal(startedSnapshot?.diffs[0]?.status, "committed");
+    assert.equal(startedSnapshot?.diffs[1]?.status, "active");
+  } finally {
+    await database.close();
+  }
+});
+
+test("yeet reports availability and runs the project workflow", async () => {
+  const { database, store } = await setup();
+  let runs = 0;
+  let worktreeState = {
+    dirtyRepositories: ["workspace"],
+    unaccountedChanges: [
+      {
+        repository: "workspace",
+        path: "stray.txt",
+        message: "workspace:stray.txt changed outside the literate diff",
+      },
+    ],
+  };
+  const project = fakeProject({
+    async inspectChanges() {
+      return worktreeState;
+    },
+    async yeetRepositories() {
+      return ["workspace"];
+    },
+    async yeet() {
+      runs += 1;
+      return [{ repository: "workspace", stdout: "done", stderr: "" }];
+    },
+  });
+  try {
+    const caller = createHyagentRouter({
+      store,
+      project,
+      agent: fakeAgent(),
+    }).createCaller({});
+    const session = await caller.session.bootstrap();
+
+    assert.deepEqual(await caller.session.yeetStatus({ id: session.id }), {
+      availableRepositories: ["workspace"],
+      dirtyRepositories: ["workspace"],
+      unaccountedChanges: worktreeState.unaccountedChanges,
+    });
+    await assert.rejects(
+      () => caller.session.yeet({ id: session.id }),
+      /Commit changes before running yeet\.sh: workspace/,
+    );
+    assert.equal(runs, 0);
+
+    worktreeState = { dirtyRepositories: [], unaccountedChanges: [] };
+    assert.equal(
+      (await caller.session.yeet({ id: session.id }))[0]?.stdout,
+      "done",
+    );
+    assert.equal(runs, 1);
+  } finally {
+    await database.close();
+  }
+});
+
+test("feedback starts the agent without holding the mutation open", async () => {
+  const { database, store } = await setup();
+  let release!: () => void;
+  let completed = false;
+  let selectedAgent = "";
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const agent = fakeAgent({
+    async run(_sessionId, _feedback, agent) {
+      selectedAgent = agent ?? "";
+      await blocked;
+      completed = true;
+      return proposedDocument;
+    },
+  });
+  try {
+    const router = createHyagentRouter({
+      store,
+      project: fakeProject(),
+      agent,
+    });
+    const caller = router.createCaller({});
+    const session = await caller.session.bootstrap();
+    const result = await caller.session.feedback({
+      id: session.id,
+      feedback: "Start working",
+      agent: "zai/glm-5.3-flash",
+    });
+    assert.deepEqual(result, { accepted: true });
+    assert.equal(completed, false);
+    assert.equal(selectedAgent, "zai/glm-5.3-flash");
+    assert.equal(
+      (await store.getSession(session.id)).model,
+      "zai/glm-5.3-flash",
+    );
+    assert.ok(
+      (await caller.health()).agents.some(
+        (agent) => agent.id === "zai/glm-5.3-flash",
+      ),
+    );
+    release();
+  } finally {
+    release();
+    await database.close();
+  }
+});
+
+test("stop aborts the active session run", async () => {
+  const { database, store } = await setup();
+  let activeSignal: AbortSignal | undefined;
+  let runStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    runStarted = resolve;
+  });
+  const agent = fakeAgent({
+    async run(_sessionId, _feedback, _agent, signal) {
+      activeSignal = signal;
+      runStarted();
+      await new Promise<void>((resolve) =>
+        signal?.addEventListener("abort", () => resolve(), { once: true }),
+      );
+      return null;
+    },
+  });
+  try {
+    const router = createHyagentRouter({
+      store,
+      project: fakeProject(),
+      agent,
+    });
+    const caller = router.createCaller({});
+    const session = await caller.session.bootstrap();
+    await caller.session.feedback({
+      id: session.id,
+      feedback: "Start working",
+    });
+    await started;
+
+    await caller.session.stop({ id: session.id });
+
+    assert.equal(activeSignal?.aborted, true);
+  } finally {
+    await database.close();
+  }
+});
+
+test("a task is persisted only after workspace preparation succeeds", async () => {
+  const { database, store } = await setup();
+  let shouldFail = true;
+  const project = fakeProject({
+    async prepareRepositories(repositories) {
+      if (shouldFail) throw new Error("Could not prepare workspace");
+      return repositories;
+    },
+  });
+  try {
+    const router = createHyagentRouter({
+      store,
+      project,
+      agent: fakeAgent(),
+    });
+    const caller = router.createCaller({});
+    assert.equal(await caller.session.initial(), null);
+    await assert.rejects(
+      caller.session.start({
+        repositories: [{ name: "project", root: "/code/project" }],
+        mode: "worktree",
+        baseOnLatestRemoteMain: false,
+        prompt: "Build the first change",
+      }),
+      /Could not prepare workspace/,
+    );
+    assert.deepEqual(await caller.session.list(), []);
+
+    shouldFail = false;
+    const started = await caller.session.start({
+      repositories: [{ name: "project", root: "/code/project" }],
+      mode: "checkout",
+      baseOnLatestRemoteMain: false,
+      prompt: "Build the first change",
+    });
+    assert.equal(started.session.title, "Build the first change");
+    assert.equal((await caller.session.list()).length, 1);
+    assert.deepEqual(await caller.workspace.recent(), [
+      { name: "project", root: "/code/project" },
+    ]);
+  } finally {
+    await database.close();
+  }
+});
+
+test("a task starts empty and configures repositories from folder selection", async () => {
+  const { database, store } = await setup();
+  const configured: string[][] = [];
+  let specs: Array<{ name: string; root: string }> = [];
+  const project = fakeProject({
+    repositoryNames: () => specs.map((repository) => repository.name),
+    repositorySpecs: () => specs,
+    async configureRepositories(repositories) {
+      specs = [...repositories];
+      configured.push(repositories.map((repository) => repository.root));
+    },
+  });
+  const agent = fakeAgent();
+  const folderPicker = {
+    choose: async () => ({ name: "project", root: "/code/project" }),
+  };
+  try {
+    const router = createHyagentRouter({
+      store,
+      project,
+      agent,
+      folderPicker,
+      agentConfigured: false,
+    });
+    const caller = router.createCaller({});
+    const session = await caller.session.bootstrap();
+    assert.equal(session.revision, null);
+    assert.deepEqual(session.messages, []);
+    assert.equal((await caller.health()).agentConfigured, false);
+    assert.deepEqual(await caller.workspace.chooseFolder(), {
+      name: "project",
+      root: "/code/project",
+    });
+
+    const started = await caller.workspace.configure({
+      repositories: [{ name: "project", root: "/code/project" }],
+    });
+    assert.deepEqual(configured, [["/code/project"]]);
+    assert.equal(started.session.revision, null);
+    assert.match(started.session.messages[0]?.content ?? "", /project/);
+  } finally {
+    await database.close();
+  }
+});
+
+test("a restarted router restores its unfinished session and workspace", async () => {
+  const { database, store } = await setup();
+  const agent = fakeAgent();
+  let firstSpecs: Array<{ name: string; root: string }> = [];
+  const firstProject = fakeProject({
+    repositoryNames: () => firstSpecs.map(({ name }) => name),
+    repositorySpecs: () => firstSpecs,
+    async configureRepositories(repositories) {
+      firstSpecs = [...repositories];
+    },
+  });
+  try {
+    const firstRouter = createHyagentRouter({
+      store,
+      project: firstProject,
+      agent,
+    });
+    const firstCaller = firstRouter.createCaller({});
+    const original = await firstCaller.session.bootstrap();
+    await firstCaller.workspace.configure({
+      repositories: [{ name: "project", root: "/code/project" }],
+    });
+
+    let restoredSpecs: Array<{ name: string; root: string }> = [];
+    const restartedProject = fakeProject({
+      repositoryNames: () => restoredSpecs.map(({ name }) => name),
+      repositorySpecs: () => restoredSpecs,
+      async configureRepositories(repositories) {
+        restoredSpecs = [...repositories];
+      },
+    });
+    const restartedRouter = createHyagentRouter({
+      store,
+      project: restartedProject,
+      agent,
+    });
+    const restartedCaller = restartedRouter.createCaller({});
+
+    const restored = await restartedCaller.session.bootstrap();
+    assert.equal(restored.id, original.id);
+    assert.deepEqual(await restartedCaller.workspace.current(), [
+      { name: "project", root: "/code/project" },
+    ]);
+  } finally {
+    await database.close();
+  }
+});
+
+test("a legacy session with a revision can reattach its missing workspace", async () => {
+  const { database, store } = await setup();
+  let specs: Array<{ name: string; root: string }> = [];
+  const project = fakeProject({
+    repositoryNames: () => specs.map(({ name }) => name),
+    repositorySpecs: () => specs,
+    async configureRepositories(repositories) {
+      specs = [...repositories];
+    },
+  });
+  try {
+    const session = await store.createSession("Existing task");
+    await store.saveRevision(session.id, proposedDocument);
+    const router = createHyagentRouter({
+      store,
+      project,
+      agent: fakeAgent(),
+    });
+    const caller = router.createCaller({});
+
+    const restored = await caller.session.bootstrap();
+    assert.equal(restored.id, session.id);
+    await caller.workspace.configure({
+      repositories: [{ name: "project", root: "/code/project" }],
+    });
+    assert.deepEqual(await store.getWorkspace(session.id), [
+      { name: "project", root: "/code/project" },
+    ]);
+  } finally {
+    await database.close();
+  }
+});

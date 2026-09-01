@@ -10,6 +10,7 @@
     "demo:project-management": "npm run dev --workspace @hyos/hydb-project-management-example",
     "dev": "npm run build --workspace @hyos/ui-agent && npm run dev --workspace @hyos/components",
     "dev:ui-agent": "npm run sandbox --workspace @hyos/ui-agent",
+    "dev:hyagent": "npm run dev --workspace @hyos/hyagent",
     "dev:notes": "npm run dev --workspace @hyos/hy-notes",
     "build": "npm run build --workspace @hyos/ui-agent && npm run build --workspace @hyos/components",
     "typecheck": "npm run typecheck --workspace @hyos/ui-agent && npm run typecheck --workspace @hyos/components",
