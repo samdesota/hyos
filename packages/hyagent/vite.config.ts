@@ -13,8 +13,9 @@ export default defineConfig({
     },
   },
   server: {
-    host: "127.0.0.1",
-    port: 5184,
+    host: process.env.HOST ?? "127.0.0.1",
+    port: Number(process.env.HYAGENT_CLIENT_PORT ?? 5184),
+    strictPort: true,
     proxy: {
       "/trpc": {
         target: `http://127.0.0.1:${process.env.HYAGENT_PORT ?? "4328"}`,

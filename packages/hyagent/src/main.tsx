@@ -20,8 +20,10 @@ import {
 import { render } from "solid-js/web";
 
 import { decodeActivityEvent, type AgentActivityEvent } from "./activity.js";
+import { activityTimeline, commandGroupSummary } from "./activity-timeline.js";
 import type { AgentOption } from "./agent-options.js";
 import type { LiterateBlock } from "./domain.js";
+import type { ReasoningEffort } from "./gateway.js";
 import { renderOperationsAsPatch } from "./file-operations.js";
 import { renderAgentMarkdown } from "./markdown.js";
 import {
@@ -132,27 +134,47 @@ function MessageBody(props: { message: ThreadMessage }) {
 
 function ActivityStream(props: { run: ActivityRun }) {
   const latest = () => props.run.events.at(-1)!.activity;
-  const updates = () =>
-    props.run.events.filter(({ activity }) => activity.status === "working");
+  const groups = () => activityTimeline(props.run.events);
   const working = () => latest().status === "working";
   return (
     <details class="activity-stream" open={working()}>
       <summary>
         <i class={working() ? "working" : latest().status} />
-        <strong>{latest().summary}</strong>
-        <span>{updates().length} updates</span>
+        <strong>{working() ? "Working" : latest().summary}</strong>
         <b>›</b>
       </summary>
-      <ol>
-        <For each={updates()}>
-          {({ activity, createdAt }) => (
-            <li>
-              <span>{activity.summary}</span>
-              <time>{formatTime(createdAt)}</time>
-            </li>
-          )}
+      <div class="activity-timeline">
+        <For each={groups()}>
+          {(group) =>
+            group.kind === "thinking" ? (
+              <div class="thinking-summary">
+                <div
+                  class="message-markdown thinking-markdown"
+                  innerHTML={renderAgentMarkdown(group.item.activity.summary)}
+                />
+                <time>{formatTime(group.item.createdAt)}</time>
+              </div>
+            ) : (
+              <details class="command-stream">
+                <summary>
+                  <span>{commandGroupSummary(group.items)}</span>
+                  <b>›</b>
+                </summary>
+                <ol>
+                  <For each={group.items}>
+                    {({ activity, createdAt }) => (
+                      <li>
+                        <span>{activity.summary}</span>
+                        <time>{formatTime(createdAt)}</time>
+                      </li>
+                    )}
+                  </For>
+                </ol>
+              </details>
+            )
+          }
         </For>
-      </ol>
+      </div>
     </details>
   );
 }
@@ -175,6 +197,7 @@ interface WorkspaceProps {
   agentConfigured: boolean;
   agents: readonly AgentOption[];
   selectedAgent: string;
+  reasoningEffort: ReasoningEffort;
   error: string;
   comments: ReviewComment[];
   following: boolean;
@@ -188,6 +211,7 @@ interface WorkspaceProps {
   selectedDiffId: string;
   setFeedback(value: string): void;
   setSelectedAgent(value: string): void;
+  setReasoningEffort(value: ReasoningEffort): void;
   addComment(target: string, body: string): void;
   submitComments(): void;
   toggleFollowing(): void;
@@ -594,6 +618,30 @@ function AgentSelector(props: {
   );
 }
 
+function ReasoningSelector(props: {
+  value: ReasoningEffort;
+  disabled?: boolean;
+  select(value: ReasoningEffort): void;
+}) {
+  return (
+    <label class="agent-selector reasoning-selector">
+      <span>Reasoning</span>
+      <select
+        aria-label="Reasoning"
+        value={props.value}
+        disabled={props.disabled}
+        onChange={(event) =>
+          props.select(event.currentTarget.value as ReasoningEffort)
+        }
+      >
+        <option value="low">Low</option>
+        <option value="medium">Medium</option>
+        <option value="high">High</option>
+      </select>
+    </label>
+  );
+}
+
 function Composer(props: WorkspaceProps) {
   return (
     <div class="composer">
@@ -614,6 +662,11 @@ function Composer(props: WorkspaceProps) {
             value={props.selectedAgent}
             disabled={props.busy}
             select={props.setSelectedAgent}
+          />
+          <ReasoningSelector
+            value={props.reasoningEffort}
+            disabled={props.busy}
+            select={props.setReasoningEffort}
           />
           <span>⌘ ↵ to send</span>
         </div>
@@ -650,17 +703,20 @@ function NewThreadPage(props: {
   error: string;
   agents: readonly AgentOption[];
   selectedAgent: string;
+  reasoningEffort: ReasoningEffort;
   chooseFolder(): void;
   addPath(path: string): void;
   updateName(index: number, name: string): void;
   remove(index: number): void;
   selectRecent(repository: WorkspaceRepository): void;
   setSelectedAgent(value: string): void;
+  setReasoningEffort(value: ReasoningEffort): void;
   start(
     prompt: string,
     mode: "checkout" | "worktree",
     baseOnLatestRemoteMain: boolean,
     agent: string,
+    reasoningEffort: ReasoningEffort,
   ): void;
 }) {
   const [path, setPath] = createSignal("");
@@ -707,6 +763,7 @@ function NewThreadPage(props: {
       mode(),
       baseOnLatestRemoteMain(),
       props.selectedAgent,
+      props.reasoningEffort,
     );
   };
   return (
@@ -854,12 +911,19 @@ function NewThreadPage(props: {
             placeholder="Describe the change you want the agent to make…"
           />
           <div class="initial-prompt-options">
-            <AgentSelector
-              agents={props.agents}
-              value={props.selectedAgent}
-              disabled={props.busy}
-              select={props.setSelectedAgent}
-            />
+            <div class="prompt-selectors">
+              <AgentSelector
+                agents={props.agents}
+                value={props.selectedAgent}
+                disabled={props.busy}
+                select={props.setSelectedAgent}
+              />
+              <ReasoningSelector
+                value={props.reasoningEffort}
+                disabled={props.busy}
+                select={props.setReasoningEffort}
+              />
+            </div>
             <small>Enter to start · Shift Enter for a new line</small>
           </div>
         </div>
@@ -1315,6 +1379,8 @@ function App() {
   const [agents, setAgents] = createSignal<AgentOption[]>([]);
   const [defaultAgent, setDefaultAgent] = createSignal("");
   const [selectedAgent, setSelectedAgent] = createSignal("");
+  const [reasoningEffort, setReasoningEffort] =
+    createSignal<ReasoningEffort>("medium");
   const [creatingNew, setCreatingNew] = createSignal(false);
   const [initialized, setInitialized] = createSignal(false);
   const [commitOpen, setCommitOpen] = createSignal(false);
@@ -1568,6 +1634,7 @@ function App() {
         id: current.id,
         feedback: text,
         agent: selectedAgent(),
+        reasoningEffort: reasoningEffort(),
       });
       onSuccess?.();
     } catch (cause) {
@@ -1713,6 +1780,7 @@ function App() {
     mode: "checkout" | "worktree",
     baseOnLatestRemoteMain: boolean,
     agent: string,
+    reasoningEffort: ReasoningEffort,
   ) => {
     if (busy() || repositories().length === 0 || !prompt.trim()) return;
     if (!agentConfigured()) {
@@ -1730,6 +1798,7 @@ function App() {
         baseOnLatestRemoteMain,
         prompt,
         agent,
+        reasoningEffort,
       });
       setRepositories([...started.repositories]);
       setRecentRepositories((current) => {
@@ -1849,6 +1918,7 @@ function App() {
                   error={error()}
                   agents={agents()}
                   selectedAgent={selectedAgent()}
+                  reasoningEffort={reasoningEffort()}
                   chooseFolder={() => void chooseFolder()}
                   addPath={addPath}
                   updateName={(index, name) =>
@@ -1869,12 +1939,20 @@ function App() {
                   }
                   selectRecent={(repository) => setRepositories([repository])}
                   setSelectedAgent={setSelectedAgent}
-                  start={(prompt, mode, baseOnLatestRemoteMain, agent) =>
+                  setReasoningEffort={setReasoningEffort}
+                  start={(
+                    prompt,
+                    mode,
+                    baseOnLatestRemoteMain,
+                    agent,
+                    effort,
+                  ) =>
                     void startNewSession(
                       prompt,
                       mode,
                       baseOnLatestRemoteMain,
                       agent,
+                      effort,
                     )
                   }
                 />
@@ -1889,6 +1967,7 @@ function App() {
                     agentConfigured={agentConfigured()}
                     agents={agents()}
                     selectedAgent={selectedAgent()}
+                    reasoningEffort={reasoningEffort()}
                     error={error()}
                     comments={comments()}
                     following={following()}
@@ -1902,6 +1981,7 @@ function App() {
                     selectedDiffId={selectedDiffId()}
                     setFeedback={setFeedback}
                     setSelectedAgent={setSelectedAgent}
+                    setReasoningEffort={setReasoningEffort}
                     addComment={(target, body) =>
                       setComments((current) => [
                         ...current,

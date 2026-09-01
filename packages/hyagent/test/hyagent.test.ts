@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createServer as createNodeServer } from "node:net";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +11,12 @@ import { hydb, memoryStorage } from "@hyos/hydb";
 
 import { createLiterateAgent, type LiterateAgent } from "../src/agent.js";
 import { decodeActivityEvent, encodeActivityEvent } from "../src/activity.js";
+import {
+  activityTimeline,
+  commandGroupSummary,
+} from "../src/activity-timeline.js";
 import { editLiterateDiff } from "../src/document.js";
+import { chooseDevPorts } from "../src/dev-ports.js";
 import {
   diffRows,
   fullFileFromAddedPatch,
@@ -63,6 +69,31 @@ const proposedDocument: LiterateDiff = {
   ],
   generatedIgnores: [],
 };
+
+test("development startup advances past occupied ports", async () => {
+  const occupied = createNodeServer();
+  await new Promise<void>((resolve, reject) => {
+    occupied.once("error", reject);
+    occupied.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = occupied.address();
+    assert.ok(address && typeof address === "object");
+    const ports = await chooseDevPorts({
+      host: "127.0.0.1",
+      serverPort: address.port,
+      clientPort: address.port,
+    });
+
+    assert.ok(ports.server > address.port);
+    assert.ok(ports.client > address.port);
+    assert.notEqual(ports.client, ports.server);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      occupied.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
 
 test("literate view state persists independently per session and diff", () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
@@ -345,6 +376,64 @@ test("Parallel web tools send bounded search and fetch requests", async () => {
   });
 });
 
+test("activity events keep legacy records and validate new kinds", () => {
+  assert.equal(
+    decodeActivityEvent(
+      encodeActivityEvent({
+        runId: "legacy",
+        status: "working",
+        summary: "Existing activity",
+      }),
+    )?.kind,
+    undefined,
+  );
+  assert.equal(
+    decodeActivityEvent(
+      `${encodeActivityEvent({
+        runId: "invalid",
+        status: "working",
+        summary: "Invalid activity",
+      }).slice(0, -1)},\"kind\":\"other\"}`,
+    ),
+    null,
+  );
+});
+
+test("activity timeline interleaves thoughts with collapsed command batches", () => {
+  const item = (kind: "thinking" | "command" | "status", summary: string) => ({
+    activity: {
+      runId: "run",
+      status: "working" as const,
+      kind,
+      summary,
+    },
+    createdAt: "2026-01-01T00:00:00Z",
+  });
+  const groups = activityTimeline([
+    item("status", "Planning"),
+    item("thinking", "I’ll inspect the rendering seam first."),
+    item("command", "Reading hyos:src/main.tsx"),
+    item("command", "Reading hyos:src/styles.css"),
+    item("command", "Running npm test"),
+    item("thinking", "The timeline can preserve contiguous tool batches."),
+    item("command", "Updating the literate diff"),
+    item("command", "Running npm run typecheck"),
+  ]);
+
+  assert.deepEqual(
+    groups.map((group) => group.kind),
+    ["thinking", "commands", "thinking", "commands"],
+  );
+  assert.equal(
+    groups[1]?.kind === "commands" ? commandGroupSummary(groups[1].items) : "",
+    "Read files, ran a command",
+  );
+  assert.equal(
+    groups[3]?.kind === "commands" ? commandGroupSummary(groups[3].items) : "",
+    "Edited files, ran a command",
+  );
+});
+
 test("a configured workspace opens an empty thread", () => {
   assert.equal(shouldShowWorkspacePicker(true), false);
   assert.equal(shouldShowWorkspacePicker(false), true);
@@ -587,6 +676,56 @@ test("the custom loop publishes document edits before it finishes", async () => 
         "working",
         "complete",
       ],
+    );
+  } finally {
+    await database.close();
+  }
+});
+
+test("the agent publishes model reasoning separately from commands", async () => {
+  const { database, store } = await setup();
+  const gateway: GatewayTransport = {
+    async complete(request) {
+      assert.deepEqual(request.reasoning, { effort: "high" });
+      return {
+        ...finishRun("No change was needed.", "conversation"),
+        reasoning:
+          "I checked the request and can answer without changing files.",
+      };
+    },
+  };
+  try {
+    const session = await store.createSession("Explain the approach");
+    const agent = createLiterateAgent({
+      store,
+      project: fakeProject(),
+      gateway,
+    });
+
+    await agent.run(
+      session.id,
+      "Do we need a code change?",
+      undefined,
+      undefined,
+      "high",
+    );
+
+    const events = (await store.getSession(session.id)).messages
+      .map((message) => decodeActivityEvent(message.content))
+      .filter((event): event is NonNullable<typeof event> => event !== null);
+    assert.ok(
+      events.some(
+        (event) =>
+          event.kind === "thinking" &&
+          event.summary ===
+            "I checked the request and can answer without changing files.",
+      ),
+    );
+    assert.ok(
+      events.some(
+        (event) =>
+          event.kind === "command" && event.summary === "Finishing the run",
+      ),
     );
   } finally {
     await database.close();
@@ -2253,12 +2392,14 @@ test("feedback starts the agent without holding the mutation open", async () => 
   let release!: () => void;
   let completed = false;
   let selectedAgent = "";
+  let selectedReasoningEffort = "";
   const blocked = new Promise<void>((resolve) => {
     release = resolve;
   });
   const agent = fakeAgent({
-    async run(_sessionId, _feedback, agent) {
+    async run(_sessionId, _feedback, agent, _signal, reasoningEffort) {
       selectedAgent = agent ?? "";
+      selectedReasoningEffort = reasoningEffort ?? "";
       await blocked;
       completed = true;
       return proposedDocument;
@@ -2276,10 +2417,12 @@ test("feedback starts the agent without holding the mutation open", async () => 
       id: session.id,
       feedback: "Start working",
       agent: "zai/glm-5.3-flash",
+      reasoningEffort: "high",
     });
     assert.deepEqual(result, { accepted: true });
     assert.equal(completed, false);
     assert.equal(selectedAgent, "zai/glm-5.3-flash");
+    assert.equal(selectedReasoningEffort, "high");
     assert.equal(
       (await store.getSession(session.id)).model,
       "zai/glm-5.3-flash",

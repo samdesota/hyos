@@ -12,7 +12,10 @@ See [DESIGN.md](./DESIGN.md) for the minimal design.
 AI_GATEWAY_API_KEY=... npm run dev:hyagent
 ```
 
-Open <http://127.0.0.1:5184/>. The agent server runs on port `4328`.
+The launcher prefers <http://127.0.0.1:5184/> with the agent server on port
+`4328`. If either port is occupied, it automatically advances to an available port
+and prints both selected URLs. Set `HYAGENT_CLIENT_PORT` or `HYAGENT_PORT` to choose
+different preferred starting ports; occupied overrides advance in the same way.
 
 Set `PARALLEL_API_KEY` alongside the gateway key to enable the agent's `web_search`
 and `web_fetch` tools. Search returns a bounded set of relevant sources and excerpts;

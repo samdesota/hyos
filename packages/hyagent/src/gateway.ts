@@ -1,3 +1,5 @@
+export type ReasoningEffort = "low" | "medium" | "high";
+
 export interface GatewayToolCall {
   id: string;
   function: { name: string; arguments: string };
@@ -6,6 +8,8 @@ export interface GatewayToolCall {
 export interface GatewayMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string | null;
+  reasoning?: string;
+  reasoning_details?: unknown[];
   tool_call_id?: string;
   tool_calls?: GatewayToolCall[];
 }
@@ -15,6 +19,7 @@ export interface GatewayRequest {
   messages: GatewayMessage[];
   tools?: unknown[];
   tool_choice?: "auto";
+  reasoning?: { effort: ReasoningEffort };
   stream: false;
   signal?: AbortSignal;
 }
