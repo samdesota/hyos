@@ -749,7 +749,12 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
               <span class="brand-mark">H</span>
               <strong>HyOS Agent</strong>
             </div>
-            <button class="new-session" type="button" onClick={newSession}>
+            <button
+              class="new-session"
+              classList={{ open: !activeSession() }}
+              type="button"
+              onClick={newSession}
+            >
               ＋ New session
             </button>
           </div>
