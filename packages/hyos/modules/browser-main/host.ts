@@ -29,9 +29,19 @@ export function createBrowserHost(
 ): BrowserHost {
   const tabs = new Map<TabId, Tab>();
   const presentations = new BrowserPresentations(baseWindow, tabs);
-  const input = new BrowserInputArbiter(overlayWindow, () =>
-    presentations.visibleBounds(),
-  );
+  // In the overlay stacking model the renderer DOM lives in a separate
+  // transparent window above the browser views, so the arbiter must toggle
+  // pass-through for the browser rectangles to receive clicks. When the
+  // renderer shares the base window (rendererSurface: "base"), the native
+  // view already wins hit-testing above the DOM and toggling
+  // setIgnoreMouseEvents would instead make the whole window click-through,
+  // so the arbiter stays off.
+  const input =
+    overlayWindow === baseWindow
+      ? null
+      : new BrowserInputArbiter(overlayWindow, () =>
+          presentations.visibleBounds(),
+        );
   const generation = Date.now();
   let activeTabId: TabId | null = null;
   let nextTabId = 1;
@@ -71,7 +81,7 @@ export function createBrowserHost(
     tabs.delete(tab.id);
     disposeTabView(tab);
     if (activeTabId === tab.id) activeTabId = null;
-    input.sync();
+    input?.sync();
   };
   const closeTab = (tabId: TabId): void => {
     const tab = tabs.get(tabId);
@@ -115,14 +125,14 @@ export function createBrowserHost(
     execute,
     present(presentation) {
       presentations.present(presentation);
-      input.sync();
+      input?.sync();
     },
     release(presentationId) {
       presentations.release(presentationId);
-      input.sync();
+      input?.sync();
     },
     setOverlayRegions(regions) {
-      input.setOverlayRegions(regions);
+      input?.setOverlayRegions(regions);
     },
   };
 
@@ -133,7 +143,7 @@ export function createBrowserHost(
     },
     dispose() {
       accepting = false;
-      input.dispose();
+      input?.dispose();
       for (const tab of [...tabs.values()]) disposeTab(tab);
     },
   };
