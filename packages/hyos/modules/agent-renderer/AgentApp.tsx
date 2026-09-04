@@ -810,8 +810,8 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                 aria-expanded={archivedOpen()}
                 onClick={() => setArchivedOpen(!archivedOpen())}
               >
-                <i class="archived-chevron">{archivedOpen() ? "▾" : "▸"}</i>
                 <span>Archived ({archivedSessions().length})</span>
+                <i class="archived-chevron">{archivedOpen() ? "▾" : "▸"}</i>
               </button>
               <Show when={archivedOpen()}>
                 <For each={archivedSessions()}>

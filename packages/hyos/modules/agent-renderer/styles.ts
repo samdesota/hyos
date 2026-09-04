@@ -83,7 +83,7 @@ export const agentStyles = String.raw`
     border: 0; background: transparent; cursor: pointer; text-align: left;
   }
   .archived-toggle:hover { color: #b5b7ac; }
-  .archived-chevron { font-style: normal; font-size: 16px; line-height: 1; }
+  .archived-chevron { margin-left: auto; font-style: normal; font-size: 16px; line-height: 1; }
   .session-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
   .session-meta { display: flex; gap: 7px; margin-top: 5px; color: #8e9087; font-size: 11px; }
   .status-dot { width: 6px; height: 6px; margin-top: 4px; border-radius: 50%; background: #777; }
