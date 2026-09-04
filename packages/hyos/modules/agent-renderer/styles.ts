@@ -48,8 +48,10 @@ export const agentStyles = String.raw`
     border: 0; border-radius: 9px; cursor: pointer; transition: background .15s, opacity .15s;
   }
   .new-session {
+    display: flex; align-items: center; gap: 8px;
     width: 100%; padding: 10px 12px 10px 2px; text-align: left; background: transparent;
   }
+  .new-session-icon { flex: none; width: 15px; height: 15px; color: #b5b7ac; }
   .new-session:hover { background: #3b3d37; }
   .new-session.open { background: #30312d; }
   .new-session:hover, .folder-button:hover { background: #3b3d37; }
