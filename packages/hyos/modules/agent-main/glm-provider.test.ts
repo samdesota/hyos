@@ -148,10 +148,10 @@ test("GLM reports per-turn context usage from stream chunks", async () => {
   assert.deepEqual(result.usage, {
     promptTokens: 42_300,
     completionTokens: 128,
-    contextWindow: 200_000,
+    contextWindow: 800_000,
   });
   assert.deepEqual(usages, [
-    { promptTokens: 42_300, completionTokens: 128, contextWindow: 200_000 },
+    { promptTokens: 42_300, completionTokens: 128, contextWindow: 800_000 },
   ]);
   assert.deepEqual(requests[0].stream_options, { include_usage: true });
 });

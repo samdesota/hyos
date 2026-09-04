@@ -226,7 +226,7 @@ test("finishRun persists token usage on the assistant message", async () => {
     await store.finishRun(turn.sessionId, turn.assistantMessageId, null, {
       promptTokens: 42_300,
       completionTokens: 128,
-      contextWindow: 200_000,
+      contextWindow: 800_000,
     });
 
     const page = await store.pageMessages(turn.sessionId, null, 10);
@@ -237,7 +237,7 @@ test("finishRun persists token usage on the assistant message", async () => {
     assert.deepEqual(assistant.usage, {
       promptTokens: 42_300,
       completionTokens: 128,
-      contextWindow: 200_000,
+      contextWindow: 800_000,
     });
   } finally {
     await database.close();

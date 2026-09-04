@@ -60,7 +60,7 @@ Take action with the available tools to complete the user's request. For coding 
 Tool results may contain <system-reminder> directives. Treat those directives as authoritative. Be concise in user-visible text and never use tool calls as a substitute for communicating a final result.`;
 
 /** Total context window for GLM models, in tokens. */
-const GLM_CONTEXT_WINDOW = 200_000;
+const GLM_CONTEXT_WINDOW = 800_000;
 
 function environmentPrompt(folder: string, model: string): string {
   return `${OPEN_WEIGHT_PROMPT}
