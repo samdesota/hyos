@@ -48,7 +48,7 @@ export const agentStyles = String.raw`
     border: 0; border-radius: 9px; cursor: pointer; transition: background .15s, opacity .15s;
   }
   .new-session {
-    width: 100%; padding: 10px 12px; text-align: left; background: transparent;
+    width: 100%; padding: 10px 12px 10px 2px; text-align: left; background: transparent;
   }
   .new-session:hover { background: #3b3d37; }
   .new-session.open { background: #30312d; }
@@ -77,11 +77,11 @@ export const agentStyles = String.raw`
   .session-row.archived:hover .session-open { opacity: .85; }
   .archived-label { padding: 8px 18px 4px; }
   .archived-toggle {
-    display: flex; align-items: center; gap: 7px; width: 100%; padding: 0 18px;
+    position: relative; display: block; width: 100%; padding: 8px 18px 4px;
     border: 0; background: transparent; cursor: pointer; text-align: left;
   }
   .archived-toggle:hover { color: #b5b7ac; }
-  .archived-chevron { font-style: normal; font-size: 16px; }
+  .archived-chevron { position: absolute; left: 2px; top: 6px; font-style: normal; font-size: 16px; }
   .session-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
   .session-meta { display: flex; gap: 7px; margin-top: 5px; color: #8e9087; font-size: 11px; }
   .status-dot { width: 6px; height: 6px; margin-top: 4px; border-radius: 50%; background: #777; }
