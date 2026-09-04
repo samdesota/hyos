@@ -19,8 +19,11 @@ import type {
   AgentSessionSummary,
 } from "../../capabilities/agent.js";
 import { stripPlanBlocks } from "../../capabilities/plan.js";
+import type { BrowserClient } from "../browser-client/types.js";
+import type { BrowserViewModule } from "../browser-view/types.js";
 import type { AgentClient, AgentMessageFeed } from "./client.js";
 import { createAutoScrollController } from "./auto-scroll.js";
+import { BrowserPanel } from "./BrowserPanel.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { mountMarkdown } from "./markdown.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
@@ -31,6 +34,8 @@ import { syncHashToSession, sessionFromHash } from "./session-route.js";
 type AgentAppProps = Readonly<{
   root: Document;
   client: AgentClient;
+  browserClient: BrowserClient;
+  BrowserView: BrowserViewModule["BrowserView"];
 }>;
 
 type TimelineEntry =
@@ -449,6 +454,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     !narrowPatches.matches,
   );
   const [patchPanelWidth, setPatchPanelWidth] = createSignal(520);
+  const [browserPanelOpen, setBrowserPanelOpen] = createSignal(false);
   let transcript: HTMLDivElement | undefined;
   let patchList: HTMLDivElement | undefined;
   let modelPicker: HTMLDivElement | undefined;
@@ -1206,7 +1212,10 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
             {(session) => (
               <section
                 class="conversation"
-                classList={{ "patch-panel-open": patchPanelOpen() }}
+                classList={{
+                  "patch-panel-open": patchPanelOpen(),
+                  "browser-open": browserPanelOpen(),
+                }}
                 style={`--patch-panel-width: ${patchPanelWidth()}px`}
               >
                 <header class="conversation-head">
@@ -1247,6 +1256,16 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                     }}
                   >
                     Patches <span>{patches().length}</span>
+                  </button>
+                  <button
+                    class="browser-toggle"
+                    classList={{ active: browserPanelOpen() }}
+                    type="button"
+                    aria-expanded={browserPanelOpen()}
+                    aria-controls="agent-browser-panel"
+                    onClick={() => setBrowserPanelOpen((open) => !open)}
+                  >
+                    Browser
                   </button>
                 </header>
                 <div
@@ -1533,6 +1552,14 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                       </Show>
                     </div>
                   </aside>
+                </Show>
+                <Show when={browserPanelOpen()}>
+                  <BrowserPanel
+                    root={props.root}
+                    client={props.browserClient}
+                    BrowserView={props.BrowserView}
+                    onClose={() => setBrowserPanelOpen(false)}
+                  />
                 </Show>
               </section>
             )}
