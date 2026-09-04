@@ -11,6 +11,7 @@ export type AgentFeedId = string;
 export type AgentSessionStatus = "running" | "ready" | "failed" | "cancelled";
 export type AgentMessageStatus = "streaming" | "complete" | "failed";
 export type AgentReasoningEffort = "low" | "medium" | "high" | "max";
+export type AgentMode = "standard" | "incremental";
 
 export type AgentToolCategory =
   "read" | "edit" | "command" | "search" | "plan" | "tool";
@@ -58,8 +59,10 @@ export type AgentSessionSummary = Readonly<{
   providerId: string;
   modelId: string;
   reasoningEffort: AgentReasoningEffort | null;
+  mode: AgentMode;
   status: AgentSessionStatus;
   lastError: string | null;
+  archivedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }>;
@@ -144,13 +147,17 @@ export type AgentCommand =
       providerId: string;
       modelId: string;
       reasoningEffort?: AgentReasoningEffort | null;
+      mode?: AgentMode;
     }>
   | Readonly<{
       type: "send-message";
       sessionId: AgentSessionId;
       prompt: string;
+      mode?: AgentMode;
     }>
-  | Readonly<{ type: "cancel"; sessionId: AgentSessionId }>;
+  | Readonly<{ type: "cancel"; sessionId: AgentSessionId }>
+  | Readonly<{ type: "archive-session"; sessionId: AgentSessionId }>
+  | Readonly<{ type: "unarchive-session"; sessionId: AgentSessionId }>;
 
 export type AgentCommandResult =
   | Readonly<{ type: "folder-selected"; folder: string | null }>

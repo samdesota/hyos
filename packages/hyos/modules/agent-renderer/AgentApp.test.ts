@@ -1,10 +1,47 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { AgentMessage } from "../../capabilities/agent.js";
-import { timelineEntries } from "./AgentApp.js";
+import type {
+  AgentMessage,
+  AgentSessionSummary,
+} from "../../capabilities/agent.js";
+import { partitionSessions, timelineEntries } from "./AgentApp.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
 import { agentStyles } from "./styles.js";
+
+function sessionSummary(
+  id: string,
+  archivedAt: Date | null,
+): AgentSessionSummary {
+  const now = new Date("2026-09-04T00:00:00.000Z");
+  return {
+    id,
+    title: id,
+    folder: "/tmp/project",
+    providerId: "codex",
+    modelId: "gpt-5.6-sol",
+    reasoningEffort: null,
+    mode: "standard",
+    status: "ready",
+    lastError: null,
+    archivedAt,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+test("sessions are partitioned into active and archived lists", () => {
+  const sessions = [
+    sessionSummary("live-1", null),
+    sessionSummary("archived-1", new Date("2026-09-03T10:00:00.000Z")),
+    sessionSummary("live-2", null),
+  ];
+
+  assert.deepEqual(partitionSessions(sessions), {
+    active: [sessions[0], sessions[2]],
+    archived: [sessions[1]],
+  });
+});
 
 test("terminal assistant failures remain visible without response text", () => {
   const now = new Date();

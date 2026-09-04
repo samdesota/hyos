@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import {
   claudeCompletionInstruction,
   claudePatchChanges,
+  contentDiff,
   createPatchActivity,
   promptWithPatchContract,
   requirePatchExplanation,
@@ -58,6 +59,43 @@ test("aliased Claude Edit and Write inputs normalize to patch changes", () => {
     claudePatchChanges("mcp__hyos__Edit", { file_path: "/project/app.ts" }),
     [{ path: "/project/app.ts", kind: "update" }],
   );
+});
+
+test("contentDiff builds a per-edit unified diff with four context lines", () => {
+  const before = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`);
+  const after = [...before];
+  after[5] = "line six changed";
+  const diff = contentDiff(
+    "src/example.ts",
+    `${before.join("\n")}\n`,
+    `${after.join("\n")}\n`,
+  );
+
+  assert.match(diff, /^diff --git a\/src\/example\.ts b\/src\/example\.ts$/m);
+  assert.match(diff, /^--- a\/src\/example\.ts$/m);
+  assert.match(diff, /^\+\+\+ b\/src\/example\.ts$/m);
+  assert.match(diff, /^@@ -2,9 \+2,9 @@$/m);
+  assert.match(diff, /^-line 6$/m);
+  assert.match(diff, /^\+line six changed$/m);
+  assert.match(diff, /^ line 2$/m);
+  assert.match(diff, /^ line 10$/m);
+  assert.doesNotMatch(diff, /^ line 1$/m);
+  assert.doesNotMatch(diff, /^ line 11$/m);
+});
+
+test("contentDiff handles new and identical files", () => {
+  assert.equal(
+    contentDiff("src/new.ts", "", "export const a = 1;\n"),
+    [
+      "diff --git a/src/new.ts b/src/new.ts",
+      "--- /dev/null",
+      "+++ b/src/new.ts",
+      "@@ -0,0 +1,1 @@",
+      "+export const a = 1;",
+      "",
+    ].join("\n"),
+  );
+  assert.equal(contentDiff("src/same.ts", "unchanged\n", "unchanged\n"), "");
 });
 
 test("patch activity renders a diff for a newly written untracked file", async () => {

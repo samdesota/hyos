@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import type {
   AgentActivity,
+  AgentMode,
   AgentMessage,
   AgentMessageCursor,
   AgentMessagePage,
@@ -23,36 +24,47 @@ import {
 const sessionStatusSchema = z.enum(["running", "ready", "failed", "cancelled"]);
 const messageStatusSchema = z.enum(["streaming", "complete", "failed"]);
 const activityPrefix = "hyos-agent-activity:v1:";
-const reasoningSuffix = "\u001fhyos-reasoning:";
+const commentaryPrefix = "hyos-agent-commentary:v2:";
+const settingSeparator = "\u001fhyos-";
 
 function storedModelId(
   modelId: string,
   reasoningEffort: AgentReasoningEffort | null | undefined,
+  mode: AgentMode | undefined,
 ): string {
-  return reasoningEffort
-    ? `${modelId}${reasoningSuffix}${reasoningEffort}`
-    : modelId;
+  const settings = [
+    ...(reasoningEffort ? [`reasoning:${reasoningEffort}`] : []),
+    ...(mode === "incremental" ? ["mode:incremental"] : []),
+  ];
+  return [modelId, ...settings].join(settingSeparator);
 }
 
 function modelSelection(value: string): {
   modelId: string;
   reasoningEffort: AgentReasoningEffort | null;
+  mode: AgentMode;
 } {
-  const index = value.lastIndexOf(reasoningSuffix);
-  if (index < 0) return { modelId: value, reasoningEffort: null };
-  const effort = value.slice(index + reasoningSuffix.length);
-  if (
-    effort !== "low" &&
-    effort !== "medium" &&
-    effort !== "high" &&
-    effort !== "max"
-  ) {
-    return { modelId: value, reasoningEffort: null };
+  const [modelId, ...settings] = value.split(settingSeparator);
+  let reasoningEffort: AgentReasoningEffort | null = null;
+  let mode: AgentMode = "standard";
+  for (const setting of settings) {
+    if (setting === "mode:incremental") {
+      mode = "incremental";
+      continue;
+    }
+    const effort = setting.startsWith("reasoning:")
+      ? setting.slice("reasoning:".length)
+      : "";
+    if (
+      effort === "low" ||
+      effort === "medium" ||
+      effort === "high" ||
+      effort === "max"
+    ) {
+      reasoningEffort = effort;
+    }
   }
-  return {
-    modelId: value.slice(0, index),
-    reasoningEffort: effort,
-  };
+  return { modelId, reasoningEffort, mode };
 }
 
 function encodeActivity(activity: AgentActivity): string {
@@ -129,6 +141,7 @@ const startTurnCommand = hydb.command({
     userMessageId: z.string(),
     userChunkId: z.string(),
     assistantMessageId: z.string(),
+    modelId: z.string(),
     prompt: z.string(),
     now: z.date(),
   }),
@@ -161,6 +174,7 @@ const startTurnCommand = hydb.command({
       updatedAt: assistantTime,
     });
     await transaction.update(agentSessions, [input.sessionId], {
+      modelId: input.modelId,
       status: "running",
       lastError: null,
       updatedAt: assistantTime,
@@ -220,6 +234,36 @@ const createActivityCommand = hydb.command({
       index: 0,
       content: input.content,
       createdAt: input.now,
+    });
+    await transaction.update(agentSessions, [input.sessionId], {
+      updatedAt: input.now,
+    });
+  },
+});
+
+const appendCommentaryCommand = hydb.command({
+  input: z.object({
+    id: z.string(),
+    sessionId: z.string(),
+    messageId: z.string(),
+    index: z.number().int().positive(),
+    content: z.string(),
+    status: messageStatusSchema,
+    now: z.date(),
+  }),
+  async handler(transaction, input) {
+    if (input.content)
+      await transaction.insert(agentMessageChunks, {
+        id: input.id,
+        sessionId: input.sessionId,
+        messageId: input.messageId,
+        index: input.index,
+        content: input.content,
+        createdAt: input.now,
+      });
+    await transaction.update(agentMessages, [input.messageId], {
+      status: input.status,
+      updatedAt: input.now,
     });
     await transaction.update(agentSessions, [input.sessionId], {
       updatedAt: input.now,
@@ -310,6 +354,20 @@ const endRunCommand = hydb.command({
   },
 });
 
+const setSessionArchivedCommand = hydb.command({
+  input: z.object({
+    sessionId: z.string(),
+    archivedAt: z.date().nullable(),
+    now: z.date(),
+  }),
+  async handler(transaction, input) {
+    await transaction.update(agentSessions, [input.sessionId], {
+      archivedAt: input.archivedAt,
+      updatedAt: input.now,
+    });
+  },
+});
+
 const recoverSessionCommand = hydb.command({
   input: z.object({ sessionId: z.string(), error: z.string(), now: z.date() }),
   async handler(transaction, input) {
@@ -335,6 +393,7 @@ function sessionSummary(
     modelId: string;
     status: AgentSessionStatus;
     lastError: string | null;
+    archivedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
   }>,
@@ -347,8 +406,10 @@ function sessionSummary(
     providerId: row.providerId,
     modelId: model.modelId,
     reasoningEffort: model.reasoningEffort,
+    mode: model.mode,
     status: row.status,
     lastError: row.lastError,
+    archivedAt: row.archivedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -360,6 +421,7 @@ export type NewAgentSession = Readonly<{
   providerId: string;
   modelId: string;
   reasoningEffort?: AgentReasoningEffort | null;
+  mode?: AgentMode;
 }>;
 
 export type StartedTurn = Readonly<{
@@ -372,7 +434,11 @@ export type AgentSessionRecord = AgentSessionSummary &
 
 export interface AgentStore {
   createSession(input: NewAgentSession): Promise<StartedTurn>;
-  startTurn(sessionId: string, prompt: string): Promise<StartedTurn>;
+  startTurn(
+    sessionId: string,
+    prompt: string,
+    mode?: AgentMode,
+  ): Promise<StartedTurn>;
   appendAssistantChunk(
     sessionId: string,
     messageId: string,
@@ -384,6 +450,14 @@ export interface AgentStore {
     messageId: string | null,
     activity: AgentActivity,
     status: AgentMessageStatus,
+  ): Promise<string>;
+  appendCommentary(
+    sessionId: string,
+    messageId: string | null,
+    index: number,
+    text: string,
+    status: AgentMessageStatus,
+    replace?: boolean,
   ): Promise<string>;
   checkpointProviderSession(
     sessionId: string,
@@ -402,6 +476,7 @@ export interface AgentStore {
     error: string,
   ): Promise<void>;
   getSession(id: string): Promise<AgentSessionRecord>;
+  setSessionArchived(sessionId: string, archived: boolean): Promise<void>;
   listSessions(): Promise<AgentSessionSummary[]>;
   pageMessages(
     sessionId: string,
@@ -438,7 +513,18 @@ export function createAgentStore(database: Database): AgentStore {
         .orderBy((chunk) => [chunk.index.asc(), chunk.id.asc()])
         .many(),
     );
-    const content = chunks.map((chunk) => chunk.content).join("");
+    const storedContent = chunks.map((chunk) => chunk.content).join("");
+    const content = storedContent.startsWith(commentaryPrefix)
+      ? encodeActivity({
+          type: "commentary",
+          text: chunks.reduce((text, chunk) => {
+            const part = JSON.parse(
+              chunk.content.slice(commentaryPrefix.length),
+            ) as { text: string; replace: boolean };
+            return part.replace ? part.text : text + part.text;
+          }, ""),
+        })
+      : storedContent;
     return {
       ...row,
       content,
@@ -457,18 +543,28 @@ export function createAgentStore(database: Database): AgentStore {
         assistantMessageId,
         title: titleFromPrompt(input.prompt),
         ...input,
-        modelId: storedModelId(input.modelId, input.reasoningEffort),
+        modelId: storedModelId(
+          input.modelId,
+          input.reasoningEffort,
+          input.mode,
+        ),
         now: now(),
       });
       return { sessionId, assistantMessageId };
     },
-    async startTurn(sessionId, prompt) {
+    async startTurn(sessionId, prompt, mode) {
+      const session = await getSession(sessionId);
       const assistantMessageId = randomUUID();
       await database.execute(startTurnCommand, {
         sessionId,
         userMessageId: randomUUID(),
         userChunkId: randomUUID(),
         assistantMessageId,
+        modelId: storedModelId(
+          session.modelId,
+          session.reasoningEffort,
+          mode ?? session.mode,
+        ),
         prompt,
         now: now(),
       });
@@ -484,6 +580,37 @@ export function createAgentStore(database: Database): AgentStore {
         content,
         now: now(),
       });
+    },
+    async appendCommentary(
+      sessionId,
+      messageId,
+      index,
+      text,
+      status,
+      replace = false,
+    ) {
+      const id = messageId ?? randomUUID();
+      const content = commentaryPrefix + JSON.stringify({ text, replace });
+      if (messageId === null) {
+        await database.execute(createActivityCommand, {
+          id,
+          sessionId,
+          content,
+          status,
+          now: now(),
+        });
+      } else {
+        await database.execute(appendCommentaryCommand, {
+          id: randomUUID(),
+          sessionId,
+          messageId,
+          index,
+          content: text || replace ? content : "",
+          status,
+          now: now(),
+        });
+      }
+      return id;
     },
     async upsertActivity(sessionId, messageId, activity, status) {
       const id = messageId ?? randomUUID();
@@ -526,6 +653,13 @@ export function createAgentStore(database: Database): AgentStore {
       });
     },
     getSession,
+    async setSessionArchived(sessionId, archived) {
+      await database.execute(setSessionArchivedCommand, {
+        sessionId,
+        archivedAt: archived ? now() : null,
+        now: now(),
+      });
+    },
     async listSessions() {
       const rows = await database.fetch(
         hydb

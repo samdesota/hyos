@@ -77,10 +77,18 @@ export class AppendOnlyPageStore {
 
   private constructor(private readonly file: FileHandle) {}
 
-  static async open(path: string): Promise<AppendOnlyPageStore> {
+  static async open(
+    path: string,
+    recoveredOffset = 0,
+  ): Promise<AppendOnlyPageStore> {
     const store = new AppendOnlyPageStore(await open(path, "a+"));
-    await store.recover();
-    return store;
+    try {
+      await store.recover(recoveredOffset);
+      return store;
+    } catch (error) {
+      await store.close();
+      throw error;
+    }
   }
 
   get endOffset(): number {
@@ -118,9 +126,12 @@ export class AppendOnlyPageStore {
     return record;
   }
 
-  async *records(types?: ReadonlySet<RecordType>): AsyncIterable<StoredRecord> {
+  async *records(
+    types?: ReadonlySet<RecordType>,
+    start = 0,
+  ): AsyncIterable<StoredRecord> {
     this.assertOpen();
-    let position = 0;
+    let position = start;
     while (position < this.#end) {
       const header = await this.readHeader(position, this.#end);
       if (header === undefined) break;
@@ -145,9 +156,12 @@ export class AppendOnlyPageStore {
     await this.file.close();
   }
 
-  private async recover(): Promise<void> {
+  private async recover(start: number): Promise<void> {
     const size = Number((await this.file.stat()).size);
-    let position = 0;
+    if (!Number.isSafeInteger(start) || start < 0 || start > size) {
+      throw new RangeError("Invalid recovered offset");
+    }
+    let position = start;
     while (position < size) {
       const header = await this.readHeader(position, size);
       if (header === undefined) break;

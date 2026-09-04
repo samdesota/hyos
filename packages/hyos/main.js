@@ -1,14 +1,9 @@
 require("tsx/cjs");
 
-const fs = require("node:fs");
 const path = require("node:path");
 const { app, ipcMain } = require("electron");
 const { ModuleHost } = require("./runtime");
-const {
-  ChangedFileBatch,
-  MainApplicationLoader,
-  readManifest,
-} = require("./application-loader");
+const { MainApplicationLoader, readManifest } = require("./application-loader");
 const { buildRendererArtifacts } = require("./isomorphic-compiler");
 const {
   MainRemoteCapabilities,
@@ -29,13 +24,12 @@ const remoteCapabilities = new MainRemoteCapabilities({
 const mainHost = new ModuleHost("main", {
   "application.root": __dirname,
   "remote.capabilities": remoteCapabilities,
+  "application.reload": () =>
+    enqueueReload(() => reloadChangedFile("capabilities/index.ts")),
 });
 let loader;
-let watcher;
 let reloading = false;
 let reloadQueue = Promise.resolve();
-let watchTimer;
-const changedFileBatch = new ChangedFileBatch();
 
 function currentWindow() {
   return mainHost.services.get("electron.overlay-window");
@@ -163,36 +157,6 @@ async function reloadChangedFile(filename) {
   } finally {
     reloading = false;
   }
-}
-
-async function reloadChangedFiles(filenames) {
-  if (filenames.includes(path.basename(manifestPath))) {
-    await reloadChangedFile(path.basename(manifestPath));
-    return;
-  }
-  for (const filename of filenames) await reloadChangedFile(filename);
-}
-
-function watchModules() {
-  watcher = fs.watch(
-    projectDirectory,
-    { recursive: true },
-    (_event, filename) => {
-      if (!filename) return;
-      if (
-        filename.startsWith("renderer/generated/") ||
-        filename.includes("node_modules/")
-      ) {
-        return;
-      }
-      changedFileBatch.add(filename);
-      clearTimeout(watchTimer);
-      watchTimer = setTimeout(
-        () => enqueueReload(() => reloadChangedFiles(changedFileBatch.drain())),
-        80,
-      );
-    },
-  );
 }
 
 async function runSmokeTest() {
@@ -520,7 +484,6 @@ async function start() {
   });
 
   await loader.start();
-  watchModules();
   if (process.argv.includes("--smoke-test")) await runSmokeTest();
 }
 
@@ -536,8 +499,6 @@ app.on("window-all-closed", () => {
   if (!reloading) app.quit();
 });
 app.on("before-quit", () => {
-  clearTimeout(watchTimer);
-  watcher?.close();
   ipcMain.removeHandler("prototype:modules:reload-request");
   remoteCapabilities.dispose();
   mainHost.dispose();

@@ -11,6 +11,7 @@ import { micromark } from "micromark";
 
 import type {
   AgentMessage,
+  AgentMode,
   AgentReasoningEffort,
   AgentMessageChange,
   AgentProviderSummary,
@@ -21,6 +22,7 @@ import { createAutoScrollController } from "./auto-scroll.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
 import { agentStyles } from "./styles.js";
+import { selectedMode } from "./mode-selection.js";
 
 type AgentAppProps = Readonly<{
   root: Document;
@@ -78,6 +80,20 @@ export function patchEntries(
     );
 }
 
+export function partitionSessions(
+  sessions: readonly AgentSessionSummary[],
+): Readonly<{
+  active: readonly AgentSessionSummary[];
+  archived: readonly AgentSessionSummary[];
+}> {
+  const active: AgentSessionSummary[] = [];
+  const archived: AgentSessionSummary[] = [];
+  for (const session of sessions) {
+    (session.archivedAt ? archived : active).push(session);
+  }
+  return { active, archived };
+}
+
 function toolGroupLabel(messages: readonly AgentMessage[]): string {
   const labels = [
     ...new Set(
@@ -123,6 +139,46 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   const [reasoningEffort, setReasoningEffort] =
     createSignal<AgentReasoningEffort | null>(null);
   const [modelMenuOpen, setModelMenuOpen] = createSignal(false);
+  const [newMode, setNewMode] = createSignal<AgentMode>("standard");
+  const [modeDrafts, setModeDrafts] = createSignal<Record<string, AgentMode>>(
+    {},
+  );
+  const initialMode = () => selectedMode(providerId(), newMode());
+  const followupMode = () => {
+    const session = activeSession();
+    return selectedMode(
+      session?.providerId ?? "",
+      session?.mode,
+      modeDrafts()[session?.id ?? ""],
+    );
+  };
+  const modeToggle = (followup: boolean) => (
+    <button
+      type="button"
+      class="incremental-toggle"
+      aria-pressed={
+        (followup ? followupMode() : initialMode()) === "incremental"
+      }
+      title="Work in small, reviewable iterations with low reasoning. Saved when you send."
+      disabled={
+        submitting() || (followup && activeSession()?.status === "running")
+      }
+      onClick={() => {
+        const mode =
+          (followup ? followupMode() : initialMode()) === "incremental"
+            ? "standard"
+            : "incremental";
+        if (followup && activeId())
+          setModeDrafts((drafts) => ({ ...drafts, [activeId()!]: mode }));
+        else setNewMode(mode);
+      }}
+    >
+      Incremental
+      {(followup ? followupMode() : initialMode()) === "incremental"
+        ? " · low"
+        : ""}
+    </button>
+  );
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const transcriptScroll = createAutoScrollController();
@@ -178,6 +234,9 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   const activeSession = createMemo(() =>
     sessions().find(({ id }) => id === activeId()),
   );
+  const partitioned = createMemo(() => partitionSessions(sessions()));
+  const activeSessions = () => partitioned().active;
+  const archivedSessions = () => partitioned().archived;
   const selectedProvider = createMemo(() =>
     providers().find(({ id }) => id === providerId()),
   );
@@ -363,6 +422,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
         providerId: providerId(),
         modelId: modelId(),
         reasoningEffort: reasoningEffort(),
+        mode: initialMode(),
       });
       if (result.type === "session-started") {
         setPrompt("");
@@ -387,12 +447,28 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
         type: "send-message",
         sessionId,
         prompt: content,
+        mode: followupMode(),
       });
     } catch (value) {
       setPrompt(content);
       showError(value);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const setSessionArchived = async (
+    sessionId: string,
+    archived: boolean,
+  ): Promise<void> => {
+    setError(null);
+    try {
+      await props.client.execute({
+        type: archived ? "archive-session" : "unarchive-session",
+        sessionId,
+      });
+    } catch (value) {
+      showError(value);
     }
   };
 
@@ -457,22 +533,67 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
           </div>
           <div class="session-label">Sessions</div>
           <div class="session-list" id="agent-session-list">
-            <For each={sessions()}>
+            <For each={activeSessions()}>
               {(session) => (
-                <button
-                  type="button"
+                <div
                   class="session-row"
                   classList={{ active: activeId() === session.id }}
-                  onClick={() => void selectSession(session.id)}
                 >
-                  <span class="session-title">{session.title}</span>
-                  <span class="session-meta">
-                    <i class={`status-dot ${session.status}`} />
-                    {session.modelId}
-                  </span>
-                </button>
+                  <button
+                    type="button"
+                    class="session-open"
+                    onClick={() => void selectSession(session.id)}
+                  >
+                    <span class="session-title">{session.title}</span>
+                    <span class="session-meta">
+                      <i class={`status-dot ${session.status}`} />
+                      {session.modelId}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    class="session-archive"
+                    aria-label={`Archive "${session.title}"`}
+                    title="Archive session"
+                    onClick={() => void setSessionArchived(session.id, true)}
+                  >
+                    ×
+                  </button>
+                </div>
               )}
             </For>
+            <Show when={archivedSessions().length > 0}>
+              <div class="session-label archived-label">Archived</div>
+              <For each={archivedSessions()}>
+                {(session) => (
+                  <div
+                    class="session-row archived"
+                    classList={{ active: activeId() === session.id }}
+                  >
+                    <button
+                      type="button"
+                      class="session-open"
+                      onClick={() => void selectSession(session.id)}
+                    >
+                      <span class="session-title">{session.title}</span>
+                      <span class="session-meta">
+                        <i class={`status-dot ${session.status}`} />
+                        {session.modelId}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      class="session-archive"
+                      aria-label={`Unarchive "${session.title}"`}
+                      title="Unarchive session"
+                      onClick={() => void setSessionArchived(session.id, false)}
+                    >
+                      ↩
+                    </button>
+                  </div>
+                )}
+              </For>
+            </Show>
           </div>
         </aside>
 
@@ -520,7 +641,13 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                           <span>
                             {selectedModel()?.label ?? "Choose model"}
                           </span>
-                          <Show when={reasoningEffort()}>
+                          <Show
+                            when={
+                              initialMode() === "incremental"
+                                ? "low"
+                                : reasoningEffort()
+                            }
+                          >
                             {(effort) => <small>· {effort()}</small>}
                           </Show>
                           <i aria-hidden="true">⌄</i>
@@ -579,9 +706,14 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                                       {(effort) => (
                                         <button
                                           type="button"
+                                          disabled={
+                                            initialMode() === "incremental"
+                                          }
                                           classList={{
                                             selected:
-                                              reasoningEffort() === effort,
+                                              (initialMode() === "incremental"
+                                                ? "low"
+                                                : reasoningEffort()) === effort,
                                           }}
                                           onClick={() =>
                                             setReasoningEffort(effort)
@@ -598,6 +730,9 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                           </div>
                         </Show>
                       </div>
+                      <Show when={providerId() === "glm"}>
+                        {modeToggle(false)}
+                      </Show>
                       <button
                         id="agent-start"
                         class="primary"
@@ -755,6 +890,9 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                   </div>
                 </div>
                 <div class="composer-shell">
+                  <Show when={session().providerId === "glm"}>
+                    {modeToggle(true)}
+                  </Show>
                   <div class="composer">
                     <textarea
                       aria-label="Message the agent"

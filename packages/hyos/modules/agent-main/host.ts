@@ -20,6 +20,7 @@ import type {
 } from "../../remote-capabilities.js";
 import type { AgentProvider } from "./providers/index.js";
 import type { AgentStore } from "./store.js";
+import { createCommentaryWriter } from "./commentary-writer.js";
 
 type ActiveRun = Readonly<{
   controller: AbortController;
@@ -298,6 +299,7 @@ export function createAgentHost(options: {
     sessionId: string,
     assistantMessageId: string,
     prompt: string,
+    firstTurn = false,
   ): void => {
     const controller = new AbortController();
     const done = (async () => {
@@ -306,6 +308,7 @@ export function createAgentHost(options: {
       if (!provider)
         throw new Error(`Unknown agent provider: ${session.providerId}`);
       const writer = createChunkWriter(store, sessionId, assistantMessageId);
+      const commentary = createCommentaryWriter(store, sessionId);
       const activityIds = new Map<string, string>();
       try {
         const shouldRestoreContext =
@@ -322,6 +325,8 @@ export function createAgentHost(options: {
         const result = await provider.run(
           {
             prompt: providerPrompt,
+            mode: session.mode,
+            firstTurn,
             folder: session.folder,
             modelId: session.modelId,
             reasoningEffort: session.reasoningEffort,
@@ -330,8 +335,14 @@ export function createAgentHost(options: {
           {
             session: (providerSessionId) =>
               store.checkpointProviderSession(sessionId, providerSessionId),
-            response: writer.append,
+            async response(content) {
+              await commentary.flush();
+              await writer.append(content);
+            },
             async activity(providerItemId, activity, status) {
+              if (activity.type === "commentary")
+                return commentary.update(providerItemId, activity.text, status);
+              await commentary.flush();
               const messageId = await store.upsertActivity(
                 sessionId,
                 activityIds.get(providerItemId) ?? null,
@@ -344,13 +355,21 @@ export function createAgentHost(options: {
           controller.signal,
         );
         await writer.close();
+        await commentary.close();
         await store.finishRun(
           sessionId,
           assistantMessageId,
           result.providerSessionId,
         );
       } catch (error) {
-        await writer.close();
+        const flushed = await Promise.allSettled([
+          writer.close(),
+          commentary.close("failed"),
+        ]);
+        const flushError = flushed.find(
+          (result) => result.status === "rejected",
+        );
+        if (flushError?.status === "rejected") error = flushError.reason;
         const cancelled = controller.signal.aborted;
         await store.endRun(
           sessionId,
@@ -383,6 +402,19 @@ export function createAgentHost(options: {
       activeRuns.get(command.sessionId)?.controller.abort();
       return { type: "accepted" };
     }
+    if (command.type === "archive-session") {
+      if (activeRuns.has(command.sessionId)) {
+        throw new Error("Stop the running turn before archiving this session.");
+      }
+      await store.getSession(command.sessionId);
+      await store.setSessionArchived(command.sessionId, true);
+      return { type: "accepted" };
+    }
+    if (command.type === "unarchive-session") {
+      await store.getSession(command.sessionId);
+      await store.setSessionArchived(command.sessionId, false);
+      return { type: "accepted" };
+    }
     if (command.type === "start-session") {
       await assertFolder(command.folder);
       const provider = providers.get(command.providerId);
@@ -408,18 +440,25 @@ export function createAgentHost(options: {
       }
       await provider.prepare?.();
       const turn = await store.createSession(command);
-      runTurn(turn.sessionId, turn.assistantMessageId, command.prompt);
+      runTurn(turn.sessionId, turn.assistantMessageId, command.prompt, true);
       return { type: "session-started", sessionId: turn.sessionId };
     }
     if (activeRuns.has(command.sessionId)) {
       throw new Error("This session already has a running turn.");
     }
     const session = await store.getSession(command.sessionId);
+    if (session.archivedAt) {
+      throw new Error("Unarchive this session before sending a message.");
+    }
     const provider = providers.get(session.providerId);
     if (!provider)
       throw new Error(`Unknown agent provider: ${session.providerId}`);
     await provider.prepare?.();
-    const turn = await store.startTurn(command.sessionId, command.prompt);
+    const turn = await store.startTurn(
+      command.sessionId,
+      command.prompt,
+      command.mode,
+    );
     runTurn(turn.sessionId, turn.assistantMessageId, command.prompt);
     return { type: "accepted" };
   };

@@ -1,5 +1,6 @@
 import type {
   AgentActivity,
+  AgentMode,
   AgentMessageStatus,
   AgentProviderSummary,
   AgentReasoningEffort,
@@ -7,6 +8,8 @@ import type {
 
 export type AgentRunInput = Readonly<{
   prompt: string;
+  mode?: AgentMode;
+  firstTurn?: boolean;
   folder: string;
   modelId: string;
   reasoningEffort: AgentReasoningEffort | null;

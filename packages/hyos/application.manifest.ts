@@ -16,6 +16,12 @@ export const applicationManifest = defineApplicationManifest({
       },
     },
     {
+      id: "reload.main",
+      file: "./modules/reload-main/index.ts",
+      host: "main",
+      reload: "restart",
+    },
+    {
       id: "agent.main",
       file: "./modules/agent-main/index.ts",
       host: "main",
@@ -48,6 +54,12 @@ export const applicationManifest = defineApplicationManifest({
         port: 4317,
         projectRoot: "../..",
       },
+    },
+    {
+      id: "reload.renderer",
+      file: "./modules/reload-renderer/index.tsx",
+      host: "renderer",
+      reload: "hot",
     },
     {
       id: "ui-agent.renderer",

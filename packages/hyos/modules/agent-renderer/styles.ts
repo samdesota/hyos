@@ -9,6 +9,11 @@ export const agentStyles = String.raw`
   html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
   button, textarea, select, input { font: inherit; }
   button { color: inherit; }
+  .incremental-toggle { border: 1px solid #45483f; border-radius: 14px; padding: 5px 10px; background: transparent; color: #aaa; white-space: nowrap; cursor: pointer; font-size: 12px; }
+  .incremental-toggle[aria-pressed="true"] { color: #d5ebad; background: #303c24; border-color: #647c45; }
+  .incremental-toggle:disabled { opacity: .5; cursor: default; }
+  .incremental-toggle:focus-visible { outline: 2px solid #b2cb8c; outline-offset: 2px; }
+  .composer-shell > .incremental-toggle { margin-bottom: 6px; }
   .agent-app {
     display: grid;
     grid-template-columns: 278px minmax(0, 1fr);
@@ -51,12 +56,24 @@ export const agentStyles = String.raw`
     letter-spacing: .09em; text-transform: uppercase;
   }
   .session-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 18px; }
-  .session-row {
-    display: block; width: 100%; padding: 10px; border: 0; border-radius: 9px;
+  .session-row { display: flex; align-items: stretch; border-radius: 9px; }
+  .session-open {
+    flex: 1; min-width: 0; padding: 10px; border: 0; border-radius: 9px;
     text-align: left; background: transparent; cursor: pointer;
   }
   .session-row:hover { background: #292a27; }
   .session-row.active { background: #34362f; }
+  .session-archive {
+    flex: none; align-self: center; width: 26px; height: 26px; margin: 0 5px 0 2px;
+    border: 0; border-radius: 7px; color: #8e9087; background: transparent; cursor: pointer;
+    font-size: 16px; line-height: 1; opacity: 0; transition: opacity .12s, background .12s, color .12s;
+  }
+  .session-row:hover .session-archive, .session-row:focus-within .session-archive { opacity: 1; }
+  .session-archive:hover { color: #eceae5; background: #3b3d37; }
+  .session-archive:focus-visible { outline: 2px solid #b2cb8c; }
+  .session-row.archived .session-open { opacity: .62; }
+  .session-row.archived:hover .session-open { opacity: .85; }
+  .archived-label { padding-top: 16px; }
   .session-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
   .session-meta { display: flex; gap: 7px; margin-top: 5px; color: #8e9087; font-size: 11px; }
   .status-dot { width: 6px; height: 6px; margin-top: 4px; border-radius: 50%; background: #777; }

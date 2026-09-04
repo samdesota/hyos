@@ -42,6 +42,11 @@ import {
   keyPrefixUpperBound,
 } from "./codec.js";
 import { AppendOnlyPageStore } from "./page-store.js";
+import {
+  readStartupCheckpoint,
+  writeStartupCheckpoint,
+  type StartupCheckpoint,
+} from "./startup-checkpoint.js";
 
 type StoredRow = Readonly<Record<string, unknown>>;
 
@@ -150,10 +155,10 @@ type StorageGeneration = {
   closed: boolean;
 };
 
-type CommitLocation = Readonly<{
+type CommitLocation = {
   offset: number;
-  value: StoredCommit;
-}>;
+  value?: StoredCommit;
+};
 
 type TableMetadata = Readonly<{
   table: AnyTable;
@@ -180,7 +185,10 @@ function cloneManifest(manifest: DatabaseManifest): DatabaseManifest {
   };
 }
 
-function schemaMetadata(schema: AnySchema): {
+function schemaMetadata(
+  schema: AnySchema,
+  addedNullableColumns: Readonly<Record<string, readonly string[]>> = {},
+): {
   fingerprint: string;
   tables: ReadonlyMap<string, TableMetadata>;
 } {
@@ -217,9 +225,31 @@ function schemaMetadata(schema: AnySchema): {
           .map((column) => column.name),
         indexes,
       });
-      return { name: definition.name, columns, indexes };
+      const added = addedNullableColumns[definition.name] ?? [];
+      for (const name of added) {
+        const column = columns.find((column) => column.name === name);
+        if (
+          !column ||
+          column.notNull ||
+          column.primaryKey ||
+          indexes.some((index) => index.columns.includes(name))
+        ) {
+          throw new TypeError(
+            `Migration requires a nullable, non-indexed column: ${definition.name}.${name}`,
+          );
+        }
+      }
+      return {
+        name: definition.name,
+        columns: columns.filter((column) => !added.includes(column.name)),
+        indexes,
+      };
     })
     .sort((left, right) => left.name.localeCompare(right.name));
+  for (const name of Object.keys(addedNullableColumns)) {
+    if (!tables.has(name))
+      throw new TypeError(`Unknown migration table: ${name}`);
+  }
   return {
     fingerprint: createHash("sha256")
       .update(JSON.stringify(description))
@@ -401,6 +431,10 @@ export class NodeStorageDatabase implements StorageDatabase {
     private readonly fingerprint: string,
     private readonly tables: ReadonlyMap<string, TableMetadata>,
     private readonly requestedRetention: RetentionPolicy | undefined,
+    private readonly nullableMigration?: {
+      from: string;
+      columns: Readonly<Record<string, readonly string[]>>;
+    },
   ) {
     this.#generation = generation;
     this.#generations.add(generation);
@@ -421,8 +455,16 @@ export class NodeStorageDatabase implements StorageDatabase {
         : validateRetention(options.retention);
     await mkdir(options.directory, { recursive: true });
     const metadata = schemaMetadata(options.schema);
+    const nullableMigration = options.addNullableColumns
+      ? {
+          from: schemaMetadata(options.schema, options.addNullableColumns)
+            .fingerprint,
+          columns: options.addNullableColumns,
+        }
+      : undefined;
     const dataPath = join(options.directory, "hydb.data");
-    const store = await AppendOnlyPageStore.open(dataPath);
+    const checkpoint = await readStartupCheckpoint(dataPath);
+    const store = await AppendOnlyPageStore.open(dataPath, checkpoint?.offset);
     const treeOptions = {
       cacheBytes: options.cacheBytes,
       maxEntries: options.maxEntries,
@@ -436,9 +478,11 @@ export class NodeStorageDatabase implements StorageDatabase {
       metadata.fingerprint,
       metadata.tables,
       requestedRetention,
+      nullableMigration,
     );
     try {
-      await database.load();
+      await database.load(checkpoint);
+      await database.checkpoint();
       return database;
     } catch (error) {
       tree.dispose();
@@ -484,7 +528,10 @@ export class NodeStorageDatabase implements StorageDatabase {
       await this.releaseSnapshot(generation, id);
       throw error;
     }
-    if (commit.manifest.schema !== this.fingerprint) {
+    if (
+      commit.manifest.schema !== this.fingerprint &&
+      commit.manifest.schema !== this.nullableMigration?.from
+    ) {
       await this.releaseSnapshot(generation, id);
       throw new TypeError("Storage schema does not match the supplied schema");
     }
@@ -645,6 +692,7 @@ export class NodeStorageDatabase implements StorageDatabase {
     this.#closed = true;
     for (const subscriber of this.#subscribers) subscriber.wake?.();
     await this.#writeQueue;
+    await this.checkpoint();
     await Promise.all(
       [...this.#generations].map((generation) =>
         this.closeGeneration(generation),
@@ -652,10 +700,50 @@ export class NodeStorageDatabase implements StorageDatabase {
     );
   }
 
-  private async load(): Promise<void> {
-    const published = new Set<CommitId>();
+  private async checkpoint(): Promise<void> {
+    // A checkpoint is a disposable accelerator; failure must not fail a commit or close.
+    try {
+      await this.store.sync();
+      await writeStartupCheckpoint(this.dataPath, {
+        offset: this.store.endOffset,
+        branches: [...this.#branches],
+        commits: [...this.#commits].map(([id, location]) => [
+          id,
+          location.offset,
+        ]),
+        metadata: {
+          format: 2,
+          retention: this.#retention,
+          retains: Object.fromEntries(this.#retains),
+          historyFloors: Object.fromEntries(this.#historyFloors),
+        },
+      });
+    } catch {
+      /* Fall back to log recovery on the next open. */
+    }
+  }
+
+  private async load(checkpoint?: StartupCheckpoint): Promise<void> {
+    if (checkpoint) {
+      for (const [id, offset] of checkpoint.commits)
+        this.#commits.set(id, { offset });
+      for (const [name, state] of checkpoint.branches)
+        this.#branches.set(name, state);
+      this.#retention = validateRetention(
+        checkpoint.metadata.retention as RetentionPolicy,
+      );
+      for (const [name, id] of Object.entries(checkpoint.metadata.retains))
+        this.#retains.set(name, id);
+      for (const [name, floor] of Object.entries(
+        checkpoint.metadata.historyFloors,
+      ))
+        this.#historyFloors.set(name, floor);
+      this.#metadataFound = true;
+    }
+    const published = new Set<CommitId>(this.#commits.keys());
     for await (const record of this.store.records(
       new Set(["commit", "ref", "meta"]),
+      checkpoint?.offset ?? 0,
     )) {
       if (record.type === "commit") {
         const stored = decodeValue(record.payload) as StoredCommit;
@@ -707,11 +795,84 @@ export class NodeStorageDatabase implements StorageDatabase {
     ) {
       throw new TypeError("Configured retention policy does not match storage");
     }
+    // Validate every branch before writing anything. A crash can leave some branches
+    // migrated; rerunning safely completes only the remaining old-schema heads.
+    for (const state of this.#branches.values()) {
+      const schema = (await this.readCommit(state.head)).manifest.schema;
+      if (
+        schema !== this.fingerprint &&
+        schema !== this.nullableMigration?.from
+      ) {
+        throw new TypeError(
+          "Storage schema does not match the supplied schema",
+        );
+      }
+    }
+    if (this.nullableMigration) await this.migrateNullableColumns();
     const main = this.#branches.get("main");
     if (main === undefined) throw new Error("Storage has no main branch");
     const head = await this.readCommit(main.head);
     if (head.manifest.schema !== this.fingerprint) {
       throw new TypeError("Storage schema does not match the supplied schema");
+    }
+  }
+
+  private async migrateNullableColumns(): Promise<void> {
+    for (const [branch, current] of this.#branches) {
+      const parent = await this.readCommit(current.head);
+      if (parent.manifest.schema === this.fingerprint) continue;
+      const manifest = cloneManifest(parent.manifest);
+      const changes: StoredChange[] = [];
+      for (const [name, columns] of Object.entries(
+        this.nullableMigration!.columns,
+      )) {
+        const table = manifest.tables[name]!;
+        const metadata = this.tables.get(name)!;
+        const original = table.primary;
+        for await (const entry of this.tree.scan(original)) {
+          const before = decodeRow(entry.value);
+          const after = {
+            ...before,
+            ...Object.fromEntries(columns.map((column) => [column, null])),
+          };
+          table.primary = await this.tree.mutate(table.primary, [
+            { type: "put", key: entry.key, value: encodeValue(after) },
+          ]);
+          changes.push({
+            table: name,
+            key: primaryKey(metadata, before),
+            before,
+            after,
+          });
+        }
+      }
+      manifest.schema = this.fingerprint;
+      const stored: StoredCommit = {
+        id: newCommitId(),
+        committedAtMs: Date.now(),
+        parent: current.head,
+        branch,
+        sequence: current.sequence + 1,
+        manifest,
+        changes,
+      };
+      const offset = await this.store.append("commit", encodeValue(stored));
+      await this.store.append(
+        "ref",
+        encodeValue({
+          operation: "commit",
+          branch,
+          head: stored.id!,
+          sequence: stored.sequence,
+        } satisfies StoredRef),
+      );
+      await this.store.sync();
+      this.#commits.set(stored.id!, { offset, value: stored });
+      this.#branches.set(branch, {
+        ...current,
+        head: stored.id!,
+        sequence: stored.sequence,
+      });
     }
   }
 
@@ -917,7 +1078,11 @@ export class NodeStorageDatabase implements StorageDatabase {
   private async readCommit(id: CommitId): Promise<StoredCommit> {
     const location = this.#commits.get(id);
     if (location === undefined) throw new HistoryUnavailableError(id);
-    return location.value;
+    if (!location.value!)
+      location.value! = decodeValue(
+        (await this.store.read(location.offset, "commit")).payload,
+      ) as StoredCommit;
+    return location.value!;
   }
 
   private retainedCommitIds(now: number): Set<CommitId> {
@@ -939,7 +1104,7 @@ export class NodeStorageDatabase implements StorageDatabase {
     for (const [id, location] of this.#commits) {
       if (
         cutoff !== undefined &&
-        (location.value.committedAtMs ?? Number.NEGATIVE_INFINITY) >= cutoff
+        (location.value!.committedAtMs ?? Number.NEGATIVE_INFINITY) >= cutoff
       ) {
         retained.add(id);
       }
@@ -947,9 +1112,9 @@ export class NodeStorageDatabase implements StorageDatabase {
 
     for (const branch of this.#branches.keys()) {
       const commits = [...this.#commits.entries()]
-        .filter(([, location]) => location.value.branch === branch)
+        .filter(([, location]) => location.value!.branch === branch)
         .sort(
-          (left, right) => right[1].value.sequence - left[1].value.sequence,
+          (left, right) => right[1].value!.sequence - left[1].value!.sequence,
         );
       for (const [id] of commits.slice(0, this.#retention.keepAtLeast)) {
         retained.add(id);
@@ -959,8 +1124,8 @@ export class NodeStorageDatabase implements StorageDatabase {
     for (const subscriber of this.#subscribers) {
       for (const [id, location] of this.#commits) {
         if (
-          location.value.branch === subscriber.branch &&
-          location.value.sequence > subscriber.retainAfter
+          location.value!.branch === subscriber.branch &&
+          location.value!.sequence > subscriber.retainAfter
         ) {
           retained.add(id);
         }
@@ -978,9 +1143,9 @@ export class NodeStorageDatabase implements StorageDatabase {
         [...this.#commits.entries()]
           .filter(
             ([id, location]) =>
-              retained.has(id) && location.value.branch === branch,
+              retained.has(id) && location.value!.branch === branch,
           )
-          .map(([, location]) => location.value.sequence),
+          .map(([, location]) => location.value!.sequence),
       );
       let floor = state.sequence;
       while (floor > 0 && sequences.has(floor)) floor -= 1;
@@ -991,6 +1156,8 @@ export class NodeStorageDatabase implements StorageDatabase {
 
   private async collectGarbageNow(): Promise<GarbageCollectionReport> {
     this.assertOpen();
+    // Collection needs every manifest; normal startup only loads the current head.
+    for (const id of this.#commits.keys()) await this.readCommit(id);
     const before = this.store.endOffset;
     const commitsBefore = this.#commits.size;
     const retained = this.retainedCommitIds(Date.now());
@@ -1005,7 +1172,7 @@ export class NodeStorageDatabase implements StorageDatabase {
 
     try {
       const manifests = commits.map(([, location]) =>
-        cloneManifest(location.value.manifest),
+        cloneManifest(location.value!.manifest),
       );
       const roots: TreeRoot[] = [];
       const setters: ((root: TreeRoot) => void)[] = [];
@@ -1030,7 +1197,7 @@ export class NodeStorageDatabase implements StorageDatabase {
       for (let index = 0; index < commits.length; index += 1) {
         const [id, location] = commits[index]!;
         const value: StoredCommit = {
-          ...location.value,
+          ...location.value!,
           id,
           manifest: manifests[index]!,
         };
@@ -1051,19 +1218,19 @@ export class NodeStorageDatabase implements StorageDatabase {
         );
         refCount += 1;
         const branchCommits = commits
-          .filter(([, location]) => location.value.branch === branch)
+          .filter(([, location]) => location.value!.branch === branch)
           .sort(
-            (left, right) => left[1].value.sequence - right[1].value.sequence,
+            (left, right) => left[1].value!.sequence - right[1].value!.sequence,
           );
         for (const [id, location] of branchCommits) {
-          if (location.value.sequence === 0) continue;
+          if (location.value!.sequence === 0) continue;
           await nextStore.append(
             "ref",
             encodeValue({
               operation: "commit",
               branch,
               head: id,
-              sequence: location.value.sequence,
+              sequence: location.value!.sequence,
             } satisfies StoredRef),
           );
           refCount += 1;
@@ -1212,6 +1379,9 @@ export class NodeStorageDatabase implements StorageDatabase {
 export type NodeStorageOptions = Readonly<{
   directory: string;
   schema: AnySchema;
+  /** Explicitly upgrade the exact schema obtained by removing these nullable,
+   * non-indexed columns. Existing rows receive null; historical commits are unchanged. */
+  addNullableColumns?: Readonly<Record<string, readonly string[]>>;
   cacheBytes?: number;
   maxEntries?: number;
   memory?: MemoryManager;

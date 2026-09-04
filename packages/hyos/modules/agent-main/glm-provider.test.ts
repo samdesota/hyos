@@ -11,9 +11,89 @@ import type {
   AgentMessageStatus,
 } from "../../capabilities/agent.js";
 import { createGlmProvider } from "./providers/glm.js";
+import {
+  glmTurnPolicy,
+  incrementalFirstRequest,
+  incrementalReminder,
+} from "./providers/glm-turn-policy.js";
 import { openCodeTools } from "./providers/opencode-tools.js";
 
 const execFileAsync = promisify(execFile);
+
+test("GLM turn policy leaves standard unchanged and reminds every incremental request", () => {
+  const input = {
+    prompt: "Help me",
+    folder: "/tmp",
+    modelId: "glm",
+    reasoningEffort: "high" as const,
+    providerSessionId: null,
+  };
+  assert.deepEqual(glmTurnPolicy(input, "system"), {
+    systemPrompt: "system",
+    prompt: "Help me",
+    effort: "high",
+  });
+  for (const firstTurn of [true, false]) {
+    const policy = glmTurnPolicy(
+      { ...input, mode: "incremental", firstTurn },
+      "system",
+    );
+    assert.equal(policy.effort, "low");
+    assert.equal(policy.prompt.includes(incrementalFirstRequest), firstTurn);
+    assert.ok(policy.prompt.endsWith(incrementalReminder));
+    assert.match(
+      policy.systemPrompt,
+      /conversational response without tools or file changes is a valid result/,
+    );
+  }
+});
+
+test("GLM incremental requests can finish conversationally without edits", async () => {
+  for (const firstTurn of [true, false]) {
+    let calls = 0;
+    let response = "";
+    const provider = createGlmProvider({
+      apiKey: "test",
+      fetch: async (_url, init) => {
+        calls++;
+        const body = JSON.parse(String(init?.body));
+        assert.deepEqual(body.reasoning, { effort: "low" });
+        assert.ok(body.messages[1].content.endsWith(incrementalReminder));
+        assert.equal(
+          body.messages[1].content.includes(incrementalFirstRequest),
+          firstTurn,
+        );
+        return stream({
+          choices: [
+            { delta: { content: "Here is the first step. Shall I proceed?" } },
+          ],
+        });
+      },
+    });
+    const result = await provider.run(
+      {
+        prompt: "Plan this",
+        folder: "/tmp",
+        modelId: "glm",
+        reasoningEffort: "high",
+        providerSessionId: null,
+        mode: "incremental",
+        firstTurn,
+      },
+      {
+        session() {},
+        activity() {},
+        response(content) {
+          response += content;
+        },
+      },
+      new AbortController().signal,
+    );
+    assert.equal(calls, 1);
+    assert.match(response, /Shall I proceed/);
+    assert.equal(result.providerSessionId, null);
+  }
+});
 
 function stream(...events: readonly object[]): Response {
   return new Response(
@@ -133,7 +213,7 @@ test("GLM streams reasoning, executes tools, and continues to a final response",
       (requests[0].tools as Array<{ function: { name: string } }>).map(
         (tool) => tool.function.name,
       ),
-      ["read", "glob", "grep", "bash", "edit", "write"],
+      ["read", "glob", "grep", "bash", "edit", "write", "web_search"],
     );
     assert.ok(
       activities.some(

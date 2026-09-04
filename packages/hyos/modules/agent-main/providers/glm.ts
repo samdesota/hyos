@@ -1,9 +1,12 @@
 import os from "node:os";
+import path from "node:path";
 import { readFile } from "node:fs/promises";
 
 import type { AgentActivity } from "../../../capabilities/agent.js";
-import { createPatchActivity } from "./patches.js";
+import { contentDiff, createPatchActivity } from "./patches.js";
+import { glmTurnPolicy } from "./glm-turn-policy.js";
 import { openCodeTool, openCodeTools } from "./opencode-tools.js";
+import { createParallelSearch } from "./parallel-search.js";
 import type { AgentProvider, AgentRunSink } from "./types.js";
 
 type GlmProviderConfig = Readonly<{
@@ -58,8 +61,10 @@ You are powered by ${model}.
 </env>`;
 }
 
-function toolsPayload(): readonly Record<string, unknown>[] {
-  return openCodeTools.map((tool) => ({
+function toolsPayload(
+  tools: typeof openCodeTools,
+): readonly Record<string, unknown>[] {
+  return tools.map((tool) => ({
     type: "function",
     function: {
       name: tool.name,
@@ -104,7 +109,26 @@ async function errorText(response: Response): Promise<string> {
   }
 }
 
+/** Read a workspace file's content, or "" when it does not exist yet. */
+async function readWorkspaceFile(
+  folder: string,
+  requestedPath: string,
+): Promise<string> {
+  try {
+    return await readFile(path.resolve(folder, requestedPath), "utf8");
+  } catch {
+    return "";
+  }
+}
+
 function activity(toolName: string, detail: string): AgentActivity {
+  if (toolName === "web_search")
+    return {
+      type: "tool",
+      category: "read",
+      label: "Searched the web",
+      detail,
+    };
   const tool = openCodeTool(toolName);
   return {
     type: "tool",
@@ -128,6 +152,11 @@ export function createGlmProvider(
     "",
   );
   const request = config.fetch ?? fetch;
+  const search = createParallelSearch({
+    environmentFile: config.environmentFile,
+    fetch: config.fetch,
+  });
+  const tools = [...openCodeTools, search];
   let resolvedApiKey = config.apiKey ?? process.env[apiKeyEnvironment];
   const apiKey = async (): Promise<string> => {
     if (!resolvedApiKey && config.environmentFile) {
@@ -162,12 +191,16 @@ export function createGlmProvider(
     },
     async run(input, sink: AgentRunSink, signal) {
       const key = await apiKey();
+      const policy = glmTurnPolicy(
+        input,
+        environmentPrompt(input.folder, input.modelId),
+      );
       const messages: ChatMessage[] = [
         {
           role: "system",
-          content: environmentPrompt(input.folder, input.modelId),
+          content: policy.systemPrompt,
         },
-        { role: "user", content: input.prompt },
+        { role: "user", content: policy.prompt },
       ];
       let round = 0;
       while (true) {
@@ -181,11 +214,11 @@ export function createGlmProvider(
           body: JSON.stringify({
             model: input.modelId,
             messages,
-            tools: toolsPayload(),
+            tools: toolsPayload(tools),
             tool_choice: "auto",
             stream: true,
             tool_stream: true,
-            reasoning: { effort: input.reasoningEffort ?? "medium" },
+            reasoning: { effort: policy.effort },
             max_tokens: 32_768,
           }),
           signal,
@@ -280,11 +313,36 @@ export function createGlmProvider(
               "streaming",
             );
             try {
-              const tool = openCodeTool(call.function.name);
+              const tool =
+                call.function.name === search.name
+                  ? search
+                  : openCodeTool(call.function.name);
+              const editPaths =
+                tool.category === "edit" && typeof args.filePath === "string"
+                  ? [args.filePath]
+                  : [];
+              const before = new Map<string, string>();
+              for (const editPath of editPaths) {
+                before.set(
+                  editPath,
+                  await readWorkspaceFile(input.folder, editPath),
+                );
+              }
               const result = await tool.execute(input.folder, args, signal);
               if (tool.category === "edit" && result.paths) {
                 const explanation =
                   typeof args.explanation === "string" ? args.explanation : "";
+                const fallbackDiff = (
+                  await Promise.all(
+                    result.paths.map(async (editedPath) =>
+                      contentDiff(
+                        editedPath,
+                        before.get(editedPath) ?? "",
+                        await readWorkspaceFile(input.folder, editedPath),
+                      ),
+                    ),
+                  )
+                ).join("\n");
                 await sink.activity(
                   providerItemId,
                   await createPatchActivity({
@@ -294,6 +352,8 @@ export function createGlmProvider(
                       path,
                       kind: call.function.name === "write" ? "write" : "update",
                     })),
+                    fallbackDiff,
+                    preferFallbackDiff: true,
                   }),
                   "complete",
                 );

@@ -104,6 +104,152 @@ export async function createPatchActivity(input: {
   };
 }
 
+const DIFF_CONTEXT = 4;
+const MAX_CONTENT_DIFF_CELLS = 4_000_000;
+
+type DiffOp = { type: "same" | "add" | "del"; text: string };
+
+/** Split file content into diffable lines, dropping the phantom entry after a trailing newline. */
+function contentLines(content: string): readonly string[] {
+  if (content === "") return [];
+  const lines = content.split("\n");
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+
+/** Line-based LCS diff of two file contents, guarding against huge inputs. */
+function lineDiff(before: string, after: string): readonly DiffOp[] | null {
+  const a = contentLines(before);
+  const b = contentLines(after);
+  if (a.length * b.length > MAX_CONTENT_DIFF_CELLS) return null;
+  const rows = a.length + 1;
+  const lcs = new Int32Array(rows * (b.length + 1));
+  for (let i = a.length - 1; i >= 0; i -= 1) {
+    for (let j = b.length - 1; j >= 0; j -= 1) {
+      lcs[i * (b.length + 1) + j] =
+        a[i] === b[j]
+          ? lcs[(i + 1) * (b.length + 1) + j + 1] + 1
+          : Math.max(
+              lcs[(i + 1) * (b.length + 1) + j],
+              lcs[i * (b.length + 1) + j + 1],
+            );
+    }
+  }
+  const ops: DiffOp[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      ops.push({ type: "same", text: a[i] });
+      i += 1;
+      j += 1;
+    } else if (
+      lcs[(i + 1) * (b.length + 1) + j] >= lcs[i * (b.length + 1) + j + 1]
+    ) {
+      ops.push({ type: "del", text: a[i] });
+      i += 1;
+    } else {
+      ops.push({ type: "add", text: b[j] });
+      j += 1;
+    }
+  }
+  while (i < a.length) ops.push({ type: "del", text: a[i++] });
+  while (j < b.length) ops.push({ type: "add", text: b[j++] });
+  return ops;
+}
+
+/**
+ * Build a git-style unified diff from exact before/after file contents so the
+ * sidebar can show the change an edit made instead of the current worktree
+ * state. Returns "" when the contents are too large to diff or identical.
+ */
+export function contentDiff(
+  path: string,
+  before: string,
+  after: string,
+): string {
+  if (before === after) return "";
+  const ops = lineDiff(before, after);
+  if (!ops) return "";
+  const lines: string[] = [
+    `diff --git a/${path} b/${path}`,
+    before === "" ? "--- /dev/null" : `--- a/${path}`,
+    after === "" ? "+++ /dev/null" : `+++ b/${path}`,
+  ];
+  let index = 0;
+  // Git numbers empty sides from 0.
+  let oldLine = before === "" ? 0 : 1;
+  let newLine = after === "" ? 0 : 1;
+  while (index < ops.length) {
+    if (ops[index].type === "same") {
+      index += 1;
+      oldLine += 1;
+      newLine += 1;
+      continue;
+    }
+    let first = index;
+    while (
+      first > 0 &&
+      ops[first - 1].type === "same" &&
+      index - first < DIFF_CONTEXT
+    ) {
+      first -= 1;
+    }
+    const contextBefore = index - first;
+    let last = index;
+    while (last < ops.length) {
+      if (ops[last].type !== "same") {
+        last += 1;
+      } else {
+        let run = 0;
+        while (last + run < ops.length && ops[last + run].type === "same") {
+          run += 1;
+        }
+        const nextChange = last + run;
+        // Only bridge a run of same lines when another change follows close by.
+        if (nextChange >= ops.length || run > DIFF_CONTEXT * 2) break;
+        last = nextChange;
+      }
+    }
+    let contextAfter = 0;
+    while (
+      last < ops.length &&
+      ops[last].type === "same" &&
+      contextAfter < DIFF_CONTEXT
+    ) {
+      last += 1;
+      contextAfter += 1;
+    }
+    const hunk: string[] = [];
+    let oldLines = 0;
+    let newLines = 0;
+    for (let k = first; k < last; k += 1) {
+      const op = ops[k];
+      if (op.type === "same") {
+        hunk.push(` ${op.text}`);
+        oldLines += 1;
+        newLines += 1;
+      } else if (op.type === "del") {
+        hunk.push(`-${op.text}`);
+        oldLines += 1;
+      } else {
+        hunk.push(`+${op.text}`);
+        newLines += 1;
+      }
+    }
+    lines.push(
+      `@@ -${oldLine - contextBefore},${oldLines} +${newLine - contextBefore},${newLines} @@`,
+    );
+    lines.push(...hunk);
+    for (let k = index; k < last; k += 1) {
+      if (ops[k].type !== "add") oldLine += 1;
+      if (ops[k].type !== "del") newLine += 1;
+    }
+    index = last;
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 export function claudePatchChanges(
   name: string,
   input: unknown,
