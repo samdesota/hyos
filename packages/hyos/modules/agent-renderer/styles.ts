@@ -78,13 +78,12 @@ export const agentStyles = String.raw`
   .session-archive:focus-visible { outline: 2px solid #b2cb8c; }
   .session-row.archived .session-open { opacity: .62; }
   .session-row.archived:hover .session-open { opacity: .85; }
-  .archived-label { padding: 8px 18px 4px; }
   .archived-toggle {
-    position: relative; display: block; width: 100%; padding: 8px 18px 4px;
+    position: relative; display: block; width: 100%; padding: 10px;
     border: 0; background: transparent; cursor: pointer; text-align: left;
   }
   .archived-toggle:hover { color: #b5b7ac; }
-  .archived-chevron { position: absolute; left: 2px; top: 6px; font-style: normal; font-size: 16px; }
+  .archived-chevron { position: absolute; left: -6px; top: 8px; font-style: normal; font-size: 16px; }
   .session-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
   .session-meta { display: flex; gap: 7px; margin-top: 5px; color: #8e9087; font-size: 11px; }
   .status-dot { width: 6px; height: 6px; margin-top: 4px; border-radius: 50%; background: #777; }
