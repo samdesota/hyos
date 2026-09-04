@@ -154,6 +154,12 @@ test("GLM reports per-turn context usage from stream chunks", async () => {
     { promptTokens: 42_300, completionTokens: 128, contextWindow: 800_000 },
   ]);
   assert.deepEqual(requests[0].stream_options, { include_usage: true });
+  assert.deepEqual(requests[0].providerOptions, {
+    gateway: {
+      order: ["friendli", "baseten", "zai"],
+      only: ["friendli", "baseten", "zai"],
+    },
+  });
 });
 
 function stream(...events: readonly object[]): Response {

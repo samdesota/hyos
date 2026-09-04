@@ -284,6 +284,12 @@ export function createGlmProvider(
             stream_options: { include_usage: true },
             reasoning: { effort: policy.effort },
             max_tokens: 32_768,
+            providerOptions: {
+              gateway: {
+                order: ["friendli", "baseten", "zai"],
+                only: ["friendli", "baseten", "zai"],
+              },
+            },
           }),
           signal,
         });
