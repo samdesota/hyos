@@ -112,7 +112,7 @@ export const agentStyles = String.raw`
   }
   .folder-menu-new {
     display: block; width: 100%; padding: 11px 13px; border: 0; border-bottom: 1px solid #343630;
-    color: #d9ff62; background: transparent; cursor: pointer; text-align: left; font-size: 12px; font-weight: 650;
+    color: #d7d6d0; background: transparent; cursor: pointer; text-align: left; font-size: 12px;
   }
   .folder-menu-new:hover { background: #2c2e28; }
   .folder-menu-list { max-height: 260px; overflow-y: auto; padding: 7px; }
