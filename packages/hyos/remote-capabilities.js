@@ -32,17 +32,26 @@
       this.authorize = authorize;
       this.broadcast = broadcast;
       this.providers = new Map();
+      this.providerWaiters = new Map();
       this.nextGeneration = 1;
       this.ipcMain = null;
     }
 
     configure(definitions) {
-      this.definitions = indexDefinitions(definitions);
+      const configured = indexDefinitions(definitions);
+      for (const [id, provider] of this.providers) {
+        if (!configured.has(id)) configured.set(id, provider.definition);
+      }
+      this.definitions = configured;
     }
 
     definition(capability) {
       const id = typeof capability === "string" ? capability : capability?.id;
-      const definition = this.definitions.get(id);
+      let definition = this.definitions.get(id);
+      if (!definition && capability && typeof capability === "object") {
+        definition = indexDefinitions([capability]).get(id);
+        if (definition) this.definitions.set(id, definition);
+      }
       if (!definition) throw new Error(`Unknown remote capability: ${id}`);
       return definition;
     }
@@ -58,10 +67,7 @@
             `${definition.id} does not expose method ${request?.method}`,
           );
         }
-        const provider = this.providers.get(definition.id);
-        if (!provider) {
-          throw new Error(`Remote capability unavailable: ${definition.id}`);
-        }
+        const provider = await this.waitForProvider(definition.id);
         const method = provider.implementation[request.method];
         if (typeof method !== "function") {
           throw new Error(
@@ -69,6 +75,22 @@
           );
         }
         return await method(...(request.args ?? []));
+      });
+    }
+
+    waitForProvider(id) {
+      const available = this.providers.get(id);
+      if (available) return Promise.resolve(available);
+      return new Promise((resolve, reject) => {
+        const waiters = this.providerWaiters.get(id) ?? new Set();
+        const waiter = { resolve, reject, timer: undefined };
+        waiter.timer = setTimeout(() => {
+          waiters.delete(waiter);
+          if (waiters.size === 0) this.providerWaiters.delete(id);
+          reject(new Error(`Remote capability unavailable: ${id}`));
+        }, 10_000);
+        waiters.add(waiter);
+        this.providerWaiters.set(id, waiters);
       });
     }
 
@@ -85,10 +107,19 @@
       }
 
       const provider = {
+        definition,
         implementation,
         generation: this.nextGeneration++,
       };
       this.providers.set(id, provider);
+      const waiters = this.providerWaiters.get(id);
+      if (waiters) {
+        this.providerWaiters.delete(id);
+        for (const waiter of waiters) {
+          clearTimeout(waiter.timer);
+          waiter.resolve(provider);
+        }
+      }
       this.broadcast({
         type: "availability",
         capability: id,
@@ -127,6 +158,13 @@
 
     dispose() {
       this.providers.clear();
+      for (const [id, waiters] of this.providerWaiters) {
+        for (const waiter of waiters) {
+          clearTimeout(waiter.timer);
+          waiter.reject(new Error(`Remote capability unavailable: ${id}`));
+        }
+      }
+      this.providerWaiters.clear();
       if (this.ipcMain) {
         this.ipcMain.removeHandler(remoteChannels.invoke);
         this.ipcMain = null;
@@ -151,7 +189,11 @@
 
     definition(capability) {
       const id = typeof capability === "string" ? capability : capability?.id;
-      const definition = this.definitions.get(id);
+      let definition = this.definitions.get(id);
+      if (!definition && capability && typeof capability === "object") {
+        definition = indexDefinitions([capability]).get(id);
+        if (definition) this.definitions.set(id, definition);
+      }
       if (!definition) throw new Error(`Unknown remote capability: ${id}`);
       return definition;
     }

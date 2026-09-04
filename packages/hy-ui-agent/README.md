@@ -33,6 +33,20 @@ const server = createUiAgentServer({ port: 4317 });
 await server.start();
 ```
 
+For browser hosts that do not use Vite, attach the client explicitly and
+dispose it with the host's lifecycle:
+
+```ts
+import { attachUiAgent } from "@hyos/ui-agent/browser";
+
+const detach = attachUiAgent({ serverUrl: "http://127.0.0.1:4317" });
+// Later: detach();
+```
+
+Electron hosts can use `mode: "embedded"` to render the overlay in an isolated
+Shadow DOM instead of a cross-origin iframe. This avoids opaque iframe
+compositing while keeping the overlay stylesheet separate from the host page.
+
 Then point the plugin at it:
 
 ```ts

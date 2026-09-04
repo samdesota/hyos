@@ -8,6 +8,7 @@ import { WebSocketServer } from "ws";
 import { createQuickIterationAgent } from "./agent.js";
 import type { QuickIterationAgent } from "./agent-types.js";
 import { renderOverlayHtml } from "./assets.js";
+import { loadNearestUiAgentEnvironment } from "./environment.js";
 import {
   renderHostClientScript,
   renderOverlayScript,
@@ -96,13 +97,20 @@ export function createUiAgentServer(
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 4317;
   const projectRoot = options.projectRoot ?? process.cwd();
+  const environment = loadNearestUiAgentEnvironment(projectRoot);
   let serverUrl: string | undefined;
   const telemetry = createDevelopmentTelemetry(projectRoot, options.telemetry);
   const defaultModel =
-    options.model ?? process.env.UI_AGENT_MODEL ?? DEFAULT_UI_AGENT_MODEL;
+    options.model ??
+    process.env.UI_AGENT_MODEL ??
+    environment.UI_AGENT_MODEL ??
+    DEFAULT_UI_AGENT_MODEL;
   const models = availableModelOptions(defaultModel, options.models);
 
-  const apiKey = options.apiKey ?? process.env.AI_GATEWAY_API_KEY;
+  const apiKey =
+    options.apiKey ??
+    process.env.AI_GATEWAY_API_KEY ??
+    environment.AI_GATEWAY_API_KEY;
   const unavailableAgent = {
     run(): Promise<never> {
       return Promise.reject(
@@ -121,11 +129,17 @@ export function createUiAgentServer(
           }),
           model: defaultModel,
           reasoning: parseGatewayReasoningEffort(
-            options.reasoning ?? process.env.UI_AGENT_REASONING,
+            options.reasoning ??
+              process.env.UI_AGENT_REASONING ??
+              environment.UI_AGENT_REASONING,
           ),
           providerOrder:
             options.providerOrder ??
-            process.env.UI_AGENT_PROVIDER_ORDER?.split(",")
+            (
+              process.env.UI_AGENT_PROVIDER_ORDER ??
+              environment.UI_AGENT_PROVIDER_ORDER
+            )
+              ?.split(",")
               .map((provider) => provider.trim())
               .filter(Boolean),
         })

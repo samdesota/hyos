@@ -61,6 +61,21 @@ export interface VercelGatewayOptions {
   apiKey: string;
   baseUrl?: string;
   fetch?: typeof globalThis.fetch;
+  retryDelayMs?: number;
+}
+
+function networkFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const cause = error instanceof Error ? error.cause : undefined;
+  if (!cause || typeof cause !== "object") return message;
+  const code =
+    "code" in cause && typeof cause.code === "string" ? cause.code : undefined;
+  const causeMessage =
+    "message" in cause && typeof cause.message === "string"
+      ? cause.message
+      : undefined;
+  if (!code && !causeMessage) return message;
+  return `${message} (${[code, causeMessage].filter(Boolean).join(": ")})`;
 }
 
 export function createVercelGateway(
@@ -70,17 +85,36 @@ export function createVercelGateway(
   const baseUrl = (
     options.baseUrl ?? "https://ai-gateway.vercel.sh/v1"
   ).replace(/\/$/, "");
+  const retryDelayMs = options.retryDelayMs ?? 250;
 
   return {
     async complete(request) {
-      const response = await fetch(`${baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${options.apiKey}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(request),
-      });
+      let response: Response | undefined;
+      let lastNetworkError: unknown;
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        try {
+          response = await fetch(`${baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${options.apiKey}`,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(request),
+          });
+          break;
+        } catch (error) {
+          lastNetworkError = error;
+          if (attempt < 2) {
+            await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+          }
+        }
+      }
+      if (!response) {
+        throw new Error(
+          `AI Gateway network request failed after 2 attempts: ${networkFailure(lastNetworkError)}`,
+          { cause: lastNetworkError },
+        );
+      }
       const body = (await response.json()) as GatewayResponse;
 
       if (!response.ok) {

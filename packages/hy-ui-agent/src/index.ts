@@ -3,6 +3,7 @@ export {
   type UiAgentClient,
   type UiAgentClientOptions,
 } from "./client.js";
+export { attachUiAgent, type AttachUiAgentOptions } from "./browser.js";
 export {
   createUiAgentServer,
   type UiAgentServer,

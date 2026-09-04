@@ -1,4 +1,6 @@
 export const UI_AGENT_FRAME_ID = "hyos-ui-agent-overlay";
+export const UI_AGENT_LAUNCHER_ID = "hyos-ui-agent-launcher";
+export const UI_AGENT_DISPOSE_EVENT = "hyos-ui-agent:dispose";
 
 export interface SelectionRegion {
   x: number;

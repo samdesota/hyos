@@ -1,5 +1,29 @@
 const path = require("node:path");
 
+class ChangedFileBatch {
+  constructor() {
+    this.files = new Set();
+  }
+
+  add(filename) {
+    this.files.add(filename.replaceAll("\\", "/"));
+  }
+
+  drain() {
+    const files = [...this.files];
+    this.files.clear();
+    return files.sort((left, right) => {
+      const priority = (filename) =>
+        filename === "application.manifest.ts"
+          ? 0
+          : filename.startsWith("capabilities/")
+            ? 1
+            : 2;
+      return priority(left) - priority(right);
+    });
+  }
+}
+
 function readManifest(manifestPath) {
   const resolved = require.resolve(manifestPath);
   delete require.cache[resolved];
@@ -94,4 +118,4 @@ class MainApplicationLoader {
   }
 }
 
-module.exports = { MainApplicationLoader, readManifest };
+module.exports = { ChangedFileBatch, MainApplicationLoader, readManifest };

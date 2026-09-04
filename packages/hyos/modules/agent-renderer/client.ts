@@ -1,0 +1,116 @@
+import {
+  agentCapability,
+  type AgentCommand,
+  type AgentCommandResult,
+  type AgentFeedChange,
+  type AgentFileContent,
+  type AgentMessageChange,
+  type AgentMessageCursor,
+  type AgentMessagePage,
+  type AgentProviderSummary,
+  type AgentSessionsState,
+} from "../../capabilities/agent.js";
+import type {
+  RemoteConsumer,
+  RendererRemoteCapabilities,
+} from "../../remote-capabilities.js";
+
+export type AgentMessageFeed = Readonly<{
+  initial: AgentMessagePage;
+  subscribe(listener: (change: AgentMessageChange) => void): () => void;
+  close(): void;
+}>;
+
+export interface AgentClient {
+  execute(command: AgentCommand): Promise<AgentCommandResult>;
+  providers(): Promise<readonly AgentProviderSummary[]>;
+  sessions(): Promise<AgentSessionsState>;
+  subscribeSessions(listener: (state: AgentSessionsState) => void): () => void;
+  openFeed(sessionId: string, newestCount?: number): Promise<AgentMessageFeed>;
+  loadOlder(
+    sessionId: string,
+    before: AgentMessageCursor,
+    count?: number,
+  ): Promise<AgentMessagePage>;
+  readFile(sessionId: string, path: string): Promise<AgentFileContent>;
+  dispose(): void;
+}
+
+type LocalFeed = {
+  sequence: number;
+  listeners: Set<(change: AgentMessageChange) => void>;
+  pending: AgentMessageChange[];
+};
+
+export function createAgentClient(
+  remote: RendererRemoteCapabilities,
+): AgentClient {
+  const agent: RemoteConsumer<typeof agentCapability> =
+    remote.consume(agentCapability);
+  const feeds = new Map<string, LocalFeed>();
+  const orphaned = new Map<string, AgentMessageChange[]>();
+
+  const receiveFeedChange = ({ feedId, change }: AgentFeedChange): void => {
+    const feed = feeds.get(feedId);
+    if (!feed) {
+      const pending = orphaned.get(feedId) ?? [];
+      pending.push(change);
+      orphaned.set(feedId, pending);
+      return;
+    }
+    if (change.sequence <= feed.sequence) return;
+    feed.sequence = change.sequence;
+    if (feed.listeners.size === 0) feed.pending.push(change);
+    else for (const listener of feed.listeners) listener(change);
+  };
+
+  const unsubscribeFeedEvents = agent.subscribe(
+    "messageChange",
+    receiveFeedChange,
+  );
+
+  return {
+    execute: (command) => agent.call("execute", command),
+    providers: () => agent.call("providers"),
+    sessions: () => agent.call("sessions"),
+    subscribeSessions: (listener) => agent.subscribe("sessions", listener),
+    async openFeed(sessionId, newestCount = 30) {
+      const opened = await agent.call("openFeed", sessionId, newestCount);
+      const feed: LocalFeed = {
+        sequence: opened.sequence,
+        listeners: new Set(),
+        pending: [],
+      };
+      feeds.set(opened.feedId, feed);
+      for (const change of orphaned.get(opened.feedId) ?? []) {
+        receiveFeedChange({ feedId: opened.feedId, change });
+      }
+      orphaned.delete(opened.feedId);
+      let closed = false;
+      return {
+        initial: opened.page,
+        subscribe(listener) {
+          if (closed) throw new Error("Message feed is closed");
+          feed.listeners.add(listener);
+          for (const change of feed.pending.splice(0)) listener(change);
+          return () => feed.listeners.delete(listener);
+        },
+        close() {
+          if (closed) return;
+          closed = true;
+          feeds.delete(opened.feedId);
+          orphaned.delete(opened.feedId);
+          void agent.call("closeFeed", opened.feedId);
+        },
+      };
+    },
+    loadOlder: (sessionId, before, count = 30) =>
+      agent.call("loadOlder", sessionId, before, count),
+    readFile: (sessionId, path) => agent.call("readFile", sessionId, path),
+    dispose() {
+      unsubscribeFeedEvents();
+      feeds.clear();
+      orphaned.clear();
+    },
+  };
+}

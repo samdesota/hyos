@@ -1,0 +1,650 @@
+import { randomUUID } from "node:crypto";
+
+import { hydb, type Database } from "@hyos/hydb";
+import { z } from "zod";
+
+import type {
+  AgentActivity,
+  AgentMessage,
+  AgentMessageCursor,
+  AgentMessagePage,
+  AgentMessageStatus,
+  AgentReasoningEffort,
+  AgentSessionStatus,
+  AgentSessionSummary,
+} from "../../capabilities/agent.js";
+import {
+  agentMessageChunks,
+  agentMessages,
+  agentSessions,
+  type StoredAgentMessage,
+} from "./model.js";
+
+const sessionStatusSchema = z.enum(["running", "ready", "failed", "cancelled"]);
+const messageStatusSchema = z.enum(["streaming", "complete", "failed"]);
+const activityPrefix = "hyos-agent-activity:v1:";
+const reasoningSuffix = "\u001fhyos-reasoning:";
+
+function storedModelId(
+  modelId: string,
+  reasoningEffort: AgentReasoningEffort | null | undefined,
+): string {
+  return reasoningEffort
+    ? `${modelId}${reasoningSuffix}${reasoningEffort}`
+    : modelId;
+}
+
+function modelSelection(value: string): {
+  modelId: string;
+  reasoningEffort: AgentReasoningEffort | null;
+} {
+  const index = value.lastIndexOf(reasoningSuffix);
+  if (index < 0) return { modelId: value, reasoningEffort: null };
+  const effort = value.slice(index + reasoningSuffix.length);
+  if (
+    effort !== "low" &&
+    effort !== "medium" &&
+    effort !== "high" &&
+    effort !== "max"
+  ) {
+    return { modelId: value, reasoningEffort: null };
+  }
+  return {
+    modelId: value.slice(0, index),
+    reasoningEffort: effort,
+  };
+}
+
+function encodeActivity(activity: AgentActivity): string {
+  return activityPrefix + JSON.stringify(activity);
+}
+
+function decodeActivity(content: string): AgentActivity | null {
+  if (!content.startsWith(activityPrefix)) return null;
+  try {
+    return JSON.parse(content.slice(activityPrefix.length)) as AgentActivity;
+  } catch {
+    return null;
+  }
+}
+
+const createSessionCommand = hydb.command({
+  input: z.object({
+    sessionId: z.string(),
+    userMessageId: z.string(),
+    userChunkId: z.string(),
+    assistantMessageId: z.string(),
+    title: z.string(),
+    folder: z.string(),
+    providerId: z.string(),
+    modelId: z.string(),
+    prompt: z.string(),
+    now: z.date(),
+  }),
+  async handler(transaction, input) {
+    await transaction.insert(agentSessions, {
+      id: input.sessionId,
+      title: input.title,
+      folder: input.folder,
+      providerId: input.providerId,
+      modelId: input.modelId,
+      providerSessionId: null,
+      status: "running",
+      lastError: null,
+      createdAt: input.now,
+      updatedAt: input.now,
+    });
+    await transaction.insert(agentMessages, {
+      id: input.userMessageId,
+      sessionId: input.sessionId,
+      role: "user",
+      status: "complete",
+      lastError: null,
+      createdAt: input.now,
+      updatedAt: input.now,
+    });
+    await transaction.insert(agentMessageChunks, {
+      id: input.userChunkId,
+      sessionId: input.sessionId,
+      messageId: input.userMessageId,
+      index: 0,
+      content: input.prompt,
+      createdAt: input.now,
+    });
+    await transaction.insert(agentMessages, {
+      id: input.assistantMessageId,
+      sessionId: input.sessionId,
+      role: "assistant",
+      status: "streaming",
+      lastError: null,
+      createdAt: new Date(input.now.getTime() + 1),
+      updatedAt: new Date(input.now.getTime() + 1),
+    });
+  },
+});
+
+const startTurnCommand = hydb.command({
+  input: z.object({
+    sessionId: z.string(),
+    userMessageId: z.string(),
+    userChunkId: z.string(),
+    assistantMessageId: z.string(),
+    prompt: z.string(),
+    now: z.date(),
+  }),
+  async handler(transaction, input) {
+    await transaction.insert(agentMessages, {
+      id: input.userMessageId,
+      sessionId: input.sessionId,
+      role: "user",
+      status: "complete",
+      lastError: null,
+      createdAt: input.now,
+      updatedAt: input.now,
+    });
+    await transaction.insert(agentMessageChunks, {
+      id: input.userChunkId,
+      sessionId: input.sessionId,
+      messageId: input.userMessageId,
+      index: 0,
+      content: input.prompt,
+      createdAt: input.now,
+    });
+    const assistantTime = new Date(input.now.getTime() + 1);
+    await transaction.insert(agentMessages, {
+      id: input.assistantMessageId,
+      sessionId: input.sessionId,
+      role: "assistant",
+      status: "streaming",
+      lastError: null,
+      createdAt: assistantTime,
+      updatedAt: assistantTime,
+    });
+    await transaction.update(agentSessions, [input.sessionId], {
+      status: "running",
+      lastError: null,
+      updatedAt: assistantTime,
+    });
+  },
+});
+
+const appendChunkCommand = hydb.command({
+  input: z.object({
+    id: z.string(),
+    sessionId: z.string(),
+    messageId: z.string(),
+    index: z.number().int().nonnegative(),
+    content: z.string(),
+    now: z.date(),
+  }),
+  async handler(transaction, input) {
+    await transaction.insert(agentMessageChunks, {
+      id: input.id,
+      sessionId: input.sessionId,
+      messageId: input.messageId,
+      index: input.index,
+      content: input.content,
+      createdAt: input.now,
+    });
+    await transaction.update(agentMessages, [input.messageId], {
+      updatedAt: input.now,
+    });
+    await transaction.update(agentSessions, [input.sessionId], {
+      updatedAt: input.now,
+    });
+  },
+});
+
+const createActivityCommand = hydb.command({
+  input: z.object({
+    id: z.string(),
+    sessionId: z.string(),
+    content: z.string(),
+    status: messageStatusSchema,
+    now: z.date(),
+  }),
+  async handler(transaction, input) {
+    await transaction.insert(agentMessages, {
+      id: input.id,
+      sessionId: input.sessionId,
+      role: "system",
+      status: input.status,
+      lastError: null,
+      createdAt: input.now,
+      updatedAt: input.now,
+    });
+    await transaction.insert(agentMessageChunks, {
+      id: input.id,
+      sessionId: input.sessionId,
+      messageId: input.id,
+      index: 0,
+      content: input.content,
+      createdAt: input.now,
+    });
+    await transaction.update(agentSessions, [input.sessionId], {
+      updatedAt: input.now,
+    });
+  },
+});
+
+const updateActivityCommand = hydb.command({
+  input: z.object({
+    id: z.string(),
+    sessionId: z.string(),
+    content: z.string(),
+    status: messageStatusSchema,
+    now: z.date(),
+  }),
+  async handler(transaction, input) {
+    await transaction.update(agentMessageChunks, [input.id], {
+      content: input.content,
+    });
+    await transaction.update(agentMessages, [input.id], {
+      status: input.status,
+      updatedAt: input.now,
+    });
+    await transaction.update(agentSessions, [input.sessionId], {
+      updatedAt: input.now,
+    });
+  },
+});
+
+const finishRunCommand = hydb.command({
+  input: z.object({
+    sessionId: z.string(),
+    messageId: z.string(),
+    providerSessionId: z.string().nullable(),
+    now: z.date(),
+  }),
+  async handler(transaction, input) {
+    await transaction.update(agentMessages, [input.messageId], {
+      status: "complete",
+      lastError: null,
+      createdAt: input.now,
+      updatedAt: input.now,
+    });
+    await transaction.update(agentSessions, [input.sessionId], {
+      providerSessionId: input.providerSessionId,
+      status: "ready",
+      lastError: null,
+      updatedAt: input.now,
+    });
+  },
+});
+
+const checkpointProviderSessionCommand = hydb.command({
+  input: z.object({
+    sessionId: z.string(),
+    providerSessionId: z.string(),
+    now: z.date(),
+  }),
+  async handler(transaction, input) {
+    await transaction.update(agentSessions, [input.sessionId], {
+      providerSessionId: input.providerSessionId,
+      updatedAt: input.now,
+    });
+  },
+});
+
+const endRunCommand = hydb.command({
+  input: z.object({
+    sessionId: z.string(),
+    messageId: z.string(),
+    sessionStatus: sessionStatusSchema,
+    messageStatus: messageStatusSchema,
+    error: z.string(),
+    now: z.date(),
+  }),
+  async handler(transaction, input) {
+    await transaction.update(agentMessages, [input.messageId], {
+      status: input.messageStatus,
+      lastError: input.error,
+      createdAt: input.now,
+      updatedAt: input.now,
+    });
+    await transaction.update(agentSessions, [input.sessionId], {
+      status: input.sessionStatus,
+      lastError: input.error,
+      updatedAt: input.now,
+    });
+  },
+});
+
+const recoverSessionCommand = hydb.command({
+  input: z.object({ sessionId: z.string(), error: z.string(), now: z.date() }),
+  async handler(transaction, input) {
+    await transaction.update(agentSessions, [input.sessionId], {
+      status: "failed",
+      lastError: input.error,
+      updatedAt: input.now,
+    });
+  },
+});
+
+function titleFromPrompt(prompt: string): string {
+  const firstLine = prompt.trim().split(/\r?\n/, 1)[0] ?? "New session";
+  return firstLine.length <= 72 ? firstLine : `${firstLine.slice(0, 69)}…`;
+}
+
+function sessionSummary(
+  row: Readonly<{
+    id: string;
+    title: string;
+    folder: string;
+    providerId: string;
+    modelId: string;
+    status: AgentSessionStatus;
+    lastError: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }>,
+): AgentSessionSummary {
+  const model = modelSelection(row.modelId);
+  return {
+    id: row.id,
+    title: row.title,
+    folder: row.folder,
+    providerId: row.providerId,
+    modelId: model.modelId,
+    reasoningEffort: model.reasoningEffort,
+    status: row.status,
+    lastError: row.lastError,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+export type NewAgentSession = Readonly<{
+  prompt: string;
+  folder: string;
+  providerId: string;
+  modelId: string;
+  reasoningEffort?: AgentReasoningEffort | null;
+}>;
+
+export type StartedTurn = Readonly<{
+  sessionId: string;
+  assistantMessageId: string;
+}>;
+
+export type AgentSessionRecord = AgentSessionSummary &
+  Readonly<{ providerSessionId: string | null }>;
+
+export interface AgentStore {
+  createSession(input: NewAgentSession): Promise<StartedTurn>;
+  startTurn(sessionId: string, prompt: string): Promise<StartedTurn>;
+  appendAssistantChunk(
+    sessionId: string,
+    messageId: string,
+    index: number,
+    content: string,
+  ): Promise<void>;
+  upsertActivity(
+    sessionId: string,
+    messageId: string | null,
+    activity: AgentActivity,
+    status: AgentMessageStatus,
+  ): Promise<string>;
+  checkpointProviderSession(
+    sessionId: string,
+    providerSessionId: string,
+  ): Promise<void>;
+  finishRun(
+    sessionId: string,
+    messageId: string,
+    providerSessionId: string | null,
+  ): Promise<void>;
+  endRun(
+    sessionId: string,
+    messageId: string,
+    sessionStatus: AgentSessionStatus,
+    messageStatus: AgentMessageStatus,
+    error: string,
+  ): Promise<void>;
+  getSession(id: string): Promise<AgentSessionRecord>;
+  listSessions(): Promise<AgentSessionSummary[]>;
+  pageMessages(
+    sessionId: string,
+    before: AgentMessageCursor | null,
+    count: number,
+  ): Promise<AgentMessagePage>;
+  watchSessions(listener: () => void): () => void;
+  watchMessages(sessionId: string, listener: () => void): () => void;
+  recoverInterruptedSessions(): Promise<void>;
+}
+
+export function createAgentStore(database: Database): AgentStore {
+  let lastWriteTime = 0;
+  const now = (): Date => {
+    lastWriteTime = Math.max(Date.now(), lastWriteTime + 2);
+    return new Date(lastWriteTime);
+  };
+
+  async function getSession(id: string): Promise<AgentSessionRecord> {
+    const row = await database.fetch(
+      hydb
+        .query(agentSessions)
+        .where((session) => session.id.eq(id))
+        .require(),
+    );
+    return { ...sessionSummary(row), providerSessionId: row.providerSessionId };
+  }
+
+  async function messageValue(row: StoredAgentMessage): Promise<AgentMessage> {
+    const chunks = await database.fetch(
+      hydb
+        .query(agentMessageChunks)
+        .where((chunk) => chunk.messageId.eq(row.id))
+        .orderBy((chunk) => [chunk.index.asc(), chunk.id.asc()])
+        .many(),
+    );
+    const content = chunks.map((chunk) => chunk.content).join("");
+    return {
+      ...row,
+      content,
+      activity: decodeActivity(content),
+    };
+  }
+
+  return {
+    async createSession(input) {
+      const sessionId = randomUUID();
+      const assistantMessageId = randomUUID();
+      await database.execute(createSessionCommand, {
+        sessionId,
+        userMessageId: randomUUID(),
+        userChunkId: randomUUID(),
+        assistantMessageId,
+        title: titleFromPrompt(input.prompt),
+        ...input,
+        modelId: storedModelId(input.modelId, input.reasoningEffort),
+        now: now(),
+      });
+      return { sessionId, assistantMessageId };
+    },
+    async startTurn(sessionId, prompt) {
+      const assistantMessageId = randomUUID();
+      await database.execute(startTurnCommand, {
+        sessionId,
+        userMessageId: randomUUID(),
+        userChunkId: randomUUID(),
+        assistantMessageId,
+        prompt,
+        now: now(),
+      });
+      return { sessionId, assistantMessageId };
+    },
+    async appendAssistantChunk(sessionId, messageId, index, content) {
+      if (content.length === 0) return;
+      await database.execute(appendChunkCommand, {
+        id: randomUUID(),
+        sessionId,
+        messageId,
+        index,
+        content,
+        now: now(),
+      });
+    },
+    async upsertActivity(sessionId, messageId, activity, status) {
+      const id = messageId ?? randomUUID();
+      const input = {
+        id,
+        sessionId,
+        content: encodeActivity(activity),
+        status,
+        now: now(),
+      };
+      await database.execute(
+        messageId ? updateActivityCommand : createActivityCommand,
+        input,
+      );
+      return id;
+    },
+    async checkpointProviderSession(sessionId, providerSessionId) {
+      await database.execute(checkpointProviderSessionCommand, {
+        sessionId,
+        providerSessionId,
+        now: now(),
+      });
+    },
+    async finishRun(sessionId, messageId, providerSessionId) {
+      await database.execute(finishRunCommand, {
+        sessionId,
+        messageId,
+        providerSessionId,
+        now: now(),
+      });
+    },
+    async endRun(sessionId, messageId, sessionStatus, messageStatus, error) {
+      await database.execute(endRunCommand, {
+        sessionId,
+        messageId,
+        sessionStatus,
+        messageStatus,
+        error,
+        now: now(),
+      });
+    },
+    getSession,
+    async listSessions() {
+      const rows = await database.fetch(
+        hydb
+          .query(agentSessions)
+          .orderBy((session) => [session.updatedAt.desc(), session.id.asc()])
+          .many(),
+      );
+      return rows.map(sessionSummary);
+    },
+    async pageMessages(sessionId, before, count) {
+      const rows = await database.fetch(
+        hydb
+          .query(agentMessages)
+          .where((message) => message.sessionId.eq(sessionId))
+          .orderBy((message) => [message.createdAt.desc(), message.id.desc()])
+          .many(),
+      );
+      const start = before
+        ? Math.max(
+            0,
+            rows.findIndex(
+              (row) =>
+                row.id === before.id &&
+                row.createdAt.getTime() === before.createdAt.getTime(),
+            ) + 1,
+          )
+        : 0;
+      const selected = rows.slice(start, start + Math.max(1, count));
+      const assembled = await Promise.all(selected.reverse().map(messageValue));
+      const maxPageBytes = 512 * 1024;
+      let bytes = 0;
+      let firstIncluded = assembled.length;
+      for (let index = assembled.length - 1; index >= 0; index -= 1) {
+        const size = Buffer.byteLength(assembled[index].content, "utf8");
+        if (firstIncluded < assembled.length && bytes + size > maxPageBytes) {
+          break;
+        }
+        bytes += size;
+        firstIncluded = index;
+      }
+      const messages = assembled.slice(firstIncluded);
+      const oldest = messages[0];
+      return {
+        messages,
+        before: oldest
+          ? { id: oldest.id, createdAt: oldest.createdAt }
+          : before,
+        hasOlder: start + messages.length < rows.length,
+      };
+    },
+    watchSessions(listener) {
+      return database.subscribe(
+        hydb
+          .query(agentSessions)
+          .orderBy((session) => [session.updatedAt.desc(), session.id.asc()])
+          .many(),
+        listener,
+      );
+    },
+    watchMessages(sessionId, listener) {
+      const unsubscribeMessages = database.subscribe(
+        hydb
+          .query(agentMessages)
+          .where((message) => message.sessionId.eq(sessionId))
+          .orderBy((message) => [message.createdAt.desc(), message.id.desc()])
+          .limit(80)
+          .many(),
+        listener,
+      );
+      const unsubscribeChunks = database.subscribe(
+        hydb
+          .query(agentMessageChunks)
+          .where((chunk) => chunk.sessionId.eq(sessionId))
+          .orderBy((chunk) => [chunk.createdAt.desc(), chunk.id.desc()])
+          .limit(512)
+          .many(),
+        listener,
+      );
+      return () => {
+        unsubscribeChunks();
+        unsubscribeMessages();
+      };
+    },
+    async recoverInterruptedSessions() {
+      const rows = await database.fetch(
+        hydb
+          .query(agentSessions)
+          .where((session) => session.status.eq("running"))
+          .many(),
+      );
+      for (const row of rows) {
+        const error = "Agent stopped before the previous turn completed.";
+        const streamingMessages = await database.fetch(
+          hydb
+            .query(agentMessages)
+            .where((message) =>
+              message.sessionId.eq(row.id).and(message.status.eq("streaming")),
+            )
+            .many(),
+        );
+        if (streamingMessages.length === 0) {
+          await database.execute(recoverSessionCommand, {
+            sessionId: row.id,
+            error,
+            now: now(),
+          });
+          continue;
+        }
+        for (const message of streamingMessages) {
+          await database.execute(endRunCommand, {
+            sessionId: row.id,
+            messageId: message.id,
+            sessionStatus: "failed",
+            messageStatus: "failed",
+            error,
+            now: now(),
+          });
+        }
+      }
+    },
+  };
+}

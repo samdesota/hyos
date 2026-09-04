@@ -501,6 +501,11 @@ function App() {
   );
 }
 
+export function mountUiAgentOverlay(root: HTMLElement): () => void {
+  const reactRoot = createRoot(root);
+  reactRoot.render(<App />);
+  return () => reactRoot.unmount();
+}
+
 const root = document.getElementById("root");
-if (!root) throw new Error("Overlay root element not found");
-createRoot(root).render(<App />);
+if (root) mountUiAgentOverlay(root);

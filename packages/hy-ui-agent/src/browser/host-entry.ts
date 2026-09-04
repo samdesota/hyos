@@ -4,7 +4,11 @@ import type {
   ElementSelection,
   QuickIterationRequest,
 } from "../agent-types.js";
-import { UI_AGENT_FRAME_ID } from "../protocol.js";
+import {
+  UI_AGENT_DISPOSE_EVENT,
+  UI_AGENT_FRAME_ID,
+  UI_AGENT_LAUNCHER_ID,
+} from "../protocol.js";
 import type {
   HostToOverlayMessage,
   HostMessagePayload,
@@ -21,7 +25,7 @@ import {
 } from "./trpc-client.js";
 
 const FRAME_ID = UI_AGENT_FRAME_ID;
-const LAUNCHER_ID = "hyos-ui-agent-launcher";
+const LAUNCHER_ID = UI_AGENT_LAUNCHER_ID;
 const SOURCE_ATTRIBUTE = "data-source-loc";
 const SESSION_KEY = "hyos-ui-agent-iteration";
 const html2canvas = html2canvasModule as unknown as (
@@ -41,6 +45,7 @@ const html2canvas = html2canvasModule as unknown as (
 ) => Promise<HTMLCanvasElement>;
 const scriptUrl = new URL(import.meta.url);
 const overlayUrl = new URL("./overlay", scriptUrl);
+const embedded = scriptUrl.searchParams.get("mode") === "embedded";
 
 interface SelectionContext {
   region: SelectionRegion;
@@ -78,6 +83,9 @@ let currentContext: SelectionContext | undefined = persistedIteration?.context;
 let frontendLogs: FrontendLog[] = [];
 let flushingLogs = false;
 let resuming = false;
+let overlayReady = false;
+let overlayRequested = false;
+let unmountOverlay: (() => void) | undefined;
 
 function serializeLogValue(value: unknown): unknown {
   if (value instanceof Error) {
@@ -128,25 +136,33 @@ async function flushFrontendLogs(): Promise<void> {
   }
 }
 
+const originalConsole = new Map<
+  "debug" | "info" | "warn" | "error",
+  (...values: unknown[]) => void
+>();
 for (const level of ["debug", "info", "warn", "error"] as const) {
   const original = console[level].bind(console);
-  console[level] = (...values: unknown[]) => {
+  const replacement = (...values: unknown[]) => {
     original(...values);
     queueFrontendLog(level, `console.${level}`, values);
   };
+  originalConsole.set(level, original);
+  console[level] = replacement;
 }
-window.addEventListener("error", (event) => {
+const handleWindowError = (event: ErrorEvent): void => {
   queueFrontendLog("error", "window.error", [event.error ?? event.message]);
-});
-window.addEventListener("unhandledrejection", (event) => {
+};
+const handleUnhandledRejection = (event: PromiseRejectionEvent): void => {
   queueFrontendLog("error", "window.unhandledrejection", [event.reason]);
-});
-window.setInterval(() => void flushFrontendLogs(), 1_000);
+};
+window.addEventListener("error", handleWindowError);
+window.addEventListener("unhandledrejection", handleUnhandledRejection);
+const flushTimer = window.setInterval(() => void flushFrontendLogs(), 1_000);
 queueFrontendLog("info", "telemetry.started", ["Frontend telemetry connected"]);
 
-function frame(): HTMLIFrameElement | undefined {
+function frame(): HTMLElement | undefined {
   const candidate = document.getElementById(FRAME_ID);
-  return candidate instanceof HTMLIFrameElement ? candidate : undefined;
+  return candidate instanceof HTMLElement ? candidate : undefined;
 }
 
 function launcher(): HTMLButtonElement | undefined {
@@ -155,17 +171,22 @@ function launcher(): HTMLButtonElement | undefined {
 }
 
 function postToOverlay(message: HostMessagePayload): void {
-  frame()?.contentWindow?.postMessage(
-    { source: "hyos-ui-agent-host", ...message },
-    overlayUrl.origin,
-  );
+  const payload = { source: "hyos-ui-agent-host", ...message };
+  const overlay = frame();
+  if (embedded) window.postMessage(payload, "*");
+  else if (overlay instanceof HTMLIFrameElement) {
+    overlay.contentWindow?.postMessage(payload, overlayUrl.origin);
+  }
 }
 
 function setOverlayActive(active: boolean): void {
+  overlayRequested = active;
   const overlay = frame();
   if (!overlay) return;
-  overlay.style.pointerEvents = active ? "auto" : "none";
-  overlay.setAttribute("aria-hidden", String(!active));
+  const visible = active && overlayReady;
+  overlay.style.visibility = visible ? "visible" : "hidden";
+  overlay.style.pointerEvents = visible ? "auto" : "none";
+  overlay.setAttribute("aria-hidden", String(!visible));
   const trigger = launcher();
   if (trigger) {
     trigger.hidden = active;
@@ -178,15 +199,34 @@ function beginQuickEdit(): void {
   persistIteration(undefined);
   currentContext = undefined;
   setOverlayActive(true);
-  postToOverlay({ type: "start-region-selection" });
+  if (overlayReady) postToOverlay({ type: "start-region-selection" });
 }
 
 function mountOverlay(): void {
   if (!frame()) {
-    const overlay = document.createElement("iframe");
+    const overlay = document.createElement(embedded ? "div" : "iframe");
     overlay.id = FRAME_ID;
-    overlay.title = "HyOS UI agent";
-    overlay.src = overlayUrl.href;
+    if (overlay instanceof HTMLIFrameElement) {
+      overlay.title = "HyOS UI agent";
+      overlay.src = overlayUrl.href;
+    } else {
+      const shadow = overlay.attachShadow({ mode: "open" });
+      const stylesheet = document.createElement("link");
+      stylesheet.rel = "stylesheet";
+      stylesheet.href = new URL("./overlay.css", scriptUrl).href;
+      const root = document.createElement("div");
+      root.className = "hyos-ui-agent-root";
+      shadow.append(stylesheet, root);
+      const moduleUrl = new URL("./overlay.js", scriptUrl).href;
+      void import(moduleUrl)
+        .then(
+          (module: { mountUiAgentOverlay(root: HTMLElement): () => void }) => {
+            if (overlay.isConnected)
+              unmountOverlay = module.mountUiAgentOverlay(root);
+          },
+        )
+        .catch((error) => queueFrontendLog("error", "overlay.load", [error]));
+    }
     overlay.setAttribute("aria-hidden", "true");
     overlay.style.cssText = [
       "position:fixed",
@@ -195,6 +235,7 @@ function mountOverlay(): void {
       "height:100vh",
       "border:0",
       "background:transparent",
+      "visibility:hidden",
       "pointer-events:none",
       "z-index:2147483647",
     ].join(";");
@@ -510,7 +551,7 @@ async function undoCompletedIteration(id: string): Promise<void> {
   postToOverlay({ type: "iteration-undone" });
 }
 
-window.addEventListener("keydown", (event) => {
+const handleKeydown = (event: KeyboardEvent): void => {
   const overlay = frame();
   if (
     event.key === "Escape" &&
@@ -532,20 +573,23 @@ window.addEventListener("keydown", (event) => {
   }
   event.preventDefault();
   beginQuickEdit();
-});
+};
 
-window.addEventListener("message", (event: MessageEvent<unknown>) => {
+const handleMessage = (event: MessageEvent<unknown>): void => {
   const overlay = frame();
-  if (
-    event.origin !== overlayUrl.origin ||
-    event.source !== overlay?.contentWindow
-  ) {
-    return;
-  }
+  const expectedSource =
+    embedded && event.source === window
+      ? true
+      : overlay instanceof HTMLIFrameElement &&
+        event.origin === overlayUrl.origin &&
+        event.source === overlay.contentWindow;
+  if (!expectedSource) return;
   const message = event.data as OverlayToHostMessage;
   if (message.source !== "hyos-ui-agent") return;
   if (message.type === "overlay-ready") {
+    overlayReady = true;
     if (persistedIteration) {
+      setOverlayActive(true);
       postToOverlay({
         type: "restore-iteration",
         iteration: persistedIteration,
@@ -559,6 +603,9 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
           message: error instanceof Error ? error.message : "Iteration failed",
         }),
       );
+    } else if (overlayRequested) {
+      setOverlayActive(true);
+      postToOverlay({ type: "start-region-selection" });
     }
   } else if (message.type === "region-selected" && message.region) {
     void prepareContext(message.region);
@@ -590,7 +637,26 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
     currentContext = undefined;
     setOverlayActive(false);
   }
-});
+};
+
+window.addEventListener("keydown", handleKeydown);
+window.addEventListener("message", handleMessage);
+
+const disposeUiAgentHost = (): void => {
+  window.clearInterval(flushTimer);
+  window.removeEventListener("error", handleWindowError);
+  window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+  window.removeEventListener("keydown", handleKeydown);
+  window.removeEventListener("message", handleMessage);
+  window.removeEventListener(UI_AGENT_DISPOSE_EVENT, disposeUiAgentHost);
+  document.removeEventListener("DOMContentLoaded", mountOverlay);
+  frame()?.remove();
+  launcher()?.remove();
+  unmountOverlay?.();
+  unmountOverlay = undefined;
+  for (const [level, original] of originalConsole) console[level] = original;
+};
+window.addEventListener(UI_AGENT_DISPOSE_EVENT, disposeUiAgentHost);
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", mountOverlay, { once: true });

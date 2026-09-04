@@ -4,7 +4,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { app, ipcMain } = require("electron");
 const { ModuleHost } = require("./runtime");
-const { MainApplicationLoader, readManifest } = require("./application-loader");
+const {
+  ChangedFileBatch,
+  MainApplicationLoader,
+  readManifest,
+} = require("./application-loader");
 const { buildRendererArtifacts } = require("./isomorphic-compiler");
 const {
   MainRemoteCapabilities,
@@ -31,6 +35,7 @@ let watcher;
 let reloading = false;
 let reloadQueue = Promise.resolve();
 let watchTimer;
+const changedFileBatch = new ChangedFileBatch();
 
 function currentWindow() {
   return mainHost.services.get("electron.overlay-window");
@@ -160,6 +165,14 @@ async function reloadChangedFile(filename) {
   }
 }
 
+async function reloadChangedFiles(filenames) {
+  if (filenames.includes(path.basename(manifestPath))) {
+    await reloadChangedFile(path.basename(manifestPath));
+    return;
+  }
+  for (const filename of filenames) await reloadChangedFile(filename);
+}
+
 function watchModules() {
   watcher = fs.watch(
     projectDirectory,
@@ -172,9 +185,10 @@ function watchModules() {
       ) {
         return;
       }
+      changedFileBatch.add(filename);
       clearTimeout(watchTimer);
       watchTimer = setTimeout(
-        () => enqueueReload(() => reloadChangedFile(filename)),
+        () => enqueueReload(() => reloadChangedFiles(changedFileBatch.drain())),
         80,
       );
     },
@@ -188,15 +202,19 @@ async function runSmokeTest() {
       window.webContents.once("did-finish-load", resolve),
     );
   }
-  const before = await window.webContents.executeJavaScript(
-    'window.hyosRemote.invoke("browser", "execute", [{ type: "snapshot" }])',
+  const providersBefore = await window.webContents.executeJavaScript(
+    'window.hyosRemote.invoke("agent", "providers", [])',
   );
+  const sessionsBefore = await window.webContents.executeJavaScript(
+    'window.hyosRemote.invoke("agent", "sessions", [])',
+  );
+  const mainBefore = mainHost.snapshot();
   const rendererBefore = await window.webContents.executeJavaScript(`
     new Promise((resolve, reject) => {
       const deadline = Date.now() + 3000;
       const poll = () => {
         const value = document.querySelector("#renderer-state")?.textContent ?? "";
-        if (value.includes("browser.renderer")) resolve(value);
+        if (value.includes("agent.renderer")) resolve(value);
         else if (Date.now() > deadline) reject(new Error("renderer modules did not mount"));
         else setTimeout(poll, 20);
       };
@@ -204,62 +222,275 @@ async function runSmokeTest() {
     })
   `);
   await reloadHot("smoke test");
-  const after = await window.webContents.executeJavaScript(
-    'window.hyosRemote.invoke("browser", "execute", [{ type: "snapshot" }])',
+  const providersAfter = await window.webContents.executeJavaScript(
+    'window.hyosRemote.invoke("agent", "providers", [])',
   );
+  const mainAfter = mainHost.snapshot();
   const rendererAfter = await window.webContents.executeJavaScript(`
     new Promise((resolve, reject) => {
       const previous = ${JSON.stringify(rendererBefore)};
       const deadline = Date.now() + 3000;
       const poll = () => {
         const value = document.querySelector("#renderer-state")?.textContent ?? "";
-        if (value.includes("browser.renderer") && value !== previous) resolve(value);
+        if (value.includes("agent.renderer") && value !== previous) resolve(value);
         else if (Date.now() > deadline) reject(new Error("renderer modules did not reload"));
         else setTimeout(poll, 20);
       };
       poll();
     })
   `);
-  const tabDisplay = await window.webContents.executeJavaScript(
-    'getComputedStyle(document.querySelector(".browser-tabs-shell")).display',
+  const appDisplay = await window.webContents.executeJavaScript(
+    'getComputedStyle(document.querySelector("#agent-app")).display',
   );
-  if (tabDisplay !== "flex") {
-    throw new Error(`tab styles did not apply: display=${tabDisplay}`);
+  if (appDisplay !== "grid") {
+    throw new Error(`agent styles did not apply: display=${appDisplay}`);
   }
   const contractRejected = await window.webContents.executeJavaScript(
-    'window.hyosRemote.invoke("browser", "not-declared", []).then(() => false, () => true)',
+    'window.hyosRemote.invoke("agent", "not-declared", []).then(() => false, () => true)',
   );
   if (!contractRejected) {
     throw new Error("remote capability accepted an undeclared method");
   }
-  const baseWindow = mainHost.services.get("electron.base-window");
-  const overlayStacked =
-    window.getParentWindow() === baseWindow &&
-    baseWindow.contentView.children.length > 0;
-  if (!overlayStacked) {
-    throw new Error("browser view was not stacked behind the renderer window");
+  const providerIds = providersAfter
+    .map(({ id }) => id)
+    .sort()
+    .join(",");
+  if (providerIds !== "claude,codex,glm") {
+    throw new Error(`agent providers unavailable: ${providerIds}`);
   }
-  const rendererLayout = await window.webContents.executeJavaScript(`(() => {
-    const surface = document.querySelector(".active-browser-view").getBoundingClientRect();
-    const overlay = document.querySelector(".renderer-overlay").getBoundingClientRect();
-    return {
-      surface: { x: surface.x, y: surface.y, width: surface.width, height: surface.height },
-      overlayIntersects:
-        overlay.left < surface.right && overlay.right > surface.left &&
-        overlay.top < surface.bottom && overlay.bottom > surface.top,
-    };
-  })()`);
-  const nativeBounds = baseWindow.contentView.children[0].getBounds();
-  const boundsSynchronized = ["x", "y", "width", "height"].every(
-    (key) => Math.abs(nativeBounds[key] - rendererLayout.surface[key]) <= 1,
+  const welcomeReady = await window.webContents.executeJavaScript(
+    `Boolean(document.querySelector("#agent-start-prompt") && document.querySelector("#agent-session-list") && document.querySelector("#agent-model-picker"))`,
   );
-  if (!boundsSynchronized || !rendererLayout.overlayIntersects) {
+  if (!welcomeReady) throw new Error("agent welcome screen did not render");
+  const modelPickerState = await window.webContents.executeJavaScript(
+    `(() => {
+      const trigger = document.querySelector("#agent-model-picker");
+      const height = getComputedStyle(trigger).height;
+      trigger.click();
+      const menu = document.querySelector('[aria-label="Model settings"]');
+      const reasoningOptions = menu?.querySelectorAll(".reasoning-options button").length ?? 0;
+      trigger.click();
+      return { height, menuVisible: Boolean(menu), reasoningOptions };
+    })()`,
+  );
+  if (
+    modelPickerState.height !== "32px" ||
+    !modelPickerState.menuVisible ||
+    modelPickerState.reasoningOptions !== 4
+  ) {
     throw new Error(
-      "Solid BrowserView did not synchronize its composited layout",
+      `compact model picker is unavailable: ${JSON.stringify(modelPickerState)}`,
     );
   }
+  const uiAgentConnection = await window.webContents.executeJavaScript(
+    'window.hyosRemote.invoke("ui-agent", "connection", [])',
+  );
+  const uiAgentReady = await window.webContents.executeJavaScript(`
+    new Promise((resolve, reject) => {
+      const deadline = Date.now() + 5000;
+      const poll = () => {
+        const ready = Boolean(
+          document.querySelector("#hyos-ui-agent-launcher") &&
+          document.querySelector("#hyos-ui-agent-overlay")
+        );
+        if (ready) resolve(true);
+        else if (Date.now() > deadline) reject(new Error("UI agent overlay did not mount"));
+        else setTimeout(poll, 20);
+      };
+      poll();
+    })
+  `);
+  await new Promise((resolve) => setTimeout(resolve, 1_500));
+  const visualState = await window.webContents.executeJavaScript(`
+    (() => {
+      const app = document.querySelector("#agent-app");
+      const frame = document.querySelector("#hyos-ui-agent-overlay");
+      const frameStyle = frame ? getComputedStyle(frame) : null;
+      return {
+        url: location.href,
+        appConnected: Boolean(app?.isConnected),
+        appDisplay: app ? getComputedStyle(app).display : null,
+        appBounds: app ? app.getBoundingClientRect().toJSON() : null,
+        frameHidden: frame?.getAttribute("aria-hidden") ?? null,
+        frameDisplay: frameStyle?.display ?? null,
+        frameVisibility: frameStyle?.visibility ?? null,
+        frameBackground: frameStyle?.backgroundColor ?? null,
+      };
+    })()
+  `);
+  const rendered = await window.webContents.capturePage();
+  const pixels = rendered.toBitmap();
+  let whitePixels = 0;
+  for (let index = 0; index < pixels.length; index += 4) {
+    if (
+      pixels[index] > 250 &&
+      pixels[index + 1] > 250 &&
+      pixels[index + 2] > 250
+    ) {
+      whitePixels += 1;
+    }
+  }
+  const whiteRatio = whitePixels / (pixels.length / 4);
+  if (whiteRatio > 0.9) {
+    throw new Error(
+      `renderer became white: ratio=${whiteRatio.toFixed(3)} state=${JSON.stringify(visualState)}`,
+    );
+  }
+  await window.webContents.executeJavaScript(
+    'document.querySelector("#hyos-ui-agent-launcher").click()',
+  );
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const activeFrameState = await window.webContents.executeJavaScript(`
+    (() => {
+      const frame = document.querySelector("#hyos-ui-agent-overlay");
+      const style = frame ? getComputedStyle(frame) : null;
+      return {
+        hidden: frame?.getAttribute("aria-hidden") ?? null,
+        display: style?.display ?? null,
+        visibility: style?.visibility ?? null,
+        background: style?.backgroundColor ?? null,
+      };
+    })()
+  `);
+  const overlayFrame = window.webContents.mainFrame.frames.find((frame) =>
+    frame.url.startsWith(`${uiAgentConnection.serverUrl}/overlay`),
+  );
+  const embeddedOverlayState = await window.webContents.executeJavaScript(`
+    (() => {
+      const host = document.querySelector("#hyos-ui-agent-overlay");
+      const shadow = host?.shadowRoot;
+      const root = shadow?.querySelector(".hyos-ui-agent-root");
+      const top = shadow?.querySelector(".selection-surface");
+      const stylesheet = shadow?.querySelector('link[rel="stylesheet"]');
+      const topStyle = top ? getComputedStyle(top) : null;
+      if (!shadow) return null;
+      return {
+        styleSheets: stylesheet?.sheet ? 1 : 0,
+        rootBackground: root ? getComputedStyle(root).backgroundColor : null,
+        topTag: top?.tagName ?? null,
+        topClass: top?.className ?? null,
+        topBackground: topStyle?.backgroundColor ?? null,
+        topPosition: topStyle?.position ?? null,
+        topBounds: top?.getBoundingClientRect().toJSON() ?? null,
+      };
+    })()
+  `);
+  const overlayDocumentState =
+    embeddedOverlayState ??
+    (overlayFrame
+      ? await overlayFrame.executeJavaScript(`
+        (() => {
+          const root = document.querySelector("#root");
+          const top = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+          return {
+            styleSheets: document.styleSheets.length,
+            htmlBackground: getComputedStyle(document.documentElement).backgroundColor,
+            bodyBackground: getComputedStyle(document.body).backgroundColor,
+            rootBackground: root ? getComputedStyle(root).backgroundColor : null,
+            topTag: top?.tagName ?? null,
+            topClass: top?.className ?? null,
+            topBackground: top ? getComputedStyle(top).backgroundColor : null,
+          };
+        })()
+      `)
+      : null);
+  const activeRendered = await window.webContents.capturePage();
+  const activePixels = activeRendered.toBitmap();
+  let activeWhitePixels = 0;
+  for (let index = 0; index < activePixels.length; index += 4) {
+    if (
+      activePixels[index] > 250 &&
+      activePixels[index + 1] > 250 &&
+      activePixels[index + 2] > 250
+    ) {
+      activeWhitePixels += 1;
+    }
+  }
+  const activeWhiteRatio = activeWhitePixels / (activePixels.length / 4);
+  if (
+    activeFrameState.visibility !== "visible" ||
+    !overlayDocumentState?.topClass?.split(" ").includes("selection-surface") ||
+    overlayDocumentState.topPosition !== "fixed" ||
+    overlayDocumentState.topBounds.width < 1000 ||
+    overlayDocumentState.topBounds.height < 700
+  ) {
+    throw new Error(
+      `active UI agent did not enter selection mode: state=${JSON.stringify(activeFrameState)} overlay=${JSON.stringify(overlayDocumentState)}`,
+    );
+  }
+  if (activeWhiteRatio > 0.9) {
+    throw new Error(
+      `active UI agent became white: ratio=${activeWhiteRatio.toFixed(3)} state=${JSON.stringify(activeFrameState)} overlay=${JSON.stringify(overlayDocumentState)}`,
+    );
+  }
+  const selectionBounds = await window.webContents.executeJavaScript(`
+    (async () => {
+      const host = document.querySelector("#hyos-ui-agent-overlay");
+      const surface = host?.shadowRoot?.querySelector(".selection-surface");
+      if (!surface) return null;
+      surface.setPointerCapture = () => {};
+      surface.releasePointerCapture = () => {};
+      surface.dispatchEvent(new PointerEvent("pointerdown", {
+        bubbles: true,
+        button: 0,
+        clientX: 120,
+        clientY: 120,
+        pointerId: 1,
+      }));
+      await new Promise(requestAnimationFrame);
+      surface.dispatchEvent(new PointerEvent("pointermove", {
+        bubbles: true,
+        buttons: 1,
+        clientX: 360,
+        clientY: 300,
+        pointerId: 1,
+      }));
+      await new Promise(requestAnimationFrame);
+      return host.shadowRoot
+        .querySelector(".selection-box")
+        ?.getBoundingClientRect()
+        .toJSON() ?? null;
+    })()
+  `);
+  if (
+    !selectionBounds ||
+    selectionBounds.width < 200 ||
+    selectionBounds.height < 150
+  ) {
+    throw new Error(
+      `Quick edit drag did not create a selection: ${JSON.stringify(selectionBounds)}`,
+    );
+  }
+  await window.webContents.executeJavaScript(`
+    (() => {
+      const surface = document
+        .querySelector("#hyos-ui-agent-overlay")
+        ?.shadowRoot
+        ?.querySelector(".selection-surface");
+      surface?.dispatchEvent(new PointerEvent("pointerup", {
+        bubbles: true,
+        button: 0,
+        clientX: 360,
+        clientY: 300,
+        pointerId: 1,
+      }));
+    })()
+  `);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const promptVisible = await window.webContents.executeJavaScript(`
+    Boolean(
+      document.querySelector("#hyos-ui-agent-overlay")
+        ?.shadowRoot
+        ?.querySelector(".prompt-panel")
+    )
+  `);
+  if (!promptVisible)
+    throw new Error("Quick edit drag did not open its prompt");
+  const mainReload =
+    JSON.stringify(mainBefore) !== JSON.stringify(mainAfter) &&
+    providersBefore.length === providersAfter.length;
   console.log(
-    `smoke: remoteCapability=browser overlayStacked=${overlayStacked} boundsSynchronized=${boundsSynchronized} rendererOverlay=${rendererLayout.overlayIntersects} mainReload=${before.generation !== after.generation} rendererReload=${rendererBefore !== rendererAfter} contractRejected=${contractRejected} tabLayout=${tabDisplay}`,
+    `smoke: remoteCapability=agent providers=${providerIds} persistedSessions=${sessionsBefore.sessions.length} welcome=${welcomeReady} uiAgent=${uiAgentReady}@${uiAgentConnection.serverUrl} whiteRatio=${whiteRatio.toFixed(3)} activeWhiteRatio=${activeWhiteRatio.toFixed(3)} activeOverlay=${overlayDocumentState.topClass} drag=${Math.round(selectionBounds.width)}x${Math.round(selectionBounds.height)} prompt=${promptVisible} mainReload=${mainReload} rendererReload=${rendererBefore !== rendererAfter} contractRejected=${contractRejected} appLayout=${appDisplay}`,
   );
   await window.webContents.executeJavaScript(
     'window.dispatchEvent(new Event("beforeunload"))',
@@ -293,7 +524,14 @@ async function start() {
   if (process.argv.includes("--smoke-test")) await runSmokeTest();
 }
 
-app.whenReady().then(start);
+app
+  .whenReady()
+  .then(start)
+  .catch((error) => {
+    console.error(error);
+    app.exitCode = 1;
+    app.quit();
+  });
 app.on("window-all-closed", () => {
   if (!reloading) app.quit();
 });

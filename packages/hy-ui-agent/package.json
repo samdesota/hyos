@@ -16,6 +16,10 @@
       "types": "./dist/src/client.d.ts",
       "import": "./dist/src/client.js"
     },
+    "./browser": {
+      "types": "./dist/src/browser.d.ts",
+      "import": "./dist/src/browser.js"
+    },
     "./trpc": {
       "types": "./dist/src/trpc.d.ts",
       "import": "./dist/src/trpc.js"
