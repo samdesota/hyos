@@ -104,7 +104,7 @@ export const agentStyles = String.raw`
     border-radius: 8px; color: #d7d6d0; cursor: pointer; font-size: 11px;
   }
   .folder-button:hover, .folder-button[aria-expanded="true"] { border-color: #55584e; background: #30312d; }
-  .folder-button > i { flex: none; margin-left: 3px; color: #777a71; font-size: 13px; font-style: normal; transform: translateY(-1px); }
+  .folder-button > i { flex: none; margin-left: 3px; color: #777a71; font-size: 10px; font-style: normal; }
   .folder-menu {
     position: absolute; z-index: 20; bottom: calc(100% + 8px); left: 0; width: 292px; max-height: min(430px, calc(100vh - 170px));
     overflow: hidden; border: 1px solid #41433c; border-radius: 12px; background: #242521;
@@ -133,7 +133,7 @@ export const agentStyles = String.raw`
   .model-picker-trigger:hover, .model-picker-trigger[aria-expanded="true"] { border-color: #55584e; background: #30312d; }
   .model-picker-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .model-picker-trigger small { flex: none; color: #92958b; font-size: 10px; text-transform: capitalize; }
-  .model-picker-trigger > i { flex: none; margin-left: 3px; color: #777a71; font-size: 13px; font-style: normal; transform: translateY(-1px); }
+  .model-picker-trigger > i { flex: none; margin-left: 3px; color: #777a71; font-size: 10px; font-style: normal; }
   .model-menu {
     position: absolute; z-index: 20; bottom: calc(100% + 8px); left: 0; width: 292px; max-height: min(430px, calc(100vh - 170px));
     overflow: hidden; border: 1px solid #41433c; border-radius: 12px; background: #242521;

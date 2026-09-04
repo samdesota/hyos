@@ -463,6 +463,11 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     if (!models.some(({ id }) => id === modelId())) setModelId(models[0].id);
   });
   createEffect(() => {
+    if (folder()) return;
+    const latest = recentFoldersList()[0];
+    if (latest) setFolder(latest);
+  });
+  createEffect(() => {
     const model = selectedProvider()?.models.find(({ id }) => id === modelId());
     const efforts = model?.reasoningEfforts ?? [];
     if (efforts.length === 0) {
@@ -860,7 +865,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                           title={folder() || "Choose folder"}
                         >
                           {folder() ? folderName(folder()) : "Choose folder"}
-                          <i aria-hidden="true">⌄</i>
+                          <i aria-hidden="true">▾</i>
                         </button>
                         <Show when={folderMenuOpen()}>
                           <div
@@ -932,7 +937,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                           >
                             {(effort) => <small>· {effort()}</small>}
                           </Show>
-                          <i aria-hidden="true">⌄</i>
+                          <i aria-hidden="true">▾</i>
                         </button>
                         <Show when={modelMenuOpen()}>
                           <div
@@ -1167,7 +1172,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                               >
                                 {(label) => <small>· {label()}</small>}
                               </Show>
-                              <i aria-hidden="true">⌄</i>
+                              <i aria-hidden="true">▾</i>
                             </button>
                             <Show when={followupMenuOpen()}>
                               <div
