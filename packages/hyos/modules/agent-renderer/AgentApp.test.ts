@@ -312,6 +312,32 @@ test("locked diffs let wheel scrolling reach the patch list", () => {
   assert.doesNotMatch(lockedRule, /overscroll-behavior:\s*contain/);
 });
 
+test("markdown tables are bordered and scroll horizontally", () => {
+  const tableRule = agentStyles.match(/^\s*\.markdown table\s*\{[^}]*\}/m)?.[0];
+  assert.ok(tableRule);
+  assert.match(tableRule, /overflow-x:\s*auto/);
+  assert.match(tableRule, /max-width:\s*100%/);
+
+  const cellRule = agentStyles.match(
+    /^\s*\.markdown th, \.markdown td\s*\{[^}]*\}/m,
+  )?.[0];
+  assert.ok(cellRule);
+  assert.match(cellRule, /border:\s*1px solid/);
+  assert.match(cellRule, /padding:/);
+
+  const headRule = agentStyles.match(
+    /^\s*\.markdown thead th\s*\{[^}]*\}/m,
+  )?.[0];
+  assert.ok(headRule);
+  assert.match(headRule, /background:/);
+
+  // Default header alignment must not override micromark's align="" attributes.
+  const alignRule = agentStyles.match(
+    /^\s*\.markdown th:not\(\[align\]\)\s*\{[^}]*\}/m,
+  )?.[0];
+  assert.ok(alignRule);
+});
+
 test("patch resizing uses the conversation width instead of the panel width", () => {
   const conversation = { clientWidth: 1_100 };
   const divider = {
