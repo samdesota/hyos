@@ -40,10 +40,31 @@ export const applicationManifest = defineApplicationManifest({
       },
     },
     {
+      id: "browser.remote-client",
+      file: "./modules/browser-client/index.ts",
+      host: "renderer",
+      reload: "hot",
+    },
+    {
+      id: "browser.view",
+      file: "./modules/browser-view/index.ts",
+      host: "renderer",
+      reload: "hot",
+    },
+    {
       id: "agent.renderer",
       file: "./modules/agent-renderer/index.tsx",
       host: "renderer",
       reload: "hot",
+    },
+    {
+      id: "browser.main",
+      file: "./modules/browser-main/index.ts",
+      host: "main",
+      reload: "hot",
+      config: {
+        initialUrl: "https://example.com/",
+      },
     },
     {
       id: "ui-agent.main",
