@@ -171,9 +171,12 @@ export const agentStyles = String.raw`
     display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto;
     height: 100%;
   }
-  .conversation.patch-panel-open { grid-template-columns: minmax(0, 1fr) min(var(--patch-panel-width, 520px), calc(100% - 360px)); }
-  .conversation.browser-open { grid-template-columns: minmax(0, 1fr) minmax(340px, 460px); }
-  .conversation.patch-panel-open.browser-open {
+  .conversation.side-open { grid-template-columns: minmax(0, 1fr) min(var(--patch-panel-width, 520px), calc(100% - 360px)); }
+  .conversation.side-collapsed { grid-template-columns: minmax(0, 1fr) auto; }
+  .conversation.side-collapsed.browser-open {
+    grid-template-columns: minmax(0, 1fr) auto minmax(340px, 460px);
+  }
+  .conversation.side-open.browser-open {
     grid-template-columns:
       minmax(0, 1fr)
       min(var(--patch-panel-width, 520px), calc(100% - 820px))
@@ -192,16 +195,16 @@ export const agentStyles = String.raw`
   .patch-toggle:hover, .patch-toggle.active { color: #e3e2dc; background: #292b26; }
   .patch-toggle span { margin-left: 5px; color: #d9ff62; font-size: 11px; }
   .browser-toggle {
-    padding: 7px 10px; border: 1px solid #3a3c35; border-radius: 8px;
+    margin-left: auto; padding: 7px 10px; border: 1px solid #3a3c35; border-radius: 8px;
     color: #aaaCA2; background: transparent; cursor: pointer;
   }
+  .cancel + .browser-toggle { margin-left: 0; }
   .browser-toggle:hover, .browser-toggle.active { color: #e3e2dc; background: #292b26; }
   .browser-panel {
-    position: relative; grid-column: 2; grid-row: 1 / -1;
+    position: relative; grid-column: 3; grid-row: 1 / -1;
     display: flex; flex-direction: column; min-width: 0; min-height: 0;
     border-left: 1px solid #30312d; background: #1d1e1b;
   }
-  .conversation.patch-panel-open .browser-panel { grid-column: 3; }
   .browser-panel-toolbar {
     display: flex; align-items: center; gap: 6px;
     min-height: 67px; padding: 12px;
@@ -399,10 +402,40 @@ export const agentStyles = String.raw`
   .composer .send { margin: 0; padding: 4px 12px; font-size: 11px; }
   .composer .send.investigate { background: #33352e; color: #c9cbbf; font-weight: 600; }
   .composer .send.investigate:hover { background: #3c3e37; }
-  .patch-feed {
+  .side-pane {
     position: relative; grid-column: 2; grid-row: 1 / -1; display: flex; flex-direction: column; min-width: 0; min-height: 0;
     border-left: 1px solid #30312d; background: #1d1e1b;
   }
+  .side-tabs {
+    display: flex; align-items: center; gap: 6px;
+    min-height: 67px; padding: 12px 12px 12px 16px;
+    border-bottom: 1px solid #30312d;
+  }
+  .side-tab {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 10px; border: 1px solid #3a3c35; border-radius: 8px;
+    color: #aaaca2; background: transparent; cursor: pointer; font-size: 12px;
+  }
+  .side-tab:hover, .side-tab.active { color: #e3e2dc; background: #292b26; }
+  .side-tab.active { border-color: #4a4d43; }
+  .side-tab-icon { font-size: 13px; line-height: 1; }
+  .side-tab-badge { color: #d9ff62; font-size: 11px; }
+  .side-collapse {
+    margin-left: auto; display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
+    border: 0; border-radius: 7px; color: #8e9087; background: transparent;
+    cursor: pointer; font-size: 14px; line-height: 1;
+  }
+  .side-collapse:hover { color: #eceae5; background: #30312d; }
+  .side-pane-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .side-pane.collapsed { width: 46px; }
+  .side-pane.collapsed .patch-resize-handle { display: none; }
+  .side-pane.collapsed .side-tabs {
+    flex: 1; flex-direction: column; gap: 8px; min-height: 0; padding: 10px 8px;
+    border-bottom: 0;
+  }
+  .side-pane.collapsed .side-collapse { order: -1; margin-left: 0; }
+  .side-pane.collapsed .side-tab { padding: 8px; }
+  .side-pane.collapsed .side-tab-label, .side-pane.collapsed .side-tab-badge { display: none; }
   .patch-resize-handle {
     position: absolute; z-index: 2; top: 0; bottom: 0; left: -5px; width: 10px;
     cursor: col-resize; touch-action: none;

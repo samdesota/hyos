@@ -27,6 +27,11 @@ import { BrowserPanel } from "./BrowserPanel.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { mountMarkdown } from "./markdown.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
+import {
+  activeSideTab,
+  pinnedSideTabs,
+  sideTabDescriptors,
+} from "./side-pane.js";
 import { agentStyles } from "./styles.js";
 import { selectedMode } from "./mode-selection.js";
 import { syncHashToSession, sessionFromHash } from "./session-route.js";
@@ -449,9 +454,10 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   const [error, setError] = createSignal<string | null>(null);
   const transcriptScroll = createAutoScrollController();
   const patchScroll = createAutoScrollController();
-  const narrowPatches = window.matchMedia("(max-width: 1080px)");
-  const [patchPanelOpen, setPatchPanelOpen] = createSignal(
-    !narrowPatches.matches,
+  const narrowSide = window.matchMedia("(max-width: 1080px)");
+  const [sideCollapsed, setSideCollapsed] = createSignal(narrowSide.matches);
+  const [activeSideTabId, setActiveSideTabId] = createSignal<string | null>(
+    "patches",
   );
   const [patchPanelWidth, setPatchPanelWidth] = createSignal(520);
   const [browserPanelOpen, setBrowserPanelOpen] = createSignal(false);
@@ -517,6 +523,9 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     collapseWorkRuns(timelineEntries(messages())),
   );
   const patches = createMemo(() => patchEntries(messages()));
+  const sideActive = createMemo(() =>
+    activeSideTab(pinnedSideTabs, activeSideTabId()),
+  );
   const activePlan = createMemo(() => activeSession()?.plan ?? null);
   const planAfterIndex = createMemo(() =>
     activePlan() ? planPanelIndex(timeline()) : -1,
@@ -532,10 +541,10 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     return null;
   });
 
-  const collapsePatchesWhenNarrow = (event: MediaQueryListEvent): void => {
-    if (event.matches) setPatchPanelOpen(false);
+  const collapseSideWhenNarrow = (event: MediaQueryListEvent): void => {
+    if (event.matches) setSideCollapsed(true);
   };
-  narrowPatches.addEventListener("change", collapsePatchesWhenNarrow);
+  narrowSide.addEventListener("change", collapseSideWhenNarrow);
 
   const closeModelMenuOnPointerDown = (event: PointerEvent): void => {
     if (event.target instanceof Node && !modelPicker?.contains(event.target)) {
@@ -865,7 +874,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     feedGeneration += 1;
     closeFeed();
     unsubscribeSessions();
-    narrowPatches.removeEventListener("change", collapsePatchesWhenNarrow);
+    narrowSide.removeEventListener("change", collapseSideWhenNarrow);
     document.removeEventListener("pointerdown", closeModelMenuOnPointerDown);
     document.removeEventListener("keydown", closeModelMenuOnKeyDown);
   });
@@ -1213,7 +1222,8 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
               <section
                 class="conversation"
                 classList={{
-                  "patch-panel-open": patchPanelOpen(),
+                  "side-open": !sideCollapsed(),
+                  "side-collapsed": sideCollapsed(),
                   "browser-open": browserPanelOpen(),
                 }}
                 style={`--patch-panel-width: ${patchPanelWidth()}px`}
@@ -1240,23 +1250,6 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                       Stop
                     </button>
                   </Show>
-                  <button
-                    class="patch-toggle"
-                    classList={{ active: patchPanelOpen() }}
-                    type="button"
-                    aria-expanded={patchPanelOpen()}
-                    aria-controls="agent-patch-feed"
-                    onClick={() => {
-                      const opening = !patchPanelOpen();
-                      setPatchPanelOpen(opening);
-                      if (opening) {
-                        patchScroll.reset();
-                        queueScrollToBottom(patchScroll, () => patchList);
-                      }
-                    }}
-                  >
-                    Patches <span>{patches().length}</span>
-                  </button>
                   <button
                     class="browser-toggle"
                     classList={{ active: browserPanelOpen() }}
@@ -1461,98 +1454,141 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                     </div>
                   </div>
                 </div>
-                <Show when={patchPanelOpen()}>
-                  <aside class="patch-feed" id="agent-patch-feed">
-                    <div
-                      class="patch-resize-handle"
-                      role="separator"
-                      aria-label="Resize patch feed"
-                      aria-orientation="vertical"
-                      aria-valuemin="360"
-                      aria-valuenow={patchPanelWidth()}
-                      onPointerDown={resizePatchPanel}
-                    />
-                    <div class="patch-feed-head">
-                      <div>
-                        <strong>Patches</strong>
-                        <span>{patches().length} in loaded history</span>
-                      </div>
-                      <button
-                        type="button"
-                        aria-label="Collapse patch feed"
-                        onClick={() => setPatchPanelOpen(false)}
-                      >
-                        ×
-                      </button>
-                    </div>
-                    <div
-                      class="patch-list"
-                      ref={patchList}
-                      onScroll={() => {
-                        if (patchList) patchScroll.observeScroll(patchList);
-                      }}
+                <aside
+                  class="side-pane"
+                  classList={{ collapsed: sideCollapsed() }}
+                  aria-label="Session panels"
+                >
+                  <div
+                    class="patch-resize-handle"
+                    role="separator"
+                    aria-label="Resize side pane"
+                    aria-orientation="vertical"
+                    aria-valuemin="360"
+                    aria-valuenow={patchPanelWidth()}
+                    onPointerDown={resizePatchPanel}
+                  />
+                  <div
+                    class="side-tabs"
+                    role="tablist"
+                    aria-label="Side panels"
+                  >
+                    <For each={pinnedSideTabs}>
+                      {(tab) => (
+                        <button
+                          type="button"
+                          role="tab"
+                          class="side-tab"
+                          classList={{ active: sideActive()?.id === tab.id }}
+                          aria-selected={sideActive()?.id === tab.id}
+                          aria-controls="agent-side-pane-content"
+                          title={sideTabDescriptors[tab.kind].label}
+                          onClick={() => {
+                            setActiveSideTabId(tab.id);
+                            setSideCollapsed(false);
+                          }}
+                        >
+                          <span class="side-tab-icon" aria-hidden="true">
+                            {sideTabDescriptors[tab.kind].icon}
+                          </span>
+                          <span class="side-tab-label">
+                            {sideTabDescriptors[tab.kind].label}
+                          </span>
+                          <Show when={tab.kind === "patches"}>
+                            <span class="side-tab-badge">
+                              {patches().length}
+                            </span>
+                          </Show>
+                        </button>
+                      )}
+                    </For>
+                    <button
+                      type="button"
+                      class="side-collapse"
+                      aria-label={
+                        sideCollapsed()
+                          ? "Expand side pane"
+                          : "Collapse side pane"
+                      }
+                      aria-expanded={!sideCollapsed()}
+                      onClick={() =>
+                        setSideCollapsed((collapsed) => !collapsed)
+                      }
                     >
-                      <Show
-                        when={patches().length > 0}
-                        fallback={
-                          <div class="patch-empty">
-                            File changes will appear here as the agent works.
-                          </div>
-                        }
+                      {sideCollapsed() ? "«" : "»"}
+                    </button>
+                  </div>
+                  <div class="side-pane-body" id="agent-side-pane-content">
+                    <Show when={sideActive()?.kind === "patches"}>
+                      <div
+                        class="patch-list"
+                        ref={patchList}
+                        onScroll={() => {
+                          if (patchList) patchScroll.observeScroll(patchList);
+                        }}
                       >
-                        <For each={patches()}>
-                          {(message) => (
-                            <div class="patch-entry">
-                              <p>
-                                {message.activity?.type === "patch" &&
-                                  message.activity.explanation}
-                              </p>
-                              <div class="patch-files">
-                                <For
-                                  each={
-                                    message.activity?.type === "patch"
-                                      ? message.activity.changes
-                                      : []
+                        <Show
+                          when={patches().length > 0}
+                          fallback={
+                            <div class="patch-empty">
+                              File changes will appear here as the agent works.
+                            </div>
+                          }
+                        >
+                          <For each={patches()}>
+                            {(message) => (
+                              <div class="patch-entry">
+                                <p>
+                                  {message.activity?.type === "patch" &&
+                                    message.activity.explanation}
+                                </p>
+                                <div class="patch-files">
+                                  <For
+                                    each={
+                                      message.activity?.type === "patch"
+                                        ? message.activity.changes
+                                        : []
+                                    }
+                                  >
+                                    {(change) => (
+                                      <span title={change.path}>
+                                        <i>{change.kind}</i> {change.path}
+                                      </span>
+                                    )}
+                                  </For>
+                                </div>
+                                <Show
+                                  when={
+                                    message.activity?.type === "patch" &&
+                                    message.activity.diff
                                   }
                                 >
-                                  {(change) => (
-                                    <span title={change.path}>
-                                      <i>{change.kind}</i> {change.path}
-                                    </span>
-                                  )}
-                                </For>
+                                  <DiffViewer
+                                    diff={
+                                      message.activity?.type === "patch"
+                                        ? message.activity.diff
+                                        : ""
+                                    }
+                                    paths={
+                                      message.activity?.type === "patch"
+                                        ? message.activity.changes.map(
+                                            ({ path }) => path,
+                                          )
+                                        : []
+                                    }
+                                    loadFile={(path) =>
+                                      props.client.readFile(session().id, path)
+                                    }
+                                  />
+                                </Show>
                               </div>
-                              <Show
-                                when={
-                                  message.activity?.type === "patch" &&
-                                  message.activity.diff
-                                }
-                              >
-                                <DiffViewer
-                                  diff={
-                                    message.activity?.type === "patch"
-                                      ? message.activity.diff
-                                      : ""
-                                  }
-                                  paths={
-                                    message.activity?.type === "patch"
-                                      ? message.activity.changes.map(
-                                          ({ path }) => path,
-                                        )
-                                      : []
-                                  }
-                                  loadFile={(path) =>
-                                    props.client.readFile(session().id, path)
-                                  }
-                                />
-                              </Show>
-                            </div>
-                          )}
-                        </For>
-                      </Show>
-                    </div>
-                  </aside>
-                </Show>
+                            )}
+                          </For>
+                        </Show>
+                      </div>
+                    </Show>
+                  </div>
+                </aside>
                 <Show when={browserPanelOpen()}>
                   <BrowserPanel
                     root={props.root}
