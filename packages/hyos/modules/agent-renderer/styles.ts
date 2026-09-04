@@ -49,7 +49,8 @@ export const agentStyles = String.raw`
   }
   .new-session {
     display: flex; align-items: center; gap: 8px;
-    width: 100%; padding: 10px 12px 10px 2px; text-align: left; background: transparent;
+    width: calc(100% + 16px); margin: 0 -8px; padding: 10px;
+    text-align: left; background: transparent;
   }
   .new-session-icon { flex: none; width: 15px; height: 15px; color: #b5b7ac; }
   .new-session:hover { background: #3b3d37; }
