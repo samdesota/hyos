@@ -1,7 +1,11 @@
 import { micromark } from "micromark";
+import { gfmTable, gfmTableHtml } from "micromark-extension-gfm-table";
 
 export function renderAgentMarkdown(markdown: string): string {
-  return micromark(markdown);
+  return micromark(markdown, {
+    extensions: [gfmTable()],
+    htmlExtensions: [gfmTableHtml()],
+  });
 }
 
 export function mermaidDefinition(

@@ -19,6 +19,21 @@ test("agent Markdown renders as formatted, safe HTML", () => {
   assert.doesNotMatch(rendered, /<script>/);
 });
 
+test("agent Markdown renders GFM pipe tables as HTML tables", () => {
+  const rendered = renderAgentMarkdown(
+    "| Name | Status |\n| --- | --- |\n| keep | done |\n| drop | todo |",
+  );
+
+  assert.match(rendered, /<table>/);
+  assert.match(rendered, /<thead>/);
+  assert.match(rendered, /<th>Name<\/th>/);
+  assert.match(rendered, /<th>Status<\/th>/);
+  assert.match(rendered, /<tbody>/);
+  assert.match(rendered, /<td>keep<\/td>/);
+  assert.match(rendered, /<td>todo<\/td>/);
+  assert.match(rendered, /<\/table>/);
+});
+
 test("Mermaid definitions tolerate an agent-wrapped text fence", () => {
   const source = "flowchart LR\n  A --> B";
 

@@ -30,6 +30,7 @@
     "@openai/codex-sdk": "^0.152.1",
     "mermaid": "^11.17.2",
     "micromark": "^4.0.2",
+    "micromark-extension-gfm-table": "^2.1.1",
     "solid-js": "^1.9.15",
     "zod": "^4.4.3"
   }
