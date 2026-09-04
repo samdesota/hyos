@@ -657,7 +657,8 @@ input:focus-visible {
 
   .format-button:nth-of-type(3),
   .format-divider,
-  .format-button--wide {
+  .format-button--wide,
+  .incremental-toggle {
     display: none;
   }
 
