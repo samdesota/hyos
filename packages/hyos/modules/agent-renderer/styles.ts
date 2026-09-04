@@ -304,6 +304,13 @@ export const agentStyles = String.raw`
   .plan-head span { color: #6f7268; font-size: 10px; font-variant-numeric: tabular-nums; }
   .plan-tasks { display: grid; gap: 7px; margin: 10px 0 0; padding: 0; list-style: none; }
   .plan-task { display: flex; gap: 9px; color: #d5d4ce; font-size: 13px; line-height: 1.5; }
+  .plan-num {
+    flex: none; width: 18px; text-align: right; color: #6f7268;
+    font: 11px/1.9 ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .plan-task.next .plan-num { color: #b9bbb1; }
+  .plan-task.done .plan-num { color: #4c4e47; }
   .plan-check {
     flex: none; display: inline-flex; align-items: center; justify-content: center;
     width: 16px; height: 16px; margin-top: 2px; border: 1px solid #3b3d37; border-radius: 5px;

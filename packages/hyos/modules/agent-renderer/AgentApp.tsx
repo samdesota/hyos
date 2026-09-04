@@ -251,6 +251,9 @@ const PlanPanel: Component<{
                 next: index() === nextIndex(),
               }}
             >
+              <span class="plan-num" aria-hidden="true">
+                {index() + 1}.
+              </span>
               <span class="plan-check" aria-hidden="true">
                 {task.done ? "✓" : ""}
               </span>
@@ -268,7 +271,7 @@ const PlanPanel: Component<{
             title={implementNextPrompt(nextIndex(), task())}
             onClick={() => props.onImplementNext(nextIndex(), task())}
           >
-            Implement next: {task().text}
+            Implement task {nextIndex() + 1}
           </button>
         )}
       </Show>
