@@ -148,12 +148,15 @@ export type AgentCommand =
       modelId: string;
       reasoningEffort?: AgentReasoningEffort | null;
       mode?: AgentMode;
+      intent?: "implement" | "investigate";
     }>
   | Readonly<{
       type: "send-message";
       sessionId: AgentSessionId;
       prompt: string;
       mode?: AgentMode;
+      reasoningEffort?: AgentReasoningEffort | null;
+      intent?: "implement" | "investigate";
     }>
   | Readonly<{ type: "cancel"; sessionId: AgentSessionId }>
   | Readonly<{ type: "archive-session"; sessionId: AgentSessionId }>

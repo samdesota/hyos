@@ -74,7 +74,7 @@ export function createAgentClient(
     providers: () => agent.call("providers"),
     sessions: () => agent.call("sessions"),
     subscribeSessions: (listener) => agent.subscribe("sessions", listener),
-    async openFeed(sessionId, newestCount = 30) {
+    async openFeed(sessionId, newestCount = 200) {
       const opened = await agent.call("openFeed", sessionId, newestCount);
       const feed: LocalFeed = {
         sequence: opened.sequence,
@@ -104,7 +104,7 @@ export function createAgentClient(
         },
       };
     },
-    loadOlder: (sessionId, before, count = 30) =>
+    loadOlder: (sessionId, before, count = 200) =>
       agent.call("loadOlder", sessionId, before, count),
     readFile: (sessionId, path) => agent.call("readFile", sessionId, path),
     dispose() {

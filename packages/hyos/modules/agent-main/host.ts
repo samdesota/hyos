@@ -269,7 +269,7 @@ export function createAgentHost(options: {
     const feed: Feed = {
       id,
       sessionId,
-      count: Math.min(100, Math.max(1, newestCount)),
+      count: Math.min(200, Math.max(1, newestCount)),
       sequence: 0,
       ready: false,
       dirty: false,
@@ -300,6 +300,7 @@ export function createAgentHost(options: {
     assistantMessageId: string,
     prompt: string,
     firstTurn = false,
+    intent?: "implement" | "investigate",
   ): void => {
     const controller = new AbortController();
     const done = (async () => {
@@ -326,6 +327,7 @@ export function createAgentHost(options: {
           {
             prompt: providerPrompt,
             mode: session.mode,
+            intent,
             firstTurn,
             folder: session.folder,
             modelId: session.modelId,
@@ -440,7 +442,13 @@ export function createAgentHost(options: {
       }
       await provider.prepare?.();
       const turn = await store.createSession(command);
-      runTurn(turn.sessionId, turn.assistantMessageId, command.prompt, true);
+      runTurn(
+        turn.sessionId,
+        turn.assistantMessageId,
+        command.prompt,
+        true,
+        command.intent,
+      );
       return { type: "session-started", sessionId: turn.sessionId };
     }
     if (activeRuns.has(command.sessionId)) {
@@ -454,12 +462,31 @@ export function createAgentHost(options: {
     if (!provider)
       throw new Error(`Unknown agent provider: ${session.providerId}`);
     await provider.prepare?.();
+    const model = provider.summary.models.find(
+      (candidate) => candidate.id === session.modelId,
+    );
+    if (
+      command.reasoningEffort &&
+      model &&
+      !model.reasoningEfforts?.includes(command.reasoningEffort)
+    ) {
+      throw new Error(
+        `${model.label} does not support ${command.reasoningEffort} reasoning.`,
+      );
+    }
     const turn = await store.startTurn(
       command.sessionId,
       command.prompt,
       command.mode,
+      command.reasoningEffort,
     );
-    runTurn(turn.sessionId, turn.assistantMessageId, command.prompt);
+    runTurn(
+      turn.sessionId,
+      turn.assistantMessageId,
+      command.prompt,
+      false,
+      command.intent,
+    );
     return { type: "accepted" };
   };
 
@@ -469,7 +496,7 @@ export function createAgentHost(options: {
     sessions: sessionsState,
     openFeed,
     loadOlder: (sessionId, before, count): Promise<AgentMessagePage> =>
-      store.pageMessages(sessionId, before, Math.min(100, Math.max(1, count))),
+      store.pageMessages(sessionId, before, Math.min(200, Math.max(1, count))),
     readFile: (sessionId, requestedPath) =>
       readSessionFile(store, sessionId, requestedPath),
     closeFeed,

@@ -181,3 +181,32 @@ test("a follow-up turn atomically persists a mode change", async () => {
     await database.close();
   }
 });
+
+test("a follow-up turn atomically persists a reasoning-effort change", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Plan the work",
+      folder: "/tmp/project",
+      providerId: "glm",
+      modelId: "zai/glm-5.3-flash",
+      reasoningEffort: "medium",
+    });
+    assert.equal(
+      (await store.getSession(turn.sessionId)).reasoningEffort,
+      "medium",
+    );
+
+    await store.startTurn(turn.sessionId, "Go deeper", undefined, "high");
+
+    const session = await store.getSession(turn.sessionId);
+    assert.equal(session.reasoningEffort, "high");
+    assert.equal(session.modelId, "zai/glm-5.3-flash");
+    assert.equal(session.mode, "standard");
+  } finally {
+    await database.close();
+  }
+});

@@ -238,6 +238,86 @@ test("GLM streams reasoning, executes tools, and continues to a final response",
   }
 });
 
+test("GLM investigate turns hide edit/write tools and deny edit calls", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "hyos-glm-investigate-"));
+  const requests: Record<string, unknown>[] = [];
+  let requestIndex = 0;
+  const fakeFetch: typeof fetch = async (_url, init) => {
+    requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    requestIndex += 1;
+    if (requestIndex === 1) {
+      return stream({
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "edit-1",
+                  function: {
+                    name: "edit",
+                    arguments: JSON.stringify({
+                      filePath: join(folder, "answer.ts"),
+                      oldString: "",
+                      newString: "export const answer = 42;\n",
+                      explanation: "Try to edit anyway.",
+                    }),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      });
+    }
+    return stream({
+      choices: [{ delta: { content: "Investigated read-only." } }],
+    });
+  };
+  const activities: Array<{ activity: AgentActivity; status: string }> = [];
+  const responses: string[] = [];
+  try {
+    const provider = createGlmProvider({ apiKey: "test", fetch: fakeFetch });
+    await provider.run(
+      {
+        prompt: "Investigate this.",
+        folder,
+        modelId: "zai/glm-5.3-flash",
+        providerSessionId: null,
+        reasoningEffort: "medium",
+        intent: "investigate",
+      },
+      {
+        session() {},
+        response(content) {
+          responses.push(content);
+        },
+        activity(_id, activity, status) {
+          activities.push({ activity, status });
+        },
+      },
+      new AbortController().signal,
+    );
+    const toolNames = (
+      requests[0].tools as Array<{ function: { name: string } }>
+    ).map((tool) => tool.function.name);
+    assert.ok(!toolNames.includes("edit"));
+    assert.ok(!toolNames.includes("write"));
+    assert.ok(toolNames.includes("bash"));
+    assert.deepEqual(responses, ["Investigated read-only."]);
+    const lastMessages = requests[1].messages as Array<{
+      role: string;
+      content: string;
+    }>;
+    assert.equal(lastMessages.at(-1)?.role, "tool");
+    assert.match(lastMessages.at(-1)!.content, /investigate-only turn/);
+    assert.ok(activities.some(({ activity, status }) => status === "failed"));
+    await assert.rejects(() => readFile(join(folder, "answer.ts"), "utf8"));
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
 test("GLM reports a missing API key before starting a session", async () => {
   const provider = createGlmProvider({
     apiKeyEnvironment: "HYOS_TEST_MISSING_GLM_KEY",

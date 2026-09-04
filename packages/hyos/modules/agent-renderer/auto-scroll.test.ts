@@ -54,6 +54,27 @@ test("content growth keeps following until the user scrolls over 100px away", ()
   );
 });
 
+test("programmatic pins are not mistaken for the user scrolling away", () => {
+  const controller = createAutoScrollController(100);
+
+  controller.pin();
+  // A large append plus the programmatic scroll lands far from the bottom,
+  // but the scroll event it fires must not cancel following.
+  controller.observeScroll({
+    scrollHeight: 2_000,
+    scrollTop: 1_500,
+    clientHeight: 200,
+  });
+  assert.equal(
+    controller.shouldFollow({
+      scrollHeight: 2_000,
+      scrollTop: 1_500,
+      clientHeight: 200,
+    }),
+    true,
+  );
+});
+
 test("patches render from earliest to latest", () => {
   const patch = (id: string, createdAt: string): AgentMessage => ({
     id,

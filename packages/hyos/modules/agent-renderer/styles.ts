@@ -9,10 +9,6 @@ export const agentStyles = String.raw`
   html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
   button, textarea, select, input { font: inherit; }
   button { color: inherit; }
-  .incremental-toggle { border: 1px solid #45483f; border-radius: 14px; padding: 5px 10px; background: transparent; color: #aaa; white-space: nowrap; cursor: pointer; font-size: 12px; }
-  .incremental-toggle[aria-pressed="true"] { color: #d5ebad; background: #303c24; border-color: #647c45; }
-  .incremental-toggle:disabled { opacity: .5; cursor: default; }
-  .incremental-toggle:focus-visible { outline: 2px solid #b2cb8c; outline-offset: 2px; }
   .agent-app {
     display: grid;
     grid-template-columns: 278px minmax(0, 1fr);
@@ -93,18 +89,18 @@ export const agentStyles = String.raw`
   .agent-main { min-width: 0; min-height: 0; background: #171816; }
   .welcome { display: grid; place-items: center; width: 100%; height: 100%; padding: 38px; overflow-y: auto; }
   .welcome-card { width: min(760px, 100%); }
-  .starter { padding: 18px; border: 1px solid #343630; border-radius: 16px; background: #20211e; box-shadow: 0 24px 70px #0004; }
+  .starter { padding: 18px; border: 1px solid #343630; border-radius: 16px; background: #20211e; }
   .prompt {
     width: 100%; min-height: 126px; resize: vertical; padding: 2px; border: 0; outline: 0;
     color: #f2f0ea; background: transparent; line-height: 1.55;
   }
   .starter-controls { display: flex; align-items: center; gap: 10px; padding-top: 14px; border-top: 1px solid #33342f; }
-  .folder-button { height: 38px; }
+  .folder-button, .model-picker-trigger { height: 38px; }
   .folder-button { border: 1px solid #3b3d37; background: #292a27; }
   .folder-button { min-width: 0; max-width: 300px; padding: 0 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .model-picker { position: relative; }
   .model-picker-trigger {
-    display: flex; align-items: center; gap: 4px; max-width: 220px; height: 32px; padding: 0 8px 0 10px;
+    display: flex; align-items: center; gap: 4px; max-width: 220px; padding: 0 8px 0 10px;
     border: 1px solid #3b3d37; border-radius: 8px; color: #d7d6d0; background: #292a27; cursor: pointer;
     font-size: 11px;
   }
@@ -130,7 +126,7 @@ export const agentStyles = String.raw`
   .model-option i { color: #d9ff62; font-size: 11px; font-style: normal; }
   .reasoning-picker { padding: 10px 12px 12px; border-top: 1px solid #3a3c35; background: #20211e; }
   .reasoning-picker > span { display: block; margin-bottom: 8px; color: #85887e; font-size: 10px; font-weight: 650; }
-  .reasoning-options { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  .reasoning-options { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
   .reasoning-options button {
     height: 28px; padding: 0 6px; border: 1px solid transparent; border-radius: 6px; color: #92958b;
     background: #2b2c28; cursor: pointer; font-size: 10px; text-transform: capitalize;
@@ -220,10 +216,18 @@ export const agentStyles = String.raw`
   .message-error { margin-top: 8px; color: #ff8f83; font-size: 12px; }
   @keyframes blink { 50% { opacity: 0; } }
   .composer-shell { padding: 14px 22px 18px; background: linear-gradient(transparent, #171816 28%); }
-  .composer { display: flex; align-items: flex-end; gap: 10px; width: min(820px, 100%); margin: auto; padding: 10px 10px 10px 14px; border: 1px solid #3a3c35; border-radius: 14px; background: #22231f; }
-  .composer textarea { flex: 1; min-height: 42px; max-height: 160px; padding: 9px 0; resize: none; border: 0; outline: 0; color: #f2f0ea; background: transparent; }
-  .composer .incremental-toggle { margin: 0; }
-  .send { margin: 0; padding: 10px 14px; }
+  .composer { display: flex; flex-direction: column; width: min(820px, 100%); margin: auto; border: 1px solid #3a3c35; border-radius: 14px; background: #22231f; }
+  .composer textarea { flex: 1; min-height: 42px; max-height: 160px; padding: 12px 14px 8px; resize: none; border: 0; outline: 0; color: #f2f0ea; background: transparent; }
+  .composer-bar { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-top: 1px solid #33342f; }
+  .composer-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  .composer .model-picker { flex: none; }
+  .composer .model-picker-trigger { height: 24px; gap: 5px; max-width: 220px; padding: 0 8px; border: 0; background: transparent; font-size: 11px; }
+  .composer .model-picker-trigger small { font-size: 9px; }
+  .composer .model-picker-trigger:hover, .composer .model-picker-trigger[aria-expanded="true"] { background: #2b2c29; }
+  .composer .model-picker-trigger > i { font-size: 10px; transform: none; }
+  .composer .send { margin: 0; padding: 4px 12px; font-size: 11px; }
+  .composer .send.investigate { background: #33352e; color: #c9cbbf; font-weight: 600; }
+  .composer .send.investigate:hover { background: #3c3e37; }
   .patch-feed {
     position: relative; grid-column: 2; grid-row: 1 / -1; display: flex; flex-direction: column; min-width: 0; min-height: 0;
     border-left: 1px solid #30312d; background: #1d1e1b;

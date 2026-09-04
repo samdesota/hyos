@@ -9,6 +9,7 @@ import type {
 export type AgentRunInput = Readonly<{
   prompt: string;
   mode?: AgentMode;
+  intent?: "implement" | "investigate";
   firstTurn?: boolean;
   folder: string;
   modelId: string;

@@ -438,6 +438,7 @@ export interface AgentStore {
     sessionId: string,
     prompt: string,
     mode?: AgentMode,
+    reasoningEffort?: AgentReasoningEffort | null,
   ): Promise<StartedTurn>;
   appendAssistantChunk(
     sessionId: string,
@@ -552,7 +553,7 @@ export function createAgentStore(database: Database): AgentStore {
       });
       return { sessionId, assistantMessageId };
     },
-    async startTurn(sessionId, prompt, mode) {
+    async startTurn(sessionId, prompt, mode, reasoningEffort) {
       const session = await getSession(sessionId);
       const assistantMessageId = randomUUID();
       await database.execute(startTurnCommand, {
@@ -562,7 +563,9 @@ export function createAgentStore(database: Database): AgentStore {
         assistantMessageId,
         modelId: storedModelId(
           session.modelId,
-          session.reasoningEffort,
+          reasoningEffort === undefined
+            ? session.reasoningEffort
+            : reasoningEffort,
           mode ?? session.mode,
         ),
         prompt,

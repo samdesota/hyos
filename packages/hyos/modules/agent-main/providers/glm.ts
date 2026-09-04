@@ -195,6 +195,10 @@ export function createGlmProvider(
         input,
         environmentPrompt(input.folder, input.modelId),
       );
+      const offeredTools =
+        input.intent === "investigate"
+          ? tools.filter((tool) => tool.category !== "edit")
+          : tools;
       const messages: ChatMessage[] = [
         {
           role: "system",
@@ -214,7 +218,7 @@ export function createGlmProvider(
           body: JSON.stringify({
             model: input.modelId,
             messages,
-            tools: toolsPayload(tools),
+            tools: toolsPayload(offeredTools),
             tool_choice: "auto",
             stream: true,
             tool_stream: true,
@@ -317,6 +321,20 @@ export function createGlmProvider(
                 call.function.name === search.name
                   ? search
                   : openCodeTool(call.function.name);
+              if (input.intent === "investigate" && tool.category === "edit") {
+                const message =
+                  "Blocked: this is an investigate-only turn; edit and write tools are disabled.";
+                await sink.activity(
+                  providerItemId,
+                  activity(call.function.name, JSON.stringify(args, null, 2)),
+                  "failed",
+                );
+                return {
+                  role: "tool" as const,
+                  tool_call_id: call.id,
+                  content: message,
+                };
+              }
               const editPaths =
                 tool.category === "edit" && typeof args.filePath === "string"
                   ? [args.filePath]

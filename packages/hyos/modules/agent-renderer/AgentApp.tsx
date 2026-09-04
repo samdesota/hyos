@@ -280,10 +280,14 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   const [reasoningEffort, setReasoningEffort] =
     createSignal<AgentReasoningEffort | null>(null);
   const [modelMenuOpen, setModelMenuOpen] = createSignal(false);
-  const [newMode, setNewMode] = createSignal<AgentMode>("standard");
+  const [newMode, setNewMode] = createSignal<AgentMode>("incremental");
   const [modeDrafts, setModeDrafts] = createSignal<Record<string, AgentMode>>(
     {},
   );
+  const [effortDrafts, setEffortDrafts] = createSignal<
+    Record<string, AgentReasoningEffort | null>
+  >({});
+  const [followupMenuOpen, setFollowupMenuOpen] = createSignal(false);
   const initialMode = () => selectedMode(providerId(), newMode());
   const followupMode = () => {
     const session = activeSession();
@@ -293,33 +297,26 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
       modeDrafts()[session?.id ?? ""],
     );
   };
-  const modeToggle = (followup: boolean) => (
-    <button
-      type="button"
-      class="incremental-toggle"
-      aria-pressed={
-        (followup ? followupMode() : initialMode()) === "incremental"
-      }
-      title="Work in small, reviewable iterations with low reasoning. Saved when you send."
-      disabled={
-        submitting() || (followup && activeSession()?.status === "running")
-      }
-      onClick={() => {
-        const mode =
-          (followup ? followupMode() : initialMode()) === "incremental"
-            ? "standard"
-            : "incremental";
-        if (followup && activeId())
-          setModeDrafts((drafts) => ({ ...drafts, [activeId()!]: mode }));
-        else setNewMode(mode);
-      }}
-    >
-      Incremental
-      {(followup ? followupMode() : initialMode()) === "incremental"
-        ? " · low"
-        : ""}
-    </button>
-  );
+  const followupEffort = (): AgentReasoningEffort | null => {
+    const session = activeSession();
+    const draft = effortDrafts()[session?.id ?? ""];
+    return draft !== undefined ? draft : (session?.reasoningEffort ?? null);
+  };
+  const setFollowupEffort = (effort: AgentReasoningEffort | null): void => {
+    if (activeId())
+      setEffortDrafts((drafts) => ({ ...drafts, [activeId()!]: effort }));
+  };
+  const activeSessionModel = () => {
+    const session = activeSession();
+    const provider = providers().find(({ id }) => id === session?.providerId);
+    const model = provider?.models.find(({ id }) => id === session?.modelId);
+    return model ? { provider: provider!, model } : null;
+  };
+  const setMode = (followup: boolean, mode: AgentMode): void => {
+    if (followup && activeId())
+      setModeDrafts((drafts) => ({ ...drafts, [activeId()!]: mode }));
+    else setNewMode(mode);
+  };
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const transcriptScroll = createAutoScrollController();
@@ -332,6 +329,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   let transcript: HTMLDivElement | undefined;
   let patchList: HTMLDivElement | undefined;
   let modelPicker: HTMLDivElement | undefined;
+  let followupPicker: HTMLDivElement | undefined;
   let feed: AgentMessageFeed | undefined;
   let unsubscribeFeed: (() => void) | undefined;
   let feedGeneration = 0;
@@ -396,16 +394,16 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   narrowPatches.addEventListener("change", collapsePatchesWhenNarrow);
 
   const closeModelMenuOnPointerDown = (event: PointerEvent): void => {
-    if (
-      modelMenuOpen() &&
-      event.target instanceof Node &&
-      !modelPicker?.contains(event.target)
-    ) {
-      setModelMenuOpen(false);
+    if (event.target instanceof Node && !modelPicker?.contains(event.target)) {
+      if (modelMenuOpen()) setModelMenuOpen(false);
+      if (followupMenuOpen()) setFollowupMenuOpen(false);
     }
   };
   const closeModelMenuOnKeyDown = (event: KeyboardEvent): void => {
-    if (event.key === "Escape") setModelMenuOpen(false);
+    if (event.key === "Escape") {
+      setModelMenuOpen(false);
+      setFollowupMenuOpen(false);
+    }
   };
   document.addEventListener("pointerdown", closeModelMenuOnPointerDown);
   document.addEventListener("keydown", closeModelMenuOnKeyDown);
@@ -451,11 +449,18 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   ): void => {
     const current = container();
     if (current && !controller.shouldFollow(current)) return;
-    requestAnimationFrame(() => {
-      const next = container();
-      if (!next || !controller.shouldFollow(next)) return;
-      next.scrollTop = next.scrollHeight;
-    });
+    const settle = (frames: number): void => {
+      requestAnimationFrame(() => {
+        const next = container();
+        if (!next || !controller.shouldFollow(next)) return;
+        controller.pin();
+        next.scrollTop = next.scrollHeight;
+        // Tool activity (diffs, code blocks, run collapse) can shift layout
+        // a frame or more after the change lands; keep settling briefly.
+        if (frames > 0) settle(frames - 1);
+      });
+    };
+    settle(3);
   };
 
   const followLiveContent = (): void => {
@@ -515,7 +520,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     transcriptScroll.reset();
     patchScroll.reset();
     try {
-      const opened = await props.client.openFeed(sessionId, 30);
+      const opened = await props.client.openFeed(sessionId, 200);
       if (generation !== feedGeneration) {
         opened.close();
         return;
@@ -581,7 +586,12 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     }
   };
 
-  const sendMessage = async (): Promise<void> => {
+  const INVESTIGATE_DIRECTIVE =
+    "[Investigate only. Do not modify any files; use read-only commands, unless a reversible test is genuinely needed.]";
+
+  const sendMessage = async (
+    intent: "implement" | "investigate",
+  ): Promise<void> => {
     const sessionId = activeId();
     const content = prompt().trim();
     if (!sessionId || !content || activeSession()?.status === "running") return;
@@ -592,8 +602,13 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
       await props.client.execute({
         type: "send-message",
         sessionId,
-        prompt: content,
+        prompt:
+          intent === "investigate"
+            ? `${INVESTIGATE_DIRECTIVE}\n\n${content}`
+            : content,
         mode: followupMode(),
+        reasoningEffort: followupEffort(),
+        intent,
       });
     } catch (value) {
       setPrompt(content);
@@ -625,7 +640,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     setLoadingOlder(true);
     const oldHeight = transcript?.scrollHeight ?? 0;
     try {
-      const page = await props.client.loadOlder(sessionId, cursor, 30);
+      const page = await props.client.loadOlder(sessionId, cursor, 200);
       setMessages((current) => {
         const ids = new Set(current.map(({ id }) => id));
         return [...page.messages.filter(({ id }) => !ids.has(id)), ...current];
@@ -642,6 +657,16 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
       setLoadingOlder(false);
     }
   };
+
+  // If the loaded page fits in the viewport, no scroll event can ever fire,
+  // so older pages must be backfilled until the transcript is scrollable.
+  createEffect(() => {
+    if (!hasOlder() || !before() || loadingOlder() || loadingFeed()) return;
+    const element = transcript;
+    if (element && element.scrollHeight <= element.clientHeight) {
+      void loadOlder();
+    }
+  });
 
   const unsubscribeSessions = props.client.subscribeSessions(acceptSessions);
   void Promise.all([props.client.providers(), props.client.sessions()])
@@ -806,7 +831,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                           <Show
                             when={
                               initialMode() === "incremental"
-                                ? "low"
+                                ? "incremental"
                                 : reasoningEffort()
                             }
                           >
@@ -864,22 +889,38 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                                 <div class="reasoning-picker">
                                   <span>Reasoning</span>
                                   <div class="reasoning-options">
+                                    <Show when={providerId() === "glm"}>
+                                      <button
+                                        type="button"
+                                        class="incremental-option"
+                                        classList={{
+                                          selected:
+                                            initialMode() === "incremental",
+                                        }}
+                                        title="Work in small, reviewable iterations with low reasoning. Saved when you send."
+                                        onClick={() => {
+                                          setMode(false, "incremental");
+                                          setReasoningEffort("low");
+                                        }}
+                                      >
+                                        incremental
+                                      </button>
+                                    </Show>
                                     <For each={efforts()}>
                                       {(effort) => (
                                         <button
                                           type="button"
-                                          disabled={
-                                            initialMode() === "incremental"
-                                          }
                                           classList={{
                                             selected:
-                                              (initialMode() === "incremental"
-                                                ? "low"
-                                                : reasoningEffort()) === effort,
+                                              initialMode() === "incremental"
+                                                ? false
+                                                : reasoningEffort() === effort,
                                           }}
-                                          onClick={() =>
-                                            setReasoningEffort(effort)
-                                          }
+                                          onClick={() => {
+                                            setReasoningEffort(effort);
+                                            if (initialMode() === "incremental")
+                                              setMode(false, "standard");
+                                          }}
                                         >
                                           {effort}
                                         </button>
@@ -892,9 +933,6 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                           </div>
                         </Show>
                       </div>
-                      <Show when={providerId() === "glm"}>
-                        {modeToggle(false)}
-                      </Show>
                       <button
                         id="agent-start"
                         class="primary"
@@ -996,7 +1034,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                       onKeyDown={(event) => {
                         if (event.key === "Enter" && !event.shiftKey) {
                           event.preventDefault();
-                          void sendMessage();
+                          void sendMessage("implement");
                         }
                       }}
                       placeholder={
@@ -1006,21 +1044,123 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                       }
                       disabled={session().status === "running"}
                     />
-                    <Show when={session().providerId === "glm"}>
-                      {modeToggle(true)}
-                    </Show>
-                    <button
-                      class="send"
-                      type="button"
-                      onClick={() => void sendMessage()}
-                      disabled={
-                        submitting() ||
-                        session().status === "running" ||
-                        !prompt().trim()
-                      }
-                    >
-                      Send
-                    </button>
+                    <div class="composer-bar">
+                      <Show when={activeSessionModel()?.model.reasoningEfforts}>
+                        {(efforts) => (
+                          <div class="model-picker" ref={followupPicker}>
+                            <button
+                              class="model-picker-trigger"
+                              type="button"
+                              aria-label="Adjust reasoning for this session"
+                              aria-haspopup="dialog"
+                              aria-expanded={followupMenuOpen()}
+                              disabled={session().status === "running"}
+                              onClick={() =>
+                                setFollowupMenuOpen((open) => !open)
+                              }
+                            >
+                              <span>
+                                {activeSessionModel()?.model.label ??
+                                  session().modelId}
+                              </span>
+                              <Show
+                                when={
+                                  followupMode() === "incremental"
+                                    ? "incremental"
+                                    : followupEffort()
+                                }
+                              >
+                                {(label) => <small>· {label()}</small>}
+                              </Show>
+                              <i aria-hidden="true">⌄</i>
+                            </button>
+                            <Show when={followupMenuOpen()}>
+                              <div
+                                class="model-menu"
+                                role="dialog"
+                                aria-label="Reasoning settings"
+                              >
+                                <div class="model-menu-title">
+                                  {activeSessionModel()?.provider.label} ·{" "}
+                                  {activeSessionModel()?.model.label}
+                                </div>
+                                <div class="reasoning-picker">
+                                  <span>Reasoning</span>
+                                  <div class="reasoning-options">
+                                    <Show when={session().providerId === "glm"}>
+                                      <button
+                                        type="button"
+                                        class="incremental-option"
+                                        classList={{
+                                          selected:
+                                            followupMode() === "incremental",
+                                        }}
+                                        title="Work in small, reviewable iterations with low reasoning. Saved when you send."
+                                        onClick={() => {
+                                          setMode(true, "incremental");
+                                          setFollowupEffort("low");
+                                        }}
+                                      >
+                                        incremental
+                                      </button>
+                                    </Show>
+                                    <For each={efforts()}>
+                                      {(effort) => (
+                                        <button
+                                          type="button"
+                                          classList={{
+                                            selected:
+                                              followupMode() === "incremental"
+                                                ? false
+                                                : followupEffort() === effort,
+                                          }}
+                                          onClick={() => {
+                                            setFollowupEffort(effort);
+                                            if (
+                                              followupMode() === "incremental"
+                                            )
+                                              setMode(true, "standard");
+                                          }}
+                                        >
+                                          {effort}
+                                        </button>
+                                      )}
+                                    </For>
+                                  </div>
+                                </div>
+                              </div>
+                            </Show>
+                          </div>
+                        )}
+                      </Show>
+                      <div class="composer-actions">
+                        <button
+                          class="send investigate"
+                          type="button"
+                          title="Read-only run: no file changes unless a reversible test is needed"
+                          onClick={() => void sendMessage("investigate")}
+                          disabled={
+                            submitting() ||
+                            session().status === "running" ||
+                            !prompt().trim()
+                          }
+                        >
+                          Investigate
+                        </button>
+                        <button
+                          class="send"
+                          type="button"
+                          onClick={() => void sendMessage("implement")}
+                          disabled={
+                            submitting() ||
+                            session().status === "running" ||
+                            !prompt().trim()
+                          }
+                        >
+                          Implement
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <Show when={patchPanelOpen()}>
