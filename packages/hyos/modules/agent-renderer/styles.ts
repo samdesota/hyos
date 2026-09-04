@@ -98,6 +98,32 @@ export const agentStyles = String.raw`
   .folder-button, .model-picker-trigger { height: 38px; }
   .folder-button { border: 1px solid #3b3d37; background: #292a27; }
   .folder-button { min-width: 0; max-width: 300px; padding: 0 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .folder-picker { position: relative; }
+  .folder-button {
+    display: flex; align-items: center; gap: 4px; max-width: 220px; padding: 0 8px 0 10px;
+    border-radius: 8px; color: #d7d6d0; cursor: pointer; font-size: 11px;
+  }
+  .folder-button:hover, .folder-button[aria-expanded="true"] { border-color: #55584e; background: #30312d; }
+  .folder-button > i { flex: none; margin-left: 3px; color: #777a71; font-size: 13px; font-style: normal; transform: translateY(-1px); }
+  .folder-menu {
+    position: absolute; z-index: 20; bottom: calc(100% + 8px); left: 0; width: 292px; max-height: min(430px, calc(100vh - 170px));
+    overflow: hidden; border: 1px solid #41433c; border-radius: 12px; background: #242521;
+    box-shadow: 0 18px 50px #0009, 0 2px 8px #0007;
+  }
+  .folder-menu-new {
+    display: block; width: 100%; padding: 11px 13px; border: 0; border-bottom: 1px solid #343630;
+    color: #d9ff62; background: transparent; cursor: pointer; text-align: left; font-size: 12px; font-weight: 650;
+  }
+  .folder-menu-new:hover { background: #2c2e28; }
+  .folder-menu-list { max-height: 260px; overflow-y: auto; padding: 7px; }
+  .folder-menu-empty { padding: 10px 13px 12px; color: #777a71; font-size: 11px; }
+  .folder-menu-item {
+    display: block; width: 100%; min-height: 32px; padding: 6px 8px; border: 0; border-radius: 7px;
+    color: #c9c8c2; background: transparent; cursor: pointer; text-align: left; font-size: 12px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .folder-menu-item:hover { background: #30322d; }
+  .folder-menu-item.selected { color: #eff0e8; background: #36382f; }
   .model-picker { position: relative; }
   .model-picker-trigger {
     display: flex; align-items: center; gap: 4px; max-width: 220px; padding: 0 8px 0 10px;

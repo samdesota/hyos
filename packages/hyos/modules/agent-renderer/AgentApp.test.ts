@@ -7,7 +7,9 @@ import type {
 } from "../../capabilities/agent.js";
 import {
   collapseWorkRuns,
+  folderName,
   partitionSessions,
+  recentFolders,
   timelineEntries,
   workPaneLabel,
 } from "./AgentApp.js";
@@ -47,6 +49,30 @@ test("sessions are partitioned into active and archived lists", () => {
     active: [sessions[0], sessions[2]],
     archived: [sessions[1]],
   });
+});
+
+test("recent folders are deduplicated in session order", () => {
+  const folder = (path: string): AgentSessionSummary => ({
+    ...sessionSummary("session", null),
+    folder: path,
+  });
+
+  assert.deepEqual(recentFolders([]), []);
+  assert.deepEqual(
+    recentFolders([
+      folder("/tmp/alpha"),
+      folder("/tmp/beta"),
+      folder("/tmp/alpha"),
+      folder("/tmp/gamma"),
+    ]),
+    ["/tmp/alpha", "/tmp/beta", "/tmp/gamma"],
+  );
+});
+
+test("folderName extracts the basename of a folder path", () => {
+  assert.equal(folderName("/Users/sam/projects/hyos"), "hyos");
+  assert.equal(folderName("/Users/sam/projects/hyos/"), "hyos");
+  assert.equal(folderName("hyos"), "hyos");
 });
 
 test("terminal assistant failures remain visible without response text", () => {

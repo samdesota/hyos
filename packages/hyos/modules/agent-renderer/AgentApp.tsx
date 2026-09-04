@@ -161,6 +161,27 @@ export function partitionSessions(
   return { active, archived };
 }
 
+/** Distinct folders from sessions, most recently updated first. */
+export function recentFolders(
+  sessions: readonly AgentSessionSummary[],
+): readonly string[] {
+  const seen = new Set<string>();
+  const folders: string[] = [];
+  for (const session of sessions) {
+    if (session.folder && !seen.has(session.folder)) {
+      seen.add(session.folder);
+      folders.push(session.folder);
+    }
+  }
+  return folders;
+}
+
+export function folderName(folder: string): string {
+  const trimmed = folder.replace(/\/+$/, "");
+  const index = trimmed.lastIndexOf("/");
+  return index === -1 ? trimmed : trimmed.slice(index + 1);
+}
+
 const TimelineEntryView: Component<{ entry: TimelineEntry }> = (props) => {
   const { entry } = props;
   if (entry.type === "work") {
@@ -288,6 +309,8 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     Record<string, AgentReasoningEffort | null>
   >({});
   const [followupMenuOpen, setFollowupMenuOpen] = createSignal(false);
+  const [folderMenuOpen, setFolderMenuOpen] = createSignal(false);
+  const recentFoldersList = createMemo(() => recentFolders(sessions()));
   const initialMode = () => selectedMode(providerId(), newMode());
   const followupMode = () => {
     const session = activeSession();
@@ -330,6 +353,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   let patchList: HTMLDivElement | undefined;
   let modelPicker: HTMLDivElement | undefined;
   let followupPicker: HTMLDivElement | undefined;
+  let folderPicker: HTMLDivElement | undefined;
   let feed: AgentMessageFeed | undefined;
   let unsubscribeFeed: (() => void) | undefined;
   let feedGeneration = 0;
@@ -408,11 +432,19 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
       if (modelMenuOpen()) setModelMenuOpen(false);
       if (followupMenuOpen()) setFollowupMenuOpen(false);
     }
+    if (
+      event.target instanceof Node &&
+      !folderPicker?.contains(event.target) &&
+      folderMenuOpen()
+    ) {
+      setFolderMenuOpen(false);
+    }
   };
   const closeModelMenuOnKeyDown = (event: KeyboardEvent): void => {
     if (event.key === "Escape") {
       setModelMenuOpen(false);
       setFollowupMenuOpen(false);
+      setFolderMenuOpen(false);
     }
   };
   document.addEventListener("pointerdown", closeModelMenuOnPointerDown);
@@ -817,14 +849,67 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                       autofocus
                     />
                     <div class="starter-controls">
-                      <button
-                        class="folder-button"
-                        type="button"
-                        onClick={() => void chooseFolder()}
-                        title={folder() || "Choose folder"}
-                      >
-                        {folder() || "Choose folder"}
-                      </button>
+                      <div class="folder-picker" ref={folderPicker}>
+                        <button
+                          class="folder-button"
+                          type="button"
+                          aria-label="Choose folder"
+                          aria-haspopup="dialog"
+                          aria-expanded={folderMenuOpen()}
+                          onClick={() => setFolderMenuOpen((open) => !open)}
+                          title={folder() || "Choose folder"}
+                        >
+                          {folder() ? folderName(folder()) : "Choose folder"}
+                          <i aria-hidden="true">⌄</i>
+                        </button>
+                        <Show when={folderMenuOpen()}>
+                          <div
+                            class="folder-menu"
+                            role="dialog"
+                            aria-label="Choose folder"
+                          >
+                            <button
+                              class="folder-menu-new"
+                              type="button"
+                              onClick={() => {
+                                setFolderMenuOpen(false);
+                                void chooseFolder();
+                              }}
+                            >
+                              Choose new folder…
+                            </button>
+                            <Show
+                              when={recentFoldersList().length > 0}
+                              fallback={
+                                <div class="folder-menu-empty">
+                                  No recent folders
+                                </div>
+                              }
+                            >
+                              <div class="folder-menu-list">
+                                <For each={recentFoldersList()}>
+                                  {(recent) => (
+                                    <button
+                                      class="folder-menu-item"
+                                      type="button"
+                                      classList={{
+                                        selected: recent === folder(),
+                                      }}
+                                      title={recent}
+                                      onClick={() => {
+                                        setFolder(recent);
+                                        setFolderMenuOpen(false);
+                                      }}
+                                    >
+                                      {folderName(recent)}
+                                    </button>
+                                  )}
+                                </For>
+                              </div>
+                            </Show>
+                          </div>
+                        </Show>
+                      </div>
                       <div class="model-picker" ref={modelPicker}>
                         <button
                           id="agent-model-picker"
