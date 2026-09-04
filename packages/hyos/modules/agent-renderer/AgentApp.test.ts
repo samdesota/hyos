@@ -260,6 +260,36 @@ test("the plan panel sits below the final response, even with later turns", () =
   assert.equal(planPanelIndex([{ type: "tools", messages: [thinking] }]), -1);
 });
 
+test("the plan panel attaches nothing while the agent is still streaming", () => {
+  const now = new Date();
+  const message = (overrides: Partial<AgentMessage>): AgentMessage => ({
+    id: crypto.randomUUID(),
+    sessionId: "session-1",
+    role: "assistant",
+    status: "streaming",
+    content: "",
+    activity: null,
+    lastError: null,
+    usage: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  });
+  const thinking = message({
+    content: "Inspecting the implementation",
+    activity: { type: "commentary", text: "Inspecting the implementation" },
+  });
+  const streamingResponse = message({ content: "Working…" });
+
+  // Mid-run, thinking/commentary and the streaming response stay uncollapsed
+  // message entries; none of them may host the plan panel.
+  const entries = collapseWorkRuns(
+    timelineEntries([thinking, streamingResponse]),
+  );
+  assert.equal(planPanelIndex(entries), -1);
+  assert.equal(planPanelIndex([{ type: "message", message: thinking }]), -1);
+});
+
 test("implement next targets the first pending task", () => {
   const tasks = [
     { text: "Plan format + prompt policy", done: true },

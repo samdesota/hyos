@@ -153,11 +153,18 @@ export function patchEntries(
 /**
  * Index of the timeline entry the plan panel belongs under — the final
  * assistant response — or -1 when there is nothing to attach it to.
+ * Streaming turns attach nothing: thinking/commentary messages stream in
+ * as assistant messages too, so matching them would move the panel around
+ * mid-run.
  */
 export function planPanelIndex(entries: readonly TimelineEntry[]): number {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
-    if (entry.type === "message" && entry.message.role === "assistant") {
+    if (
+      entry.type === "message" &&
+      entry.message.role === "assistant" &&
+      entry.message.status !== "streaming"
+    ) {
       return index;
     }
   }
@@ -1262,7 +1269,11 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                         <>
                           <TimelineEntryView entry={entry} />
                           <Show
-                            when={activePlan() && index() === planAfterIndex()}
+                            when={
+                              activePlan() &&
+                              session().status !== "running" &&
+                              index() === planAfterIndex()
+                            }
                           >
                             <PlanPanel
                               plan={activePlan()!}
