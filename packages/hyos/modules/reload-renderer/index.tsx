@@ -39,6 +39,30 @@ registerModule(
       ctx.effect(() => () => {
         disposed = true;
       });
+      const triggerReload = () => {
+        void remote.call("reload").catch((error) =>
+          setState({
+            pending: true,
+            reloading: false,
+            error: String(error),
+          }),
+        );
+      };
+      ctx.effect(() => {
+        const onKeyDown = (event: KeyboardEvent) => {
+          if (
+            event.ctrlKey &&
+            !event.metaKey &&
+            !event.altKey &&
+            event.key.toLowerCase() === "r"
+          ) {
+            event.preventDefault();
+            triggerReload();
+          }
+        };
+        document.addEventListener("keydown", onKeyDown);
+        return () => document.removeEventListener("keydown", onKeyDown);
+      });
       ctx.effect(() => {
         const mount = document.createElement("div");
         document.body.append(mount);
@@ -64,23 +88,7 @@ registerModule(
                   state().error ??
                   "Reload modules. Active agent runs will be interrupted. Shell changes require an app restart."
                 }
-                onClick={() => {
-                  if (
-                    !document.defaultView?.confirm(
-                      "Reload changes? Any active agent runs will be interrupted.",
-                    )
-                  )
-                    return;
-                  void remote
-                    .call("reload")
-                    .catch((error) =>
-                      setState({
-                        pending: true,
-                        reloading: false,
-                        error: String(error),
-                      }),
-                    );
-                }}
+                onClick={triggerReload}
               >
                 {state().reloading
                   ? "Reloading…"

@@ -13,24 +13,28 @@ export const agentStyles = String.raw`
   .incremental-toggle[aria-pressed="true"] { color: #d5ebad; background: #303c24; border-color: #647c45; }
   .incremental-toggle:disabled { opacity: .5; cursor: default; }
   .incremental-toggle:focus-visible { outline: 2px solid #b2cb8c; outline-offset: 2px; }
-  .composer-shell > .incremental-toggle { margin-bottom: 6px; }
   .agent-app {
     display: grid;
     grid-template-columns: 278px minmax(0, 1fr);
-    grid-template-rows: 28px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    position: relative;
     width: 100%;
     height: 100%;
     background: #171816;
   }
   .window-drag-region {
-    grid-column: 1 / -1;
-    background: linear-gradient(90deg, #20211e 0 278px, #171816 278px);
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 20px;
+    z-index: 10;
+    background: transparent;
     app-region: drag;
     -webkit-app-region: drag;
     user-select: none;
   }
   .agent-sidebar {
-    grid-row: 2;
     display: flex;
     flex-direction: column;
     min-width: 0;
@@ -73,14 +77,20 @@ export const agentStyles = String.raw`
   .session-archive:focus-visible { outline: 2px solid #b2cb8c; }
   .session-row.archived .session-open { opacity: .62; }
   .session-row.archived:hover .session-open { opacity: .85; }
-  .archived-label { padding-top: 16px; }
+  .archived-label { padding: 8px 18px 4px; }
+  .archived-toggle {
+    display: flex; align-items: center; gap: 7px; width: 100%; padding: 0 18px;
+    border: 0; background: transparent; cursor: pointer; text-align: left;
+  }
+  .archived-toggle:hover { color: #b5b7ac; }
+  .archived-chevron { font-style: normal; font-size: 16px; }
   .session-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
   .session-meta { display: flex; gap: 7px; margin-top: 5px; color: #8e9087; font-size: 11px; }
   .status-dot { width: 6px; height: 6px; margin-top: 4px; border-radius: 50%; background: #777; }
   .status-dot.running { background: #d9ff62; box-shadow: 0 0 8px #d9ff6270; }
   .status-dot.failed { background: #ff6f61; }
   .status-dot.cancelled { background: #c5a46d; }
-  .agent-main { grid-row: 2; min-width: 0; min-height: 0; background: #171816; }
+  .agent-main { min-width: 0; min-height: 0; background: #171816; }
   .welcome { display: grid; place-items: center; width: 100%; height: 100%; padding: 38px; overflow-y: auto; }
   .welcome-card { width: min(760px, 100%); }
   .starter { padding: 18px; border: 1px solid #343630; border-radius: 16px; background: #20211e; box-shadow: 0 24px 70px #0004; }
@@ -148,7 +158,7 @@ export const agentStyles = String.raw`
   .cancel + .patch-toggle { margin-left: 0; }
   .patch-toggle:hover, .patch-toggle.active { color: #e3e2dc; background: #292b26; }
   .patch-toggle span { margin-left: 5px; color: #d9ff62; font-size: 11px; }
-  .transcript { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+  .transcript { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; font-size: 14px; }
   .messages { width: min(820px, calc(100% - 44px)); margin: 0 auto; padding: 34px 0 26px; }
   .loading-older { padding: 8px 0 22px; color: #7f8178; text-align: center; font-size: 12px; }
   .message { margin-bottom: 28px; content-visibility: auto; contain-intrinsic-size: auto 140px; }
@@ -180,6 +190,16 @@ export const agentStyles = String.raw`
   .markdown a { color: #c8e96a; text-decoration-color: #6f803f; text-underline-offset: 3px; }
   .markdown hr { margin: 22px 0; border: 0; border-top: 1px solid #34362f; }
   .tool-group { margin: -2px 0 20px; color: #8e9087; font-size: 12px; }
+  .work-pane { margin: 14px 0 20px; color: #8e9087; font-size: 12px; }
+  .work-pane > summary {
+    display: flex; align-items: center; gap: 7px; width: fit-content; padding: 4px 0;
+    cursor: pointer; list-style: none; user-select: none;
+  }
+  .work-pane > summary::-webkit-details-marker { display: none; }
+  .work-pane > summary:hover { color: #b9bbb1; }
+  .work-pane-items { margin: 8px 0 0 9px; padding-left: 14px; border-left: 1px solid #353730; }
+  .work-pane-items .tool-group:last-child,
+  .work-pane-items .message.commentary:last-child { margin-bottom: 0; }
   .tool-group summary {
     display: flex; align-items: center; gap: 7px; width: fit-content; padding: 4px 0;
     cursor: pointer; list-style: none; user-select: none;
@@ -202,6 +222,7 @@ export const agentStyles = String.raw`
   .composer-shell { padding: 14px 22px 18px; background: linear-gradient(transparent, #171816 28%); }
   .composer { display: flex; align-items: flex-end; gap: 10px; width: min(820px, 100%); margin: auto; padding: 10px 10px 10px 14px; border: 1px solid #3a3c35; border-radius: 14px; background: #22231f; }
   .composer textarea { flex: 1; min-height: 42px; max-height: 160px; padding: 9px 0; resize: none; border: 0; outline: 0; color: #f2f0ea; background: transparent; }
+  .composer .incremental-toggle { margin: 0; }
   .send { margin: 0; padding: 10px 14px; }
   .patch-feed {
     position: relative; grid-column: 2; grid-row: 1 / -1; display: flex; flex-direction: column; min-width: 0; min-height: 0;
@@ -274,7 +295,6 @@ export const agentStyles = String.raw`
   .syntax-number { color: #80b7d4; }
   @media (max-width: 760px) {
     .agent-app { grid-template-columns: 218px minmax(0, 1fr); }
-    .window-drag-region { background: linear-gradient(90deg, #20211e 0 218px, #171816 218px); }
     .welcome { padding: 24px; }
     .starter-controls { flex-wrap: wrap; }
     .primary { margin-left: 0; }

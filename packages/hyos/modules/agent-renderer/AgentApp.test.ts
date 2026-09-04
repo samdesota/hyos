@@ -5,8 +5,14 @@ import type {
   AgentMessage,
   AgentSessionSummary,
 } from "../../capabilities/agent.js";
-import { partitionSessions, timelineEntries } from "./AgentApp.js";
+import {
+  collapseWorkRuns,
+  partitionSessions,
+  timelineEntries,
+  workPaneLabel,
+} from "./AgentApp.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
+import { hashForSession, sessionFromHash } from "./session-route.js";
 import { agentStyles } from "./styles.js";
 
 function sessionSummary(
@@ -90,6 +96,86 @@ test("live message arrival order cannot place thinking after the final response"
     { type: "message", message: thinking },
     { type: "message", message: finalResponse },
   ]);
+});
+
+test("finished runs collapse thinking into a work pane before the final response", () => {
+  const thinking: AgentMessage = {
+    id: "thinking-1",
+    sessionId: "session-1",
+    role: "assistant",
+    status: "complete",
+    content: "Inspecting the implementation",
+    activity: { type: "commentary", text: "Inspecting the implementation" },
+    lastError: null,
+    createdAt: new Date("2026-09-03T12:00:00.000Z"),
+    updatedAt: new Date("2026-09-03T12:00:01.000Z"),
+  };
+  const finalResponse: AgentMessage = {
+    id: "final-1",
+    sessionId: "session-1",
+    role: "assistant",
+    status: "complete",
+    content: "Implemented the requested change.",
+    activity: null,
+    lastError: null,
+    createdAt: new Date("2026-09-03T12:00:32.000Z"),
+    updatedAt: new Date("2026-09-03T12:00:32.000Z"),
+  };
+  const timeline = collapseWorkRuns(timelineEntries([thinking, finalResponse]));
+
+  assert.deepEqual(timeline, [
+    {
+      type: "work",
+      entries: [{ type: "message", message: thinking }],
+      startedAt: thinking.createdAt,
+      endedAt: finalResponse.createdAt,
+    },
+    { type: "message", message: finalResponse },
+  ]);
+  assert.equal(
+    workPaneLabel(thinking.createdAt, finalResponse.createdAt),
+    "Worked for 32s",
+  );
+});
+
+test("streaming thinking stays inline until the run completes", () => {
+  const thinking: AgentMessage = {
+    id: "thinking-1",
+    sessionId: "session-1",
+    role: "assistant",
+    status: "streaming",
+    content: "Inspecting the implementation",
+    activity: { type: "commentary", text: "Inspecting the implementation" },
+    lastError: null,
+    createdAt: new Date("2026-09-03T12:00:00.000Z"),
+    updatedAt: new Date("2026-09-03T12:00:01.000Z"),
+  };
+  const finalResponse: AgentMessage = {
+    id: "final-1",
+    sessionId: "session-1",
+    role: "assistant",
+    status: "streaming",
+    content: "",
+    activity: null,
+    lastError: null,
+    createdAt: new Date("2026-09-03T12:00:32.000Z"),
+    updatedAt: new Date("2026-09-03T12:00:32.000Z"),
+  };
+  const timeline = collapseWorkRuns(timelineEntries([thinking, finalResponse]));
+
+  assert.deepEqual(timeline, [
+    { type: "message", message: thinking },
+    { type: "message", message: finalResponse },
+  ]);
+});
+
+test("session routes round-trip through the URL hash", () => {
+  assert.equal(hashForSession(null), "");
+  assert.equal(hashForSession("session-1"), "#/session/session-1");
+  assert.equal(sessionFromHash("#/session/session-1"), "session-1");
+  assert.equal(sessionFromHash("#/session/ses%2Fsion"), "ses/sion");
+  assert.equal(sessionFromHash("#/other"), null);
+  assert.equal(sessionFromHash(""), null);
 });
 
 test("locked diffs let wheel scrolling reach the patch list", () => {

@@ -23,6 +23,7 @@ import { DiffViewer } from "./DiffViewer.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
 import { agentStyles } from "./styles.js";
 import { selectedMode } from "./mode-selection.js";
+import { syncHashToSession, sessionFromHash } from "./session-route.js";
 
 type AgentAppProps = Readonly<{
   root: Document;
@@ -31,7 +32,73 @@ type AgentAppProps = Readonly<{
 
 type TimelineEntry =
   | Readonly<{ type: "message"; message: AgentMessage }>
-  | Readonly<{ type: "tools"; messages: readonly AgentMessage[] }>;
+  | Readonly<{ type: "tools"; messages: readonly AgentMessage[] }>
+  | Readonly<{
+      type: "work";
+      entries: readonly TimelineEntry[];
+      startedAt: Date;
+      endedAt: Date;
+    }>;
+
+const isWorkItem = (entry: TimelineEntry): boolean =>
+  entry.type === "tools" ||
+  (entry.type === "message" && entry.message.activity?.type === "commentary");
+
+const firstCreatedAt = (entry: TimelineEntry): Date =>
+  entry.type === "tools"
+    ? entry.messages[0].createdAt
+    : entry.type === "message"
+      ? entry.message.createdAt
+      : entry.startedAt;
+
+export function workPaneLabel(
+  startedAt: Date,
+  endedAt: Date,
+  now: Date = new Date(),
+): string {
+  const seconds = Math.max(
+    1,
+    Math.round(((endedAt ?? now).getTime() - startedAt.getTime()) / 1000),
+  );
+  if (seconds < 60) return `Worked for ${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest ? `Worked for ${minutes}m ${rest}s` : `Worked for ${minutes}m`;
+}
+
+/** Collapse each finished run's tool/commentary activity into a summary pane. */
+export function collapseWorkRuns(
+  entries: readonly TimelineEntry[],
+): TimelineEntry[] {
+  const result: TimelineEntry[] = [];
+  let pending: TimelineEntry[] = [];
+  const flush = (final?: AgentMessage) => {
+    if (!pending.length) return;
+    const canCollapse =
+      final !== undefined && final.status !== "streaming" && !final.lastError;
+    if (canCollapse) {
+      result.push({
+        type: "work",
+        entries: pending,
+        startedAt: firstCreatedAt(pending[0]),
+        endedAt: final.createdAt,
+      });
+    } else {
+      result.push(...pending);
+    }
+    pending = [];
+  };
+  for (const entry of entries) {
+    if (isWorkItem(entry)) {
+      pending.push(entry);
+      continue;
+    }
+    flush(entry.type === "message" ? entry.message : undefined);
+    result.push(entry);
+  }
+  flush();
+  return result;
+}
 
 export function timelineEntries(
   messages: readonly AgentMessage[],
@@ -93,6 +160,80 @@ export function partitionSessions(
   }
   return { active, archived };
 }
+
+const TimelineEntryView: Component<{ entry: TimelineEntry }> = (props) => {
+  const { entry } = props;
+  if (entry.type === "work") {
+    return (
+      <details class="work-pane">
+        <summary>
+          <span class="tool-chevron">›</span>
+          {workPaneLabel(entry.startedAt, entry.endedAt)}
+        </summary>
+        <div class="work-pane-items">
+          <For each={entry.entries}>
+            {(inner) => <TimelineEntryView entry={inner} />}
+          </For>
+        </div>
+      </details>
+    );
+  }
+  return entry.type === "tools" ? (
+    <details class="tool-group">
+      <summary>
+        <span class="tool-chevron">›</span>
+        {toolGroupLabel(entry.messages)}
+        <Show
+          when={entry.messages.some(({ status }) => status === "streaming")}
+        >
+          <span class="tool-running" />
+        </Show>
+      </summary>
+      <div class="tool-items">
+        <For each={entry.messages}>
+          {(message) => (
+            <div class="tool-item">
+              <strong>
+                {message.activity?.type === "tool"
+                  ? message.activity.label
+                  : "Tool activity"}
+              </strong>
+              <pre>
+                {message.activity?.type === "tool"
+                  ? message.activity.detail
+                  : message.content}
+              </pre>
+            </div>
+          )}
+        </For>
+      </div>
+    </details>
+  ) : entry.message.activity?.type === "commentary" ? (
+    <article class="message commentary">
+      <pre class="message-body">
+        {entry.message.activity.text}
+        <Show when={entry.message.status === "streaming"}>
+          <span class="streaming-caret" />
+        </Show>
+      </pre>
+    </article>
+  ) : (
+    <article class={`message ${entry.message.role}`}>
+      <Show
+        when={entry.message.role === "assistant"}
+        fallback={<pre class="message-body">{entry.message.content}</pre>}
+      >
+        <div
+          class="message-body markdown"
+          innerHTML={micromark(entry.message.content)}
+        />
+      </Show>
+      <Show when={entry.message.lastError}>
+        <div class="message-error">{entry.message.lastError}</div>
+      </Show>
+    </article>
+  );
+};
 
 function toolGroupLabel(messages: readonly AgentMessage[]): string {
   const labels = [
@@ -237,13 +378,16 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   const partitioned = createMemo(() => partitionSessions(sessions()));
   const activeSessions = () => partitioned().active;
   const archivedSessions = () => partitioned().archived;
+  const [archivedOpen, setArchivedOpen] = createSignal(false);
   const selectedProvider = createMemo(() =>
     providers().find(({ id }) => id === providerId()),
   );
   const selectedModel = createMemo(() =>
     selectedProvider()?.models.find(({ id }) => id === modelId()),
   );
-  const timeline = createMemo(() => timelineEntries(messages()));
+  const timeline = createMemo(() =>
+    collapseWorkRuns(timelineEntries(messages())),
+  );
   const patches = createMemo(() => patchEntries(messages()));
 
   const collapsePatchesWhenNarrow = (event: MediaQueryListEvent): void => {
@@ -361,6 +505,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     const generation = ++feedGeneration;
     closeFeed();
     setActiveId(sessionId);
+    syncHashToSession(sessionId);
     setPrompt("");
     setMessages([]);
     setBefore(null);
@@ -392,6 +537,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     feedGeneration += 1;
     closeFeed();
     setActiveId(null);
+    syncHashToSession(null);
     setMessages([]);
     setPrompt("");
     setError(null);
@@ -502,6 +648,10 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     .then(([nextProviders, state]) => {
       setProviders(nextProviders);
       acceptSessions(state);
+      const routedId = sessionFromHash();
+      if (routedId && state.sessions.some(({ id }) => id === routedId)) {
+        void selectSession(routedId);
+      }
     })
     .catch(showError);
 
@@ -563,36 +713,48 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
               )}
             </For>
             <Show when={archivedSessions().length > 0}>
-              <div class="session-label archived-label">Archived</div>
-              <For each={archivedSessions()}>
-                {(session) => (
-                  <div
-                    class="session-row archived"
-                    classList={{ active: activeId() === session.id }}
-                  >
-                    <button
-                      type="button"
-                      class="session-open"
-                      onClick={() => void selectSession(session.id)}
+              <button
+                type="button"
+                class="session-label archived-label archived-toggle"
+                aria-expanded={archivedOpen()}
+                onClick={() => setArchivedOpen(!archivedOpen())}
+              >
+                <i class="archived-chevron">{archivedOpen() ? "▾" : "▸"}</i>
+                <span>Archived ({archivedSessions().length})</span>
+              </button>
+              <Show when={archivedOpen()}>
+                <For each={archivedSessions()}>
+                  {(session) => (
+                    <div
+                      class="session-row archived"
+                      classList={{ active: activeId() === session.id }}
                     >
-                      <span class="session-title">{session.title}</span>
-                      <span class="session-meta">
-                        <i class={`status-dot ${session.status}`} />
-                        {session.modelId}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      class="session-archive"
-                      aria-label={`Unarchive "${session.title}"`}
-                      title="Unarchive session"
-                      onClick={() => void setSessionArchived(session.id, false)}
-                    >
-                      ↩
-                    </button>
-                  </div>
-                )}
-              </For>
+                      <button
+                        type="button"
+                        class="session-open"
+                        onClick={() => void selectSession(session.id)}
+                      >
+                        <span class="session-title">{session.title}</span>
+                        <span class="session-meta">
+                          <i class={`status-dot ${session.status}`} />
+                          {session.modelId}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        class="session-archive"
+                        aria-label={`Unarchive "${session.title}"`}
+                        title="Unarchive session"
+                        onClick={() =>
+                          void setSessionArchived(session.id, false)
+                        }
+                      >
+                        ↩
+                      </button>
+                    </div>
+                  )}
+                </For>
+              </Show>
             </Show>
           </div>
         </aside>
@@ -818,71 +980,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                       <div class="loading-older">Loading session…</div>
                     </Show>
                     <For each={timeline()}>
-                      {(entry) =>
-                        entry.type === "tools" ? (
-                          <details class="tool-group">
-                            <summary>
-                              <span class="tool-chevron">›</span>
-                              {toolGroupLabel(entry.messages)}
-                              <Show
-                                when={entry.messages.some(
-                                  ({ status }) => status === "streaming",
-                                )}
-                              >
-                                <span class="tool-running" />
-                              </Show>
-                            </summary>
-                            <div class="tool-items">
-                              <For each={entry.messages}>
-                                {(message) => (
-                                  <div class="tool-item">
-                                    <strong>
-                                      {message.activity?.type === "tool"
-                                        ? message.activity.label
-                                        : "Tool activity"}
-                                    </strong>
-                                    <pre>
-                                      {message.activity?.type === "tool"
-                                        ? message.activity.detail
-                                        : message.content}
-                                    </pre>
-                                  </div>
-                                )}
-                              </For>
-                            </div>
-                          </details>
-                        ) : entry.message.activity?.type === "commentary" ? (
-                          <article class="message commentary">
-                            <pre class="message-body">
-                              {entry.message.activity.text}
-                              <Show when={entry.message.status === "streaming"}>
-                                <span class="streaming-caret" />
-                              </Show>
-                            </pre>
-                          </article>
-                        ) : (
-                          <article class={`message ${entry.message.role}`}>
-                            <Show
-                              when={entry.message.role === "assistant"}
-                              fallback={
-                                <pre class="message-body">
-                                  {entry.message.content}
-                                </pre>
-                              }
-                            >
-                              <div
-                                class="message-body markdown"
-                                innerHTML={micromark(entry.message.content)}
-                              />
-                            </Show>
-                            <Show when={entry.message.lastError}>
-                              <div class="message-error">
-                                {entry.message.lastError}
-                              </div>
-                            </Show>
-                          </article>
-                        )
-                      }
+                      {(entry) => <TimelineEntryView entry={entry} />}
                     </For>
                     <Show when={error()}>
                       {(value) => <div class="inline-error">{value()}</div>}
@@ -890,9 +988,6 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                   </div>
                 </div>
                 <div class="composer-shell">
-                  <Show when={session().providerId === "glm"}>
-                    {modeToggle(true)}
-                  </Show>
                   <div class="composer">
                     <textarea
                       aria-label="Message the agent"
@@ -911,6 +1006,9 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                       }
                       disabled={session().status === "running"}
                     />
+                    <Show when={session().providerId === "glm"}>
+                      {modeToggle(true)}
+                    </Show>
                     <button
                       class="send"
                       type="button"
