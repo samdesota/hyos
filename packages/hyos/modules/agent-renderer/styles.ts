@@ -215,6 +215,57 @@ export const agentStyles = String.raw`
   .markdown pre code { padding: 0; background: transparent; font-size: 12px; }
   .markdown a { color: #c8e96a; text-decoration-color: #6f803f; text-underline-offset: 3px; }
   .markdown hr { margin: 22px 0; border: 0; border-top: 1px solid #34362f; }
+  .mermaid-diagram {
+    position: relative; overflow-x: auto; min-height: 96px;
+    margin: 0 0 14px; padding: 18px;
+    border: 1px solid #34362f; border-radius: 10px; background: #121310;
+  }
+  .mermaid-diagram.rendering {
+    display: grid; place-items: center;
+    color: #85877e; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .mermaid-diagram svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+  .mermaid-diagram.error p { margin: 0 0 9px; color: #e49a9f; font: 11px Inter, sans-serif; }
+  .mermaid-diagram.error pre { margin: 0; }
+  .mermaid-fullscreen-button {
+    position: absolute; top: 8px; right: 8px;
+    display: grid; place-items: center; width: 30px; height: 30px; padding: 0;
+    border: 1px solid #3b3d37; border-radius: 6px; background: #20221edd; color: #c9cbc1;
+    font: 17px/1 Inter, sans-serif; cursor: pointer; opacity: 0;
+    transition: border-color 120ms ease, opacity 120ms ease;
+  }
+  .mermaid-diagram:hover .mermaid-fullscreen-button,
+  .mermaid-fullscreen-button:focus-visible { opacity: 1; }
+  .mermaid-fullscreen-button:hover { border-color: #55584f; }
+  .mermaid-viewer {
+    position: fixed; z-index: 1000; inset: 0;
+    display: grid; grid-template-rows: auto 1fr;
+    background: #0c0d0bef; backdrop-filter: blur(6px);
+  }
+  .mermaid-viewer-toolbar {
+    z-index: 1; display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+    min-height: 52px; padding: 8px 14px;
+    border-bottom: 1px solid #30312d; background: #171816e8;
+  }
+  .mermaid-viewer-toolbar button {
+    min-width: 58px; height: 32px; padding: 0 11px; cursor: pointer;
+    border: 1px solid #3b3d37; border-radius: 6px; background: #24251f; color: #d5d6ce;
+    font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .mermaid-viewer-toolbar .mermaid-viewer-close { min-width: 32px; width: 32px; padding: 0; font: 20px/1 Inter, sans-serif; }
+  .mermaid-viewer-hint { margin-right: auto; color: #85877e; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .mermaid-viewer-stage {
+    position: relative; overflow: hidden; min-width: 0; min-height: 0;
+    overscroll-behavior: none; touch-action: none;
+  }
+  .mermaid-viewer-canvas {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    transform-origin: center; will-change: transform;
+  }
+  .mermaid-viewer-canvas svg {
+    display: block; width: auto !important; max-width: 92vw !important;
+    height: auto !important; max-height: calc(100vh - 92px) !important;
+  }
   .tool-group { margin: -2px 0 20px; color: #8e9087; font-size: 12px; }
   .work-pane { margin: 14px 0 20px; color: #8e9087; font-size: 12px; }
   .work-pane > summary {

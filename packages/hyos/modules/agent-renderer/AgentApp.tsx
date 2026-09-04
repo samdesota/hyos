@@ -7,7 +7,6 @@ import {
   onCleanup,
   type Component,
 } from "solid-js";
-import { micromark } from "micromark";
 
 import type {
   AgentMessage,
@@ -20,6 +19,7 @@ import type {
 import type { AgentClient, AgentMessageFeed } from "./client.js";
 import { createAutoScrollController } from "./auto-scroll.js";
 import { DiffViewer } from "./DiffViewer.js";
+import { mountMarkdown } from "./markdown.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
 import { agentStyles } from "./styles.js";
 import { selectedMode } from "./mode-selection.js";
@@ -182,6 +182,15 @@ export function folderName(folder: string): string {
   return index === -1 ? trimmed : trimmed.slice(index + 1);
 }
 
+const MarkdownBody: Component<{ content: string }> = (props) => {
+  let element!: HTMLDivElement;
+  createEffect(() => {
+    const dispose = mountMarkdown(element, props.content);
+    onCleanup(dispose);
+  });
+  return <div class="message-body markdown" ref={element} />;
+};
+
 const TimelineEntryView: Component<{ entry: TimelineEntry }> = (props) => {
   const { entry } = props;
   if (entry.type === "work") {
@@ -244,10 +253,7 @@ const TimelineEntryView: Component<{ entry: TimelineEntry }> = (props) => {
         when={entry.message.role === "assistant"}
         fallback={<pre class="message-body">{entry.message.content}</pre>}
       >
-        <div
-          class="message-body markdown"
-          innerHTML={micromark(entry.message.content)}
-        />
+        <MarkdownBody content={entry.message.content} />
       </Show>
       <Show when={entry.message.lastError}>
         <div class="message-error">{entry.message.lastError}</div>
