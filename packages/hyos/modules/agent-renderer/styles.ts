@@ -322,7 +322,7 @@ export const agentStyles = String.raw`
   .plan-task.done .plan-text { text-decoration: line-through; }
   .plan-task.done .plan-check { border-color: #9dbb3c; background: #9dbb3c; }
   .plan-next {
-    margin-top: 12px; max-width: 100%; padding: 7px 12px; border: 0; border-radius: 8px;
+    justify-self: start; margin: 3px 0 0 52px; max-width: 100%; padding: 7px 12px; border: 0; border-radius: 8px;
     overflow: hidden; color: #10120e; background: #d9ff62; font-size: 12px; font-weight: 650;
     text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
   }

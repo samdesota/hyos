@@ -231,7 +231,6 @@ const PlanPanel: Component<{
   onImplementNext: (index: number, task: AgentPlanTask) => void;
 }> = (props) => {
   const nextIndex = () => props.plan.tasks.findIndex((task) => !task.done);
-  const next = () => props.plan.tasks[nextIndex()] ?? null;
   return (
     <aside class="plan-panel" aria-label="Session plan">
       <div class="plan-head">
@@ -241,40 +240,40 @@ const PlanPanel: Component<{
           {props.plan.tasks.length} done
         </span>
       </div>
-      <ol class="plan-tasks">
+      <div class="plan-tasks">
         <For each={props.plan.tasks}>
           {(task, index) => (
-            <li
-              classList={{
-                "plan-task": true,
-                done: task.done,
-                next: index() === nextIndex(),
-              }}
-            >
-              <span class="plan-num" aria-hidden="true">
-                {index() + 1}.
-              </span>
-              <span class="plan-check" aria-hidden="true">
-                {task.done ? "✓" : ""}
-              </span>
-              <span class="plan-text">{task.text}</span>
-            </li>
+            <>
+              <div
+                classList={{
+                  "plan-task": true,
+                  done: task.done,
+                  next: index() === nextIndex(),
+                }}
+              >
+                <span class="plan-num" aria-hidden="true">
+                  {index() + 1}.
+                </span>
+                <span class="plan-check" aria-hidden="true">
+                  {task.done ? "✓" : ""}
+                </span>
+                <span class="plan-text">{task.text}</span>
+              </div>
+              <Show when={index() === nextIndex()}>
+                <button
+                  class="plan-next"
+                  type="button"
+                  disabled={props.disabled}
+                  title={implementNextPrompt(index(), task)}
+                  onClick={() => props.onImplementNext(index(), task)}
+                >
+                  Implement task
+                </button>
+              </Show>
+            </>
           )}
         </For>
-      </ol>
-      <Show when={next()}>
-        {(task) => (
-          <button
-            class="plan-next"
-            type="button"
-            disabled={props.disabled}
-            title={implementNextPrompt(nextIndex(), task())}
-            onClick={() => props.onImplementNext(nextIndex(), task())}
-          >
-            Implement task {nextIndex() + 1}
-          </button>
-        )}
-      </Show>
+      </div>
     </aside>
   );
 };
