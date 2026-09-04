@@ -79,11 +79,11 @@ export const agentStyles = String.raw`
   .session-row.archived .session-open { opacity: .62; }
   .session-row.archived:hover .session-open { opacity: .85; }
   .archived-toggle {
-    position: relative; display: block; width: 100%; padding: 10px;
+    display: flex; align-items: center; gap: 6px; width: 100%; padding: 10px;
     border: 0; background: transparent; cursor: pointer; text-align: left;
   }
   .archived-toggle:hover { color: #b5b7ac; }
-  .archived-chevron { position: absolute; left: -6px; top: 8px; font-style: normal; font-size: 16px; }
+  .archived-chevron { font-style: normal; font-size: 16px; line-height: 1; }
   .session-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
   .session-meta { display: flex; gap: 7px; margin-top: 5px; color: #8e9087; font-size: 11px; }
   .status-dot { width: 6px; height: 6px; margin-top: 4px; border-radius: 50%; background: #777; }
