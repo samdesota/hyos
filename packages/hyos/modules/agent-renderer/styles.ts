@@ -270,7 +270,7 @@ export const agentStyles = String.raw`
   .markdown table { display: block; width: max-content; max-width: 100%; margin: 0 0 14px; overflow-x: auto; border-collapse: collapse; }
   .markdown th, .markdown td { padding: 6px 11px; border: 1px solid #34362f; vertical-align: top; }
   .markdown th:not([align]) { text-align: left; }
-  .markdown thead th { background: #292b26; font-weight: 600; }
+  .markdown thead th { background: #292b26; font-weight: 600; white-space: nowrap; }
   .mermaid-diagram {
     position: relative; overflow-x: auto; min-height: 96px;
     margin: 0 0 14px; padding: 18px;

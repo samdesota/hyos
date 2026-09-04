@@ -330,6 +330,7 @@ test("markdown tables are bordered and scroll horizontally", () => {
   )?.[0];
   assert.ok(headRule);
   assert.match(headRule, /background:/);
+  assert.match(headRule, /white-space:\s*nowrap/);
 
   // Default header alignment must not override micromark's align="" attributes.
   const alignRule = agentStyles.match(
