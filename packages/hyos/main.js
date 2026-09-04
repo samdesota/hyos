@@ -254,11 +254,11 @@ async function runSmokeTest() {
       const deadline = Date.now() + 5000;
       const poll = () => {
         const ready = Boolean(
-          document.querySelector("#hyos-ui-agent-launcher") &&
-          document.querySelector("#hyos-ui-agent-overlay")
+          document.querySelector("#hyedit-launcher") &&
+          document.querySelector("#hyedit-overlay")
         );
         if (ready) resolve(true);
-        else if (Date.now() > deadline) reject(new Error("UI agent overlay did not mount"));
+        else if (Date.now() > deadline) reject(new Error("hyedit overlay did not mount"));
         else setTimeout(poll, 20);
       };
       poll();
@@ -268,7 +268,7 @@ async function runSmokeTest() {
   const visualState = await window.webContents.executeJavaScript(`
     (() => {
       const app = document.querySelector("#agent-app");
-      const frame = document.querySelector("#hyos-ui-agent-overlay");
+      const frame = document.querySelector("#hyedit-overlay");
       const frameStyle = frame ? getComputedStyle(frame) : null;
       return {
         url: location.href,
@@ -301,12 +301,12 @@ async function runSmokeTest() {
     );
   }
   await window.webContents.executeJavaScript(
-    'document.querySelector("#hyos-ui-agent-launcher").click()',
+    'document.querySelector("#hyedit-launcher").click()',
   );
   await new Promise((resolve) => setTimeout(resolve, 500));
   const activeFrameState = await window.webContents.executeJavaScript(`
     (() => {
-      const frame = document.querySelector("#hyos-ui-agent-overlay");
+      const frame = document.querySelector("#hyedit-overlay");
       const style = frame ? getComputedStyle(frame) : null;
       return {
         hidden: frame?.getAttribute("aria-hidden") ?? null,
@@ -321,9 +321,9 @@ async function runSmokeTest() {
   );
   const embeddedOverlayState = await window.webContents.executeJavaScript(`
     (() => {
-      const host = document.querySelector("#hyos-ui-agent-overlay");
+      const host = document.querySelector("#hyedit-overlay");
       const shadow = host?.shadowRoot;
-      const root = shadow?.querySelector(".hyos-ui-agent-root");
+      const root = shadow?.querySelector(".hyedit-root");
       const top = shadow?.querySelector(".selection-surface");
       const stylesheet = shadow?.querySelector('link[rel="stylesheet"]');
       const topStyle = top ? getComputedStyle(top) : null;
@@ -389,7 +389,7 @@ async function runSmokeTest() {
   }
   const selectionBounds = await window.webContents.executeJavaScript(`
     (async () => {
-      const host = document.querySelector("#hyos-ui-agent-overlay");
+      const host = document.querySelector("#hyedit-overlay");
       const surface = host?.shadowRoot?.querySelector(".selection-surface");
       if (!surface) return null;
       surface.setPointerCapture = () => {};
@@ -428,7 +428,7 @@ async function runSmokeTest() {
   await window.webContents.executeJavaScript(`
     (() => {
       const surface = document
-        .querySelector("#hyos-ui-agent-overlay")
+        .querySelector("#hyedit-overlay")
         ?.shadowRoot
         ?.querySelector(".selection-surface");
       surface?.dispatchEvent(new PointerEvent("pointerup", {
@@ -443,7 +443,7 @@ async function runSmokeTest() {
   await new Promise((resolve) => setTimeout(resolve, 100));
   const promptVisible = await window.webContents.executeJavaScript(`
     Boolean(
-      document.querySelector("#hyos-ui-agent-overlay")
+      document.querySelector("#hyedit-overlay")
         ?.shadowRoot
         ?.querySelector(".prompt-panel")
     )

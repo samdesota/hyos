@@ -1,4 +1,4 @@
-import { attachUiAgent } from "@hyos/ui-agent/browser";
+import { attachHyedit } from "@hyos/hyedit/browser";
 
 import { uiAgentCapability } from "../../capabilities/ui-agent.js";
 import type { RendererRemoteCapabilities } from "../../remote-capabilities.js";
@@ -17,7 +17,7 @@ registerModule(
       const connection = await remote
         .consume(uiAgentCapability)
         .call("connection");
-      const detach = attachUiAgent({
+      const detach = attachHyedit({
         serverUrl: connection.serverUrl,
         document: root,
         mode: "embedded",

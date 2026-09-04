@@ -15,11 +15,11 @@ export = defineModule<UiAgentMainConfig>({
   provide: ["ui-agent.server"],
 
   async apply(ctx, config) {
-    const { createUiAgentServer } = await import("@hyos/ui-agent/server");
+    const { createHyeditServer } = await import("@hyos/hyedit/server");
     const applicationRoot = ctx.get<string>("application.root");
     const remote = ctx.get<MainRemoteCapabilities>("remote.capabilities");
     const smokeTest = process.argv.includes("--smoke-test");
-    const server = createUiAgentServer({
+    const server = createHyeditServer({
       // Smoke tests may run beside the interactive app. Let the OS assign a
       // private port so the test never competes with the dev server.
       port: smokeTest ? 0 : (config.port ?? 4317),
