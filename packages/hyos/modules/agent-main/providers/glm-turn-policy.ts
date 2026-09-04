@@ -1,4 +1,5 @@
 import type { AgentRunInput } from "./types.js";
+import { formatPlanBlock } from "../../../capabilities/plan.js";
 
 export const incrementalFirstRequest =
   "Work collaboratively in small, fast iterations using light thinking. First understand the user's goal and propose a short plan. Identify only the first small, independently reviewable step. Do not implement it until the user approves. If you encounter something unexpected that blocks or would materially change the approved plan, stop and check in with the user before continuing.";
@@ -9,6 +10,9 @@ export const incrementalReminder =
 export const incrementalImplementRule =
   "Incremental mode: finish every implement turn with a git commit. Once this iteration's changes are verified, stage the files you touched and create a concise commit describing the change. Treat this as the user's standing authorization to run git add and git commit in this turn — but never push, and never commit when the turn was only read-only (investigate or conversation).";
 
+export const incrementalPlanRule =
+  'Incremental mode: maintain the session plan as a list of tasks. End every final response with the complete, updated plan in a fenced "hyos-plan" code block (info string hyos-plan), using task-list syntax "- [x] done task" and "- [ ] pending task". Rewrite the whole block each turn so it always reflects the true state of the plan, and mark a task done only after its change is verified.';
+
 export function glmTurnPolicy(input: AgentRunInput, systemPrompt: string) {
   if (input.mode !== "incremental") {
     return {
@@ -17,12 +21,17 @@ export function glmTurnPolicy(input: AgentRunInput, systemPrompt: string) {
       effort: input.reasoningEffort ?? "medium",
     };
   }
+  const planPreamble = input.plan?.tasks.length
+    ? `${formatPlanBlock(input.plan.tasks)}\n\nThe block above is the session's current plan of record. Keep it updated as instructed below.`
+    : null;
   return {
     systemPrompt: `${systemPrompt}\n\nIncremental mode overrides the above requirement to complete the entire request. A conversational response without tools or file changes is a valid result. Only implement work within the approved plan.`,
     prompt: [
+      planPreamble,
       input.prompt,
       input.firstTurn ? incrementalFirstRequest : null,
       input.intent === "implement" ? incrementalImplementRule : null,
+      incrementalPlanRule,
       incrementalReminder,
     ]
       .filter(Boolean)

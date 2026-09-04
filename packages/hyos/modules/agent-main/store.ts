@@ -10,6 +10,7 @@ import type {
   AgentMessageCursor,
   AgentMessagePage,
   AgentMessageStatus,
+  AgentPlan,
   AgentReasoningEffort,
   AgentSessionStatus,
   AgentSessionSummary,
@@ -75,6 +76,31 @@ function decodeActivity(content: string): AgentActivity | null {
   if (!content.startsWith(activityPrefix)) return null;
   try {
     return JSON.parse(content.slice(activityPrefix.length)) as AgentActivity;
+  } catch {
+    return null;
+  }
+}
+
+function encodePlan(plan: AgentPlan | null): string | null {
+  return plan ? JSON.stringify(plan.tasks) : null;
+}
+
+function decodePlan(value: string | null | undefined): AgentPlan | null {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return null;
+    const tasks = parsed.flatMap((task) => {
+      const text =
+        typeof (task as { text?: unknown })?.text === "string"
+          ? (task as { text: string }).text.trim()
+          : "";
+      const done = typeof (task as { done?: unknown })?.done === "boolean";
+      return text && done
+        ? [{ text, done: (task as { done: boolean }).done }]
+        : [];
+    });
+    return tasks.length > 0 ? { tasks } : null;
   } catch {
     return null;
   }
@@ -365,6 +391,20 @@ const checkpointProviderSessionCommand = hydb.command({
   },
 });
 
+const updatePlanCommand = hydb.command({
+  input: z.object({
+    sessionId: z.string(),
+    plan: z.string().nullable(),
+    now: z.date(),
+  }),
+  async handler(transaction, input) {
+    await transaction.update(agentSessions, [input.sessionId], {
+      plan: input.plan,
+      updatedAt: input.now,
+    });
+  },
+});
+
 const endRunCommand = hydb.command({
   input: z.object({
     sessionId: z.string(),
@@ -428,6 +468,7 @@ function sessionSummary(
     modelId: string;
     status: AgentSessionStatus;
     lastError: string | null;
+    plan: string | null;
     archivedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
@@ -442,6 +483,7 @@ function sessionSummary(
     modelId: model.modelId,
     reasoningEffort: model.reasoningEffort,
     mode: model.mode,
+    plan: decodePlan(row.plan),
     status: row.status,
     lastError: row.lastError,
     archivedAt: row.archivedAt,
@@ -499,6 +541,7 @@ export interface AgentStore {
     sessionId: string,
     providerSessionId: string,
   ): Promise<void>;
+  updatePlan(sessionId: string, plan: AgentPlan | null): Promise<void>;
   updateUsage(
     sessionId: string,
     messageId: string,
@@ -691,6 +734,13 @@ export function createAgentStore(database: Database): AgentStore {
       await database.execute(checkpointProviderSessionCommand, {
         sessionId,
         providerSessionId,
+        now: now(),
+      });
+    },
+    async updatePlan(sessionId, plan) {
+      await database.execute(updatePlanCommand, {
+        sessionId,
+        plan: encodePlan(plan),
         now: now(),
       });
     },

@@ -295,6 +295,32 @@ export const agentStyles = String.raw`
   }
   .streaming-caret { display: inline-block; width: 7px; height: 15px; margin-left: 4px; vertical-align: -2px; background: #d9ff62; animation: blink .9s steps(1) infinite; }
   .message-error { margin-top: 8px; color: #ff8f83; font-size: 12px; }
+  .plan-panel {
+    margin: 4px 0 20px; padding: 13px 15px; border: 1px solid #30322c; border-radius: 10px;
+    background: #1b1c19;
+  }
+  .plan-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .plan-head strong { color: #95978e; font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+  .plan-head span { color: #6f7268; font-size: 10px; font-variant-numeric: tabular-nums; }
+  .plan-tasks { display: grid; gap: 7px; margin: 10px 0 0; padding: 0; list-style: none; }
+  .plan-task { display: flex; gap: 9px; color: #d5d4ce; font-size: 13px; line-height: 1.5; }
+  .plan-check {
+    flex: none; display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; margin-top: 2px; border: 1px solid #3b3d37; border-radius: 5px;
+    color: #10120e; font-size: 11px; line-height: 1;
+  }
+  .plan-task.next .plan-check { border-color: #d9ff62; }
+  .plan-task.next .plan-text { color: #eceae5; }
+  .plan-task.done { color: #72746c; }
+  .plan-task.done .plan-text { text-decoration: line-through; }
+  .plan-task.done .plan-check { border-color: #9dbb3c; background: #9dbb3c; }
+  .plan-next {
+    margin-top: 12px; max-width: 100%; padding: 7px 12px; border: 0; border-radius: 8px;
+    overflow: hidden; color: #10120e; background: #d9ff62; font-size: 12px; font-weight: 650;
+    text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
+  }
+  .plan-next:hover:not(:disabled) { background: #e4ff86; }
+  .plan-next:disabled { opacity: .45; cursor: default; }
   .context-usage { color: #6f7268; font-size: 10px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   @keyframes blink { 50% { opacity: 0; } }
   .composer-shell { padding: 14px 22px 18px; background: linear-gradient(transparent, #171816 28%); }

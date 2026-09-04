@@ -37,6 +37,7 @@ export const agentSessions = hydb.table(
     providerSessionId: text(),
     status: sessionStatus().notNull(),
     lastError: text(),
+    plan: text(),
     archivedAt: timestamp(),
     createdAt: timestamp().notNull(),
     updatedAt: timestamp().notNull(),

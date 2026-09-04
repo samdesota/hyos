@@ -21,6 +21,7 @@ import type {
 import type { AgentProvider } from "./providers/index.js";
 import type { AgentStore } from "./store.js";
 import { createCommentaryWriter } from "./commentary-writer.js";
+import { parsePlanBlock } from "../../capabilities/plan.js";
 
 type ActiveRun = Readonly<{
   controller: AbortController;
@@ -392,6 +393,7 @@ export function createAgentHost(options: {
       const writer = createChunkWriter(store, sessionId, assistantMessageId);
       const commentary = createCommentaryWriter(store, sessionId);
       const activityIds = new Map<string, string>();
+      let responseText = "";
       try {
         const shouldRestoreContext =
           !session.providerSessionId ||
@@ -410,6 +412,7 @@ export function createAgentHost(options: {
             mode: session.mode,
             intent,
             firstTurn,
+            plan: session.plan,
             folder: session.folder,
             modelId: session.modelId,
             reasoningEffort: session.reasoningEffort,
@@ -426,6 +429,7 @@ export function createAgentHost(options: {
             usage: (usage) =>
               store.updateUsage(sessionId, assistantMessageId, usage),
             async response(content) {
+              responseText += content;
               await commentary.flush();
               await writer.append(content);
             },
@@ -452,6 +456,12 @@ export function createAgentHost(options: {
           result.providerSessionId,
           result.usage ?? null,
         );
+        if (session.mode === "incremental") {
+          // The plan block in the final response is the plan of record;
+          // without one, the persisted plan carries over unchanged.
+          const tasks = parsePlanBlock(responseText);
+          if (tasks) await store.updatePlan(sessionId, { tasks });
+        }
       } catch (error) {
         const flushed = await Promise.allSettled([
           writer.close(),

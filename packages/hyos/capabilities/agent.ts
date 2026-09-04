@@ -21,6 +21,15 @@ export type AgentPatchChange = Readonly<{
   kind: string;
 }>;
 
+export type AgentPlanTask = Readonly<{
+  text: string;
+  done: boolean;
+}>;
+
+export type AgentPlan = Readonly<{
+  tasks: readonly AgentPlanTask[];
+}>;
+
 export type AgentActivity =
   | Readonly<{
       type: "commentary";
@@ -60,6 +69,7 @@ export type AgentSessionSummary = Readonly<{
   modelId: string;
   reasoningEffort: AgentReasoningEffort | null;
   mode: AgentMode;
+  plan: AgentPlan | null;
   status: AgentSessionStatus;
   lastError: string | null;
   archivedAt: Date | null;

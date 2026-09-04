@@ -243,3 +243,38 @@ test("finishRun persists token usage on the assistant message", async () => {
     await database.close();
   }
 });
+
+test("session plans persist on the summary and round-trip", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Plan the work",
+      folder: "/tmp/project",
+      providerId: "glm",
+      modelId: "zai/glm-5.3-flash",
+      mode: "incremental",
+    });
+    assert.equal((await store.getSession(turn.sessionId)).plan, null);
+
+    const plan = {
+      tasks: [
+        { text: "Plan format + prompt policy", done: true },
+        { text: "Plan parser", done: false },
+      ],
+    };
+    await store.updatePlan(turn.sessionId, plan);
+
+    const session = await store.getSession(turn.sessionId);
+    assert.deepEqual(session.plan, plan);
+    const sessions = await store.listSessions();
+    assert.deepEqual(sessions[0].plan, plan);
+
+    await store.updatePlan(turn.sessionId, null);
+    assert.equal((await store.getSession(turn.sessionId)).plan, null);
+  } finally {
+    await database.close();
+  }
+});

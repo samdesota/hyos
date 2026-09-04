@@ -11,11 +11,14 @@ import {
 import type {
   AgentMessage,
   AgentMode,
+  AgentPlan,
+  AgentPlanTask,
   AgentReasoningEffort,
   AgentMessageChange,
   AgentProviderSummary,
   AgentSessionSummary,
 } from "../../capabilities/agent.js";
+import { stripPlanBlocks } from "../../capabilities/plan.js";
 import type { AgentClient, AgentMessageFeed } from "./client.js";
 import { createAutoScrollController } from "./auto-scroll.js";
 import { DiffViewer } from "./DiffViewer.js";
@@ -147,6 +150,35 @@ export function patchEntries(
     );
 }
 
+/**
+ * Index of the timeline entry the plan panel belongs under — the final
+ * assistant response — or -1 when there is nothing to attach it to.
+ */
+export function planPanelIndex(entries: readonly TimelineEntry[]): number {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry.type === "message" && entry.message.role === "assistant") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+/** The first pending plan task, or null when every task is done. */
+export function nextPlanTask(
+  tasks: readonly AgentPlanTask[],
+): AgentPlanTask | null {
+  return tasks.find((task) => !task.done) ?? null;
+}
+
+/** The user response that drives the next "implement next" iteration. */
+export function implementNextPrompt(
+  index: number,
+  task: AgentPlanTask,
+): string {
+  return `Implement next: complete and verify only task ${index + 1} of the plan — "${task.text}". Do not work on any other task or expand the plan, and end with the updated hyos-plan block marking this task done.`;
+}
+
 export function partitionSessions(
   sessions: readonly AgentSessionSummary[],
 ): Readonly<{
@@ -185,10 +217,63 @@ export function folderName(folder: string): string {
 const MarkdownBody: Component<{ content: string }> = (props) => {
   let element!: HTMLDivElement;
   createEffect(() => {
-    const dispose = mountMarkdown(element, props.content);
+    // Plan blocks are persisted on the session and rendered as structured
+    // task lists; keep them out of the markdown body.
+    const dispose = mountMarkdown(element, stripPlanBlocks(props.content));
     onCleanup(dispose);
   });
   return <div class="message-body markdown" ref={element} />;
+};
+
+const PlanPanel: Component<{
+  plan: AgentPlan;
+  disabled: boolean;
+  onImplementNext: (index: number, task: AgentPlanTask) => void;
+}> = (props) => {
+  const nextIndex = () => props.plan.tasks.findIndex((task) => !task.done);
+  const next = () => props.plan.tasks[nextIndex()] ?? null;
+  return (
+    <aside class="plan-panel" aria-label="Session plan">
+      <div class="plan-head">
+        <strong>Plan</strong>
+        <span>
+          {props.plan.tasks.filter((task) => task.done).length}/
+          {props.plan.tasks.length} done
+        </span>
+      </div>
+      <ol class="plan-tasks">
+        <For each={props.plan.tasks}>
+          {(task, index) => (
+            <li
+              classList={{
+                "plan-task": true,
+                done: task.done,
+                next: index() === nextIndex(),
+              }}
+            >
+              <span class="plan-check" aria-hidden="true">
+                {task.done ? "✓" : ""}
+              </span>
+              <span class="plan-text">{task.text}</span>
+            </li>
+          )}
+        </For>
+      </ol>
+      <Show when={next()}>
+        {(task) => (
+          <button
+            class="plan-next"
+            type="button"
+            disabled={props.disabled}
+            title={implementNextPrompt(nextIndex(), task())}
+            onClick={() => props.onImplementNext(nextIndex(), task())}
+          >
+            Implement next: {task().text}
+          </button>
+        )}
+      </Show>
+    </aside>
+  );
 };
 
 const TimelineEntryView: Component<{ entry: TimelineEntry }> = (props) => {
@@ -417,6 +502,10 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     collapseWorkRuns(timelineEntries(messages())),
   );
   const patches = createMemo(() => patchEntries(messages()));
+  const activePlan = createMemo(() => activeSession()?.plan ?? null);
+  const planAfterIndex = createMemo(() =>
+    activePlan() ? planPanelIndex(timeline()) : -1,
+  );
 
   // Latest recorded context usage for the active session, from the most
   // recent assistant message that carries it.
@@ -686,6 +775,30 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     }
   };
 
+  const implementNext = async (
+    index: number,
+    task: AgentPlanTask,
+  ): Promise<void> => {
+    const sessionId = activeId();
+    if (!sessionId || activeSession()?.status === "running") return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await props.client.execute({
+        type: "send-message",
+        sessionId,
+        prompt: implementNextPrompt(index, task),
+        mode: followupMode(),
+        reasoningEffort: followupEffort(),
+        intent: "implement",
+      });
+    } catch (value) {
+      showError(value);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const loadOlder = async (): Promise<void> => {
     const sessionId = activeId();
     const cursor = before();
@@ -753,7 +866,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
           <div class="sidebar-head">
             <div class="brand">
               <span class="brand-mark">H</span>
-              <strong>HyOS Agent</strong>
+              <strong>hyos</strong>
             </div>
             <button
               class="new-session"
@@ -1143,7 +1256,24 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                       <div class="loading-older">Loading session…</div>
                     </Show>
                     <For each={timeline()}>
-                      {(entry) => <TimelineEntryView entry={entry} />}
+                      {(entry, index) => (
+                        <>
+                          <TimelineEntryView entry={entry} />
+                          <Show
+                            when={activePlan() && index() === planAfterIndex()}
+                          >
+                            <PlanPanel
+                              plan={activePlan()!}
+                              disabled={
+                                submitting() || session().status === "running"
+                              }
+                              onImplementNext={(taskIndex, task) =>
+                                void implementNext(taskIndex, task)
+                              }
+                            />
+                          </Show>
+                        </>
+                      )}
                     </For>
                     <Show when={error()}>
                       {(value) => <div class="inline-error">{value()}</div>}

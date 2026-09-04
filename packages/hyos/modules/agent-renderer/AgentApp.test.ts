@@ -8,7 +8,10 @@ import type {
 import {
   collapseWorkRuns,
   folderName,
+  implementNextPrompt,
+  nextPlanTask,
   partitionSessions,
+  planPanelIndex,
   recentFolders,
   timelineEntries,
   workPaneLabel,
@@ -30,6 +33,7 @@ function sessionSummary(
     modelId: "gpt-5.6-sol",
     reasoningEffort: null,
     mode: "standard",
+    plan: null,
     status: "ready",
     lastError: null,
     archivedAt,
@@ -209,6 +213,66 @@ test("session routes round-trip through the URL hash", () => {
   assert.equal(sessionFromHash("#/session/ses%2Fsion"), "ses/sion");
   assert.equal(sessionFromHash("#/other"), null);
   assert.equal(sessionFromHash(""), null);
+});
+
+test("the plan panel sits below the final response, even with later turns", () => {
+  const now = new Date();
+  const message = (overrides: Partial<AgentMessage>): AgentMessage => ({
+    id: crypto.randomUUID(),
+    sessionId: "session-1",
+    role: "assistant",
+    status: "complete",
+    content: "",
+    activity: null,
+    lastError: null,
+    usage: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  });
+  const base = Date.now();
+  const thinking = message({
+    content: "Inspecting the implementation",
+    activity: { type: "commentary", text: "Inspecting the implementation" },
+    createdAt: new Date(base),
+    updatedAt: new Date(base),
+  });
+  const finalResponse = message({
+    content: "Step done.",
+    createdAt: new Date(base + 1_000),
+    updatedAt: new Date(base + 1_000),
+  });
+  const userFollowUp = message({
+    role: "user",
+    content: "continue",
+    createdAt: new Date(base + 2_000),
+    updatedAt: new Date(base + 2_000),
+  });
+
+  const entries = collapseWorkRuns(
+    timelineEntries([thinking, finalResponse, userFollowUp]),
+  );
+  const finalIndex = entries.findIndex(
+    (entry) => entry.type === "message" && entry.message === finalResponse,
+  );
+  assert.equal(planPanelIndex(entries), finalIndex);
+  assert.notEqual(planPanelIndex(entries), entries.length - 1);
+  assert.equal(planPanelIndex([{ type: "tools", messages: [thinking] }]), -1);
+});
+
+test("implement next targets the first pending task", () => {
+  const tasks = [
+    { text: "Plan format + prompt policy", done: true },
+    { text: "Plan parser", done: false },
+    { text: "Plan UI", done: false },
+  ];
+
+  assert.deepEqual(nextPlanTask(tasks), tasks[1]);
+  assert.equal(nextPlanTask(tasks.filter((task) => task.done)), null);
+  assert.match(
+    implementNextPrompt(1, tasks[1]),
+    /only task 2 of the plan — "Plan parser"/,
+  );
 });
 
 test("locked diffs let wheel scrolling reach the patch list", () => {

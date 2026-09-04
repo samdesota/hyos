@@ -238,3 +238,111 @@ test("a terse resume carries the persisted session transcript", () => {
     null,
   );
 });
+
+async function waitFor<T>(
+  probe: () => Promise<T> | T,
+  label: string,
+): Promise<T> {
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const value = await probe();
+    if (value !== null && value !== undefined) return value;
+    if (Date.now() > deadline)
+      throw new Error(`Timed out waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+test("a finished incremental turn persists its plan and replays it on the next turn", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+  const inputs: import("./providers/types.js").AgentRunInput[] = [];
+  const planBlock = [
+    "```hyos-plan",
+    "- [x] Plan format + prompt policy",
+    "- [ ] Plan parser",
+    "```",
+  ].join("\n");
+  const plan = {
+    tasks: [
+      { text: "Plan format + prompt policy", done: true },
+      { text: "Plan parser", done: false },
+    ],
+  };
+  let firstResponse!: () => void;
+  const firstResponseSent = new Promise<void>((resolve) => {
+    firstResponse = resolve;
+  });
+  let secondRun!: () => void;
+  const secondRunStarted = new Promise<void>((resolve) => {
+    secondRun = resolve;
+  });
+  const provider: AgentProvider = {
+    summary: {
+      id: "test",
+      label: "Test",
+      models: [{ id: "test-model", label: "Test model" }],
+    },
+    async run(input, sink) {
+      inputs.push(input);
+      if (inputs.length === 1) {
+        await sink.response(`Plan is ready.\n\n${planBlock}`);
+        firstResponse();
+        return { providerSessionId: null };
+      }
+      secondRun();
+      return { providerSessionId: null };
+    },
+  };
+  const host = createAgentHost({
+    window: {} as never,
+    remote: { publish() {} } as never,
+    store,
+    providers: new Map([[provider.summary.id, provider]]),
+  });
+
+  try {
+    await host.start();
+    const created = await host.provider.execute({
+      type: "start-session",
+      prompt: "Build the plan feature",
+      folder: "/tmp",
+      providerId: "test",
+      modelId: "test-model",
+      mode: "incremental",
+    });
+    assert.equal(created.type, "session-started");
+    if (created.type !== "session-started") return;
+    await firstResponseSent;
+    const persisted = await waitFor(
+      async () => (await store.getSession(created.sessionId)).plan,
+      "the persisted plan",
+    );
+    assert.deepEqual(persisted, plan);
+    assert.equal(inputs[0].plan, null);
+
+    // A final response without a plan block leaves the plan of record alone.
+    await host.provider.execute({
+      type: "send-message",
+      sessionId: created.sessionId,
+      prompt: "continue",
+    });
+    await secondRunStarted;
+    await waitFor(
+      async () =>
+        (await store.pageMessages(created.sessionId, null, 10)).messages.every(
+          (message) => message.status !== "streaming",
+        )
+          ? true
+          : null,
+      "the second turn to finish",
+    );
+    assert.deepEqual((await store.getSession(created.sessionId)).plan, plan);
+    assert.deepEqual(inputs[1].plan, plan);
+    assert.equal(inputs[1].mode, "incremental");
+  } finally {
+    await host.dispose();
+    await database.close();
+  }
+});

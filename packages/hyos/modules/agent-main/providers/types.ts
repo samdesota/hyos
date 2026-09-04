@@ -2,6 +2,7 @@ import type {
   AgentActivity,
   AgentMode,
   AgentMessageStatus,
+  AgentPlan,
   AgentProviderSummary,
   AgentReasoningEffort,
 } from "../../../capabilities/agent.js";
@@ -11,6 +12,8 @@ export type AgentRunInput = Readonly<{
   mode?: AgentMode;
   intent?: "implement" | "investigate";
   firstTurn?: boolean;
+  /** The session's persisted plan, sent at the start of every user response. */
+  plan?: AgentPlan | null;
   folder: string;
   modelId: string;
   reasoningEffort: AgentReasoningEffort | null;

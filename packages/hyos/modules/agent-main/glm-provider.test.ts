@@ -10,12 +10,14 @@ import type {
   AgentActivity,
   AgentMessageStatus,
 } from "../../capabilities/agent.js";
+import { formatPlanBlock } from "../../capabilities/plan.js";
 import { createGlmProvider } from "./providers/glm.js";
 import type { AgentTokenUsage } from "./providers/types.js";
 import {
   glmTurnPolicy,
   incrementalFirstRequest,
   incrementalImplementRule,
+  incrementalPlanRule,
   incrementalReminder,
 } from "./providers/glm-turn-policy.js";
 import { openCodeTools } from "./providers/opencode-tools.js";
@@ -60,6 +62,37 @@ test("GLM turn policy leaves standard unchanged and reminds every incremental re
   assert.ok(!investigate.prompt.includes(incrementalImplementRule));
   const standard = glmTurnPolicy({ ...input, intent: "implement" }, "system");
   assert.ok(!standard.prompt.includes(incrementalImplementRule));
+});
+
+test("incremental turns open with the persisted plan and keep it updated", () => {
+  const input = {
+    prompt: "Do the next step",
+    folder: "/tmp",
+    modelId: "glm",
+    reasoningEffort: "high" as const,
+    providerSessionId: null,
+  };
+  const bare = glmTurnPolicy({ ...input, mode: "incremental" }, "system");
+  assert.ok(bare.prompt.startsWith("Do the next step"));
+  assert.ok(bare.prompt.includes(incrementalPlanRule));
+
+  const tasks = [
+    { text: "Plan format + prompt policy", done: true },
+    { text: "Plan parser", done: false },
+  ] as const;
+  const planned = glmTurnPolicy(
+    { ...input, mode: "incremental", plan: { tasks } },
+    "system",
+  );
+  const block = formatPlanBlock(tasks);
+  assert.ok(planned.prompt.startsWith(`${block}\n\n`));
+  assert.ok(planned.prompt.includes("current plan of record"));
+  assert.ok(planned.prompt.includes(incrementalPlanRule));
+  assert.ok(planned.prompt.includes("Do the next step"));
+
+  // The plan never leaks into standard mode.
+  const standard = glmTurnPolicy({ ...input, plan: { tasks } }, "system");
+  assert.equal(standard.prompt, "Do the next step");
 });
 
 test("GLM incremental requests can finish conversationally without edits", async () => {
