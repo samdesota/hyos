@@ -3,7 +3,14 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { hydb, id, text, timestamp, storageMutation } from "../src/index.js";
+import {
+  hydb,
+  id,
+  text,
+  timestamp,
+  integer,
+  storageMutation,
+} from "../src/index.js";
 import { openNodeStorage } from "../src/node/index.js";
 
 const oldRows = hydb.table("rows", {
@@ -18,6 +25,78 @@ const rows = hydb.table("rows", {
 const oldSchema = hydb.schema({ rows: oldRows });
 const schema = hydb.schema({ rows });
 const addNullableColumns = { rows: ["archivedAt"] };
+
+for (const intermediate of [false, true]) {
+  test(`ordered migrations upgrade ${intermediate ? "intermediate" : "original"} schemas without resetting existing values`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "hydb-ordered-migration-"));
+    const latestRows = hydb.table("rows", {
+      id: id().primaryKey(),
+      title: text().notNull(),
+      archivedAt: timestamp(),
+      promptTokens: integer(),
+    });
+    const latest = hydb.schema({ rows: latestRows });
+    const nullableColumnMigrations = [
+      { rows: ["archivedAt"] },
+      { rows: ["promptTokens"] },
+    ];
+    const archivedAt = new Date("2026-09-01T00:00:00Z");
+    try {
+      let storage = await openNodeStorage({
+        directory,
+        schema: intermediate ? schema : oldSchema,
+      });
+      const head = await storage.head();
+      const saved = await storage.commit({
+        branch: "main",
+        expectedHead: head,
+        mutations: [
+          intermediate
+            ? storageMutation.insert(rows, {
+                id: "a",
+                title: "Keep",
+                archivedAt,
+              })
+            : storageMutation.insert(oldRows, { id: "a", title: "Keep" }),
+        ],
+      });
+      await storage.createBranch({ name: "work", from: saved.commit });
+      await storage.close();
+      storage = await openNodeStorage({
+        directory,
+        schema: latest,
+        nullableColumnMigrations,
+      });
+      for (const branch of ["main", "work"]) {
+        const snapshot = await storage.snapshot({ branch });
+        assert.deepEqual(await snapshot.get(latestRows, ["a"]), {
+          id: "a",
+          title: "Keep",
+          archivedAt: intermediate ? archivedAt : null,
+          promptTokens: null,
+        });
+        await snapshot.close();
+      }
+      const snapshot = await storage.snapshot();
+      assert.equal(snapshot.sequence, saved.sequence + (intermediate ? 1 : 2));
+      const migrated = snapshot.commit;
+      await snapshot.close();
+      const history = await storage.snapshot({ commit: saved.commit });
+      assert.equal((await history.get(oldRows, ["a"]))?.title, "Keep");
+      await history.close();
+      await storage.close();
+      storage = await openNodeStorage({
+        directory,
+        schema: latest,
+        nullableColumnMigrations,
+      });
+      assert.equal(await storage.head(), migrated);
+      await storage.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
 
 test("explicit nullable migration preserves rows and history and only runs once", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hydb-migration-"));

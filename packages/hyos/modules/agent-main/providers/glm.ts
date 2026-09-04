@@ -5,7 +5,11 @@ import { readFile } from "node:fs/promises";
 import type { AgentActivity } from "../../../capabilities/agent.js";
 import { contentDiff, createPatchActivity } from "./patches.js";
 import { glmTurnPolicy } from "./glm-turn-policy.js";
-import { openCodeTool, openCodeTools } from "./opencode-tools.js";
+import {
+  openCodeTool,
+  openCodeTools,
+  type OpenCodeTool,
+} from "./opencode-tools.js";
 import { createParallelSearch } from "./parallel-search.js";
 import type { AgentProvider, AgentRunSink } from "./types.js";
 
@@ -32,6 +36,12 @@ type ChatMessage =
       tool_calls?: readonly ToolCall[];
     };
 
+type StreamUsage = Readonly<{
+  prompt_tokens: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+}>;
+
 type StreamDelta = Readonly<{
   content?: string;
   reasoning?: string;
@@ -48,6 +58,9 @@ const OPEN_WEIGHT_PROMPT = `You are HyOS, an interactive general AI coding agent
 Take action with the available tools to complete the user's request. For coding work, inspect the existing codebase before editing, make actual file changes with edit or write, and verify them with bash. Code shown only in a text response is not saved. Prefer dedicated read, glob, and grep tools over shell commands for file inspection. Make minimal, maintainable changes that follow the project's existing conventions. Do not stop after a partial implementation; continue until the entire request is implemented and verified. Never perform git mutations unless the user explicitly asks.
 
 Tool results may contain <system-reminder> directives. Treat those directives as authoritative. Be concise in user-visible text and never use tool calls as a substitute for communicating a final result.`;
+
+/** Total context window for GLM models, in tokens. */
+const GLM_CONTEXT_WINDOW = 200_000;
 
 function environmentPrompt(folder: string, model: string): string {
   return `${OPEN_WEIGHT_PROMPT}
@@ -129,6 +142,13 @@ function activity(toolName: string, detail: string): AgentActivity {
       label: "Searched the web",
       detail,
     };
+  if (toolName === "session_transcript")
+    return {
+      type: "tool",
+      category: "read",
+      label: "Read session transcript",
+      detail,
+    };
   const tool = openCodeTool(toolName);
   return {
     type: "tool",
@@ -199,6 +219,46 @@ export function createGlmProvider(
         input.intent === "investigate"
           ? tools.filter((tool) => tool.category !== "edit")
           : tools;
+      const sessionTranscriptTool: OpenCodeTool | null = input.sessionTranscript
+        ? {
+            name: "session_transcript",
+            description:
+              'Read the full transcript of one earlier turn of this agent session — including its thinking and tool responses, which are omitted from the persisted transcript. Pass the turn id from the <turn id="..."> tag in the persisted transcript. The current turn\'s detail is not available.',
+            category: "read",
+            parameters: {
+              type: "object",
+              properties: {
+                turnId: {
+                  type: "string",
+                  description:
+                    'Id of an earlier turn, taken from the <turn id="..."> tag in the persisted transcript.',
+                },
+              },
+              required: ["turnId"],
+              additionalProperties: false,
+            },
+            async execute(_folder, args) {
+              const turnId = typeof args.turnId === "string" ? args.turnId : "";
+              if (!turnId) throw new Error("turnId is required");
+              const transcript = await input.sessionTranscript!(turnId);
+              if (transcript === null)
+                throw new Error(
+                  `No earlier turn with id "${turnId}". Turn ids appear in <turn id="..."> tags in the persisted transcript; the current turn is not available.`,
+                );
+              return { output: transcript };
+            },
+          }
+        : null;
+      const runTools = sessionTranscriptTool
+        ? [...offeredTools, sessionTranscriptTool]
+        : offeredTools;
+      const toolsByName = new Map(
+        [
+          ...openCodeTools,
+          search,
+          ...(sessionTranscriptTool ? [sessionTranscriptTool] : []),
+        ].map((tool) => [tool.name, tool]),
+      );
       const messages: ChatMessage[] = [
         {
           role: "system",
@@ -218,10 +278,10 @@ export function createGlmProvider(
           body: JSON.stringify({
             model: input.modelId,
             messages,
-            tools: toolsPayload(offeredTools),
+            tools: toolsPayload(runTools),
             tool_choice: "auto",
             stream: true,
-            tool_stream: true,
+            stream_options: { include_usage: true },
             reasoning: { effort: policy.effort },
             max_tokens: 32_768,
           }),
@@ -232,8 +292,12 @@ export function createGlmProvider(
 
         let content = "";
         let reasoning = "";
+        let lastUsage: StreamUsage | null = null;
         const calls = new Map<number, ToolCall>();
         for await (const event of serverEvents(response)) {
+          if (event.usage && typeof event.usage === "object") {
+            lastUsage = event.usage as StreamUsage;
+          }
           const choices = event.choices;
           if (!Array.isArray(choices) || choices.length === 0) continue;
           const delta = (choices[0] as { delta?: StreamDelta }).delta;
@@ -269,6 +333,16 @@ export function createGlmProvider(
             "complete",
           );
         }
+        if (lastUsage && typeof lastUsage.prompt_tokens === "number") {
+          await sink.usage?.({
+            promptTokens: lastUsage.prompt_tokens,
+            completionTokens:
+              typeof lastUsage.completion_tokens === "number"
+                ? lastUsage.completion_tokens
+                : null,
+            contextWindow: GLM_CONTEXT_WINDOW,
+          });
+        }
 
         const toolCalls = [...calls.values()];
         messages.push({
@@ -279,7 +353,21 @@ export function createGlmProvider(
         });
         if (toolCalls.length === 0) {
           if (content) await sink.response(content);
-          return { providerSessionId: null };
+          return {
+            providerSessionId: null,
+            ...(lastUsage && typeof lastUsage.prompt_tokens === "number"
+              ? {
+                  usage: {
+                    promptTokens: lastUsage.prompt_tokens,
+                    completionTokens:
+                      typeof lastUsage.completion_tokens === "number"
+                        ? lastUsage.completion_tokens
+                        : null,
+                    contextWindow: GLM_CONTEXT_WINDOW,
+                  },
+                }
+              : {}),
+          };
         }
         if (content.trim()) {
           await sink.activity(
@@ -317,10 +405,8 @@ export function createGlmProvider(
               "streaming",
             );
             try {
-              const tool =
-                call.function.name === search.name
-                  ? search
-                  : openCodeTool(call.function.name);
+              const tool = toolsByName.get(call.function.name);
+              if (!tool) throw new Error(`Unknown tool: ${call.function.name}`);
               if (input.intent === "investigate" && tool.category === "edit") {
                 const message =
                   "Blocked: this is an investigate-only turn; edit and write tools are disabled.";

@@ -11,9 +11,11 @@ import type {
   AgentMessageStatus,
 } from "../../capabilities/agent.js";
 import { createGlmProvider } from "./providers/glm.js";
+import type { AgentTokenUsage } from "./providers/types.js";
 import {
   glmTurnPolicy,
   incrementalFirstRequest,
+  incrementalImplementRule,
   incrementalReminder,
 } from "./providers/glm-turn-policy.js";
 import { openCodeTools } from "./providers/opencode-tools.js";
@@ -46,6 +48,18 @@ test("GLM turn policy leaves standard unchanged and reminds every incremental re
       /conversational response without tools or file changes is a valid result/,
     );
   }
+  const implement = glmTurnPolicy(
+    { ...input, mode: "incremental", intent: "implement" },
+    "system",
+  );
+  assert.ok(implement.prompt.includes(incrementalImplementRule));
+  const investigate = glmTurnPolicy(
+    { ...input, mode: "incremental", intent: "investigate" },
+    "system",
+  );
+  assert.ok(!investigate.prompt.includes(incrementalImplementRule));
+  const standard = glmTurnPolicy({ ...input, intent: "implement" }, "system");
+  assert.ok(!standard.prompt.includes(incrementalImplementRule));
 });
 
 test("GLM incremental requests can finish conversationally without edits", async () => {
@@ -93,6 +107,53 @@ test("GLM incremental requests can finish conversationally without edits", async
     assert.match(response, /Shall I proceed/);
     assert.equal(result.providerSessionId, null);
   }
+});
+
+test("GLM reports per-turn context usage from stream chunks", async () => {
+  const requests: Record<string, unknown>[] = [];
+  const usages: AgentTokenUsage[] = [];
+  const fakeFetch: typeof fetch = async (_url, init) => {
+    requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return stream(
+      { choices: [{ delta: { content: "Done." } }] },
+      {
+        usage: {
+          prompt_tokens: 42_300,
+          completion_tokens: 128,
+          total_tokens: 42_428,
+        },
+      },
+    );
+  };
+  const provider = createGlmProvider({ apiKey: "test", fetch: fakeFetch });
+  const result = await provider.run(
+    {
+      prompt: "Measure context.",
+      folder: "/tmp",
+      modelId: "zai/glm-5.3-flash",
+      providerSessionId: null,
+      reasoningEffort: "medium",
+    },
+    {
+      session() {},
+      usage(usage) {
+        usages.push(usage);
+      },
+      response() {},
+      activity() {},
+    },
+    new AbortController().signal,
+  );
+  assert.equal(result.providerSessionId, null);
+  assert.deepEqual(result.usage, {
+    promptTokens: 42_300,
+    completionTokens: 128,
+    contextWindow: 200_000,
+  });
+  assert.deepEqual(usages, [
+    { promptTokens: 42_300, completionTokens: 128, contextWindow: 200_000 },
+  ]);
+  assert.deepEqual(requests[0].stream_options, { include_usage: true });
 });
 
 function stream(...events: readonly object[]): Response {

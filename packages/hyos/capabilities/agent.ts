@@ -75,6 +75,11 @@ export type AgentMessage = Readonly<{
   content: string;
   activity: AgentActivity | null;
   lastError: string | null;
+  usage: Readonly<{
+    promptTokens: number;
+    completionTokens: number | null;
+    contextWindow: number;
+  }> | null;
   createdAt: Date;
   updatedAt: Date;
 }>;

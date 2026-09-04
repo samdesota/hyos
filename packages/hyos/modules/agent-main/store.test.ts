@@ -210,3 +210,36 @@ test("a follow-up turn atomically persists a reasoning-effort change", async () 
     await database.close();
   }
 });
+
+test("finishRun persists token usage on the assistant message", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Measure the context",
+      folder: "/tmp/project",
+      providerId: "glm",
+      modelId: "zai/glm-5.3-flash",
+    });
+    await store.finishRun(turn.sessionId, turn.assistantMessageId, null, {
+      promptTokens: 42_300,
+      completionTokens: 128,
+      contextWindow: 200_000,
+    });
+
+    const page = await store.pageMessages(turn.sessionId, null, 10);
+    const assistant = page.messages.find(
+      (message) => message.id === turn.assistantMessageId,
+    );
+    assert.ok(assistant);
+    assert.deepEqual(assistant.usage, {
+      promptTokens: 42_300,
+      completionTokens: 128,
+      contextWindow: 200_000,
+    });
+  } finally {
+    await database.close();
+  }
+});

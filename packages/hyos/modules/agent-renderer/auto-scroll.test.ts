@@ -89,6 +89,7 @@ test("patches render from earliest to latest", () => {
       diff: "",
     },
     lastError: null,
+    usage: null,
     createdAt: new Date(createdAt),
     updatedAt: new Date(createdAt),
   });

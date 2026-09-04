@@ -293,17 +293,52 @@ const updateActivityCommand = hydb.command({
   },
 });
 
+const updateUsageCommand = hydb.command({
+  input: z.object({
+    sessionId: z.string(),
+    messageId: z.string(),
+    usage: z.object({
+      promptTokens: z.number().int(),
+      completionTokens: z.number().int().nullable(),
+      contextWindow: z.number().int(),
+    }),
+    now: z.date(),
+  }),
+  async handler(transaction, input) {
+    await transaction.update(agentMessages, [input.messageId], {
+      promptTokens: input.usage.promptTokens,
+      completionTokens: input.usage.completionTokens,
+      contextWindow: input.usage.contextWindow,
+      createdAt: input.now,
+      updatedAt: input.now,
+    });
+    await transaction.update(agentSessions, [input.sessionId], {
+      updatedAt: input.now,
+    });
+  },
+});
+
 const finishRunCommand = hydb.command({
   input: z.object({
     sessionId: z.string(),
     messageId: z.string(),
     providerSessionId: z.string().nullable(),
+    usage: z
+      .object({
+        promptTokens: z.number().int(),
+        completionTokens: z.number().int().nullable(),
+        contextWindow: z.number().int(),
+      })
+      .nullable(),
     now: z.date(),
   }),
   async handler(transaction, input) {
     await transaction.update(agentMessages, [input.messageId], {
       status: "complete",
       lastError: null,
+      promptTokens: input.usage?.promptTokens ?? null,
+      completionTokens: input.usage?.completionTokens ?? null,
+      contextWindow: input.usage?.contextWindow ?? null,
       createdAt: input.now,
       updatedAt: input.now,
     });
@@ -464,10 +499,24 @@ export interface AgentStore {
     sessionId: string,
     providerSessionId: string,
   ): Promise<void>;
+  updateUsage(
+    sessionId: string,
+    messageId: string,
+    usage: Readonly<{
+      promptTokens: number;
+      completionTokens: number | null;
+      contextWindow: number;
+    }>,
+  ): Promise<void>;
   finishRun(
     sessionId: string,
     messageId: string,
     providerSessionId: string | null,
+    usage?: Readonly<{
+      promptTokens: number;
+      completionTokens: number | null;
+      contextWindow: number;
+    }> | null,
   ): Promise<void>;
   endRun(
     sessionId: string,
@@ -530,6 +579,14 @@ export function createAgentStore(database: Database): AgentStore {
       ...row,
       content,
       activity: decodeActivity(content),
+      usage:
+        row.promptTokens !== null && row.contextWindow !== null
+          ? {
+              promptTokens: row.promptTokens,
+              completionTokens: row.completionTokens,
+              contextWindow: row.contextWindow,
+            }
+          : null,
     };
   }
 
@@ -637,11 +694,20 @@ export function createAgentStore(database: Database): AgentStore {
         now: now(),
       });
     },
-    async finishRun(sessionId, messageId, providerSessionId) {
+    async updateUsage(sessionId, messageId, usage) {
+      await database.execute(updateUsageCommand, {
+        sessionId,
+        messageId,
+        usage,
+        now: now(),
+      });
+    },
+    async finishRun(sessionId, messageId, providerSessionId, usage) {
       await database.execute(finishRunCommand, {
         sessionId,
         messageId,
         providerSessionId,
+        usage: usage ?? null,
         now: now(),
       });
     },

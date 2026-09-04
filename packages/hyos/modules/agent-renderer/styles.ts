@@ -214,6 +214,7 @@ export const agentStyles = String.raw`
   }
   .streaming-caret { display: inline-block; width: 7px; height: 15px; margin-left: 4px; vertical-align: -2px; background: #d9ff62; animation: blink .9s steps(1) infinite; }
   .message-error { margin-top: 8px; color: #ff8f83; font-size: 12px; }
+  .context-usage { color: #6f7268; font-size: 10px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   @keyframes blink { 50% { opacity: 0; } }
   .composer-shell { padding: 14px 22px 18px; background: linear-gradient(transparent, #171816 28%); }
   .composer { display: flex; flex-direction: column; width: min(820px, 100%); margin: auto; border: 1px solid #3a3c35; border-radius: 14px; background: #22231f; }

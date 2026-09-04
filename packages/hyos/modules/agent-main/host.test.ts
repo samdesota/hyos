@@ -3,7 +3,11 @@ import test from "node:test";
 
 import { hydb, memoryStorage } from "@hyos/hydb";
 
-import { createAgentHost, promptWithPersistedContext } from "./host.js";
+import {
+  createAgentHost,
+  promptWithPersistedContext,
+  turnTranscript,
+} from "./host.js";
 import { agentSchema } from "./model.js";
 import type { AgentProvider } from "./providers/types.js";
 import { createAgentStore } from "./store.js";
@@ -180,11 +184,12 @@ test("a terse resume carries the persisted session transcript", () => {
     content: "",
     activity: null,
     lastError: null,
+    usage: null,
     createdAt: now,
     updatedAt: now,
     ...overrides,
   });
-  const prompt = promptWithPersistedContext("resume", [
+  const slim = promptWithPersistedContext("resume", [
     message({ content: "Build the differential dataflow engine" }),
     message({
       role: "system",
@@ -198,7 +203,38 @@ test("a terse resume carries the persisted session transcript", () => {
     message({ content: "resume" }),
   ]);
 
-  assert.match(prompt, /Build the differential dataflow engine/);
-  assert.match(prompt, /Add canonical row keys/);
-  assert.match(prompt, /<current-user-message>\nresume/);
+  assert.match(slim, /user: Build the differential dataflow engine/);
+  assert.doesNotMatch(slim, /Add canonical row keys/);
+  assert.match(slim, /<turn id="turn-1">/);
+  assert.match(slim, /<current-user-message>\nresume/);
+
+  const history = [
+    message({ content: "Build the differential dataflow engine" }),
+    message({
+      role: "system",
+      activity: {
+        type: "patch",
+        explanation: "Add canonical row keys.",
+        changes: [{ path: "src/dataflow/keys.ts", kind: "write" }],
+        diff: "+export function canonicalKey() {}",
+      },
+    }),
+    message({ role: "assistant", content: "Done — keys are canonical." }),
+  ];
+
+  const full = turnTranscript(
+    [...history, message({ content: "resume" })],
+    "turn-1",
+  );
+  assert.match(full!, /agent patch: Add canonical row keys/);
+  assert.match(full!, /\+export function canonicalKey\(\) \{\}/);
+  assert.match(full!, /assistant: Done — keys are canonical\./);
+
+  // Malformed, unknown, or current-turn ids resolve to null.
+  assert.equal(turnTranscript(history, "no-such-turn"), null);
+  assert.equal(turnTranscript(history, "turn-2"), null);
+  assert.equal(
+    turnTranscript([...history, message({ content: "resume" })], "turn-1 "),
+    null,
+  );
 });

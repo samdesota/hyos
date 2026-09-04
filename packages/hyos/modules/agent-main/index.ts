@@ -42,7 +42,16 @@ export = defineModule<AgentMainConfig>({
     const storage = await openNodeStorage({
       directory: path.resolve(root, config.storagePath),
       schema: agentSchema,
-      addNullableColumns: { hyos_agent_sessions: ["archivedAt"] },
+      nullableColumnMigrations: [
+        { hyos_agent_sessions: ["archivedAt"] },
+        {
+          hyos_agent_messages: [
+            "promptTokens",
+            "completionTokens",
+            "contextWindow",
+          ],
+        },
+      ],
     });
     const database = await hydb.database({ schema: agentSchema, storage });
     const store = createAgentStore(database);

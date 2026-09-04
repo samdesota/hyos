@@ -388,6 +388,16 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   );
   const patches = createMemo(() => patchEntries(messages()));
 
+  // Latest recorded context usage for the active session, from the most
+  // recent assistant message that carries it.
+  const latestUsage = createMemo(() => {
+    const list = messages();
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].usage) return list[i].usage;
+    }
+    return null;
+  });
+
   const collapsePatchesWhenNarrow = (event: MediaQueryListEvent): void => {
     if (event.matches) setPatchPanelOpen(false);
   };
@@ -1131,6 +1141,17 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                               </div>
                             </Show>
                           </div>
+                        )}
+                      </Show>
+                      <Show when={latestUsage()}>
+                        {(usage) => (
+                          <span
+                            class="context-usage"
+                            title="Context window usage from the last completed turn"
+                          >
+                            {usage().promptTokens.toLocaleString("en-US")} /{" "}
+                            {usage().contextWindow.toLocaleString("en-US")}
+                          </span>
                         )}
                       </Show>
                       <div class="composer-actions">

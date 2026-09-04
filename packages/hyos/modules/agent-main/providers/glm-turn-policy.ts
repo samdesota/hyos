@@ -6,6 +6,9 @@ export const incrementalFirstRequest =
 export const incrementalReminder =
   "Incremental mode: use light thinking and work in small, independently reviewable iterations. Complete and quickly verify one small iteration, briefly reassess the next smallest step, then continue. Do not silently expand the approved plan. If something unexpected blocks or would materially change it, stop and check in with the user.";
 
+export const incrementalImplementRule =
+  "Incremental mode: finish every implement turn with a git commit. Once this iteration's changes are verified, stage the files you touched and create a concise commit describing the change. Treat this as the user's standing authorization to run git add and git commit in this turn — but never push, and never commit when the turn was only read-only (investigate or conversation).";
+
 export function glmTurnPolicy(input: AgentRunInput, systemPrompt: string) {
   if (input.mode !== "incremental") {
     return {
@@ -19,6 +22,7 @@ export function glmTurnPolicy(input: AgentRunInput, systemPrompt: string) {
     prompt: [
       input.prompt,
       input.firstTurn ? incrementalFirstRequest : null,
+      input.intent === "implement" ? incrementalImplementRule : null,
       incrementalReminder,
     ]
       .filter(Boolean)

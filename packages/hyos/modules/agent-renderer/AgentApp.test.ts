@@ -59,6 +59,7 @@ test("terminal assistant failures remain visible without response text", () => {
     content: "",
     activity: null,
     lastError: "Patch explanation was missing.",
+    usage: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -77,6 +78,7 @@ test("live message arrival order cannot place thinking after the final response"
     content: "Inspecting the implementation",
     activity: { type: "commentary", text: "Inspecting the implementation" },
     lastError: null,
+    usage: null,
     createdAt: new Date("2026-09-03T12:00:00.000Z"),
     updatedAt: new Date("2026-09-03T12:00:01.000Z"),
   };
@@ -88,6 +90,7 @@ test("live message arrival order cannot place thinking after the final response"
     content: "Implemented the requested change.",
     activity: null,
     lastError: null,
+    usage: null,
     createdAt: new Date("2026-09-03T12:00:02.000Z"),
     updatedAt: new Date("2026-09-03T12:00:02.000Z"),
   };
@@ -107,6 +110,7 @@ test("finished runs collapse thinking into a work pane before the final response
     content: "Inspecting the implementation",
     activity: { type: "commentary", text: "Inspecting the implementation" },
     lastError: null,
+    usage: null,
     createdAt: new Date("2026-09-03T12:00:00.000Z"),
     updatedAt: new Date("2026-09-03T12:00:01.000Z"),
   };
@@ -118,6 +122,7 @@ test("finished runs collapse thinking into a work pane before the final response
     content: "Implemented the requested change.",
     activity: null,
     lastError: null,
+    usage: null,
     createdAt: new Date("2026-09-03T12:00:32.000Z"),
     updatedAt: new Date("2026-09-03T12:00:32.000Z"),
   };
@@ -147,6 +152,7 @@ test("streaming thinking stays inline until the run completes", () => {
     content: "Inspecting the implementation",
     activity: { type: "commentary", text: "Inspecting the implementation" },
     lastError: null,
+    usage: null,
     createdAt: new Date("2026-09-03T12:00:00.000Z"),
     updatedAt: new Date("2026-09-03T12:00:01.000Z"),
   };
@@ -158,6 +164,7 @@ test("streaming thinking stays inline until the run completes", () => {
     content: "",
     activity: null,
     lastError: null,
+    usage: null,
     createdAt: new Date("2026-09-03T12:00:32.000Z"),
     updatedAt: new Date("2026-09-03T12:00:32.000Z"),
   };

@@ -431,10 +431,11 @@ export class NodeStorageDatabase implements StorageDatabase {
     private readonly fingerprint: string,
     private readonly tables: ReadonlyMap<string, TableMetadata>,
     private readonly requestedRetention: RetentionPolicy | undefined,
-    private readonly nullableMigration?: {
+    private readonly nullableMigrations: readonly {
       from: string;
+      to: string;
       columns: Readonly<Record<string, readonly string[]>>;
-    },
+    }[] = [],
   ) {
     this.#generation = generation;
     this.#generations.add(generation);
@@ -455,13 +456,35 @@ export class NodeStorageDatabase implements StorageDatabase {
         : validateRetention(options.retention);
     await mkdir(options.directory, { recursive: true });
     const metadata = schemaMetadata(options.schema);
-    const nullableMigration = options.addNullableColumns
-      ? {
-          from: schemaMetadata(options.schema, options.addNullableColumns)
-            .fingerprint,
-          columns: options.addNullableColumns,
+    if (options.addNullableColumns && options.nullableColumnMigrations) {
+      throw new TypeError("Specify only one nullable migration configuration");
+    }
+    const steps =
+      options.nullableColumnMigrations ??
+      (options.addNullableColumns ? [options.addNullableColumns] : []);
+    const omitted: Record<string, string[]> = {};
+    let target = metadata.fingerprint;
+    const nullableMigrations = [...steps]
+      .reverse()
+      .map((columns) => {
+        if (!Object.values(columns).some((names) => names.length))
+          throw new TypeError("Empty nullable migration");
+        for (const [table, names] of Object.entries(columns)) {
+          const existing = (omitted[table] ??= []);
+          for (const name of names) {
+            if (existing.includes(name))
+              throw new TypeError(
+                `Duplicate migration column: ${table}.${name}`,
+              );
+            existing.push(name);
+          }
         }
-      : undefined;
+        const from = schemaMetadata(options.schema, omitted).fingerprint;
+        const migration = { from, to: target, columns };
+        target = from;
+        return migration;
+      })
+      .reverse();
     const dataPath = join(options.directory, "hydb.data");
     const checkpoint = await readStartupCheckpoint(dataPath);
     const store = await AppendOnlyPageStore.open(dataPath, checkpoint?.offset);
@@ -478,7 +501,7 @@ export class NodeStorageDatabase implements StorageDatabase {
       metadata.fingerprint,
       metadata.tables,
       requestedRetention,
-      nullableMigration,
+      nullableMigrations,
     );
     try {
       await database.load(checkpoint);
@@ -530,7 +553,9 @@ export class NodeStorageDatabase implements StorageDatabase {
     }
     if (
       commit.manifest.schema !== this.fingerprint &&
-      commit.manifest.schema !== this.nullableMigration?.from
+      !this.nullableMigrations.some(
+        (migration) => commit.manifest.schema === migration.from,
+      )
     ) {
       await this.releaseSnapshot(generation, id);
       throw new TypeError("Storage schema does not match the supplied schema");
@@ -801,14 +826,14 @@ export class NodeStorageDatabase implements StorageDatabase {
       const schema = (await this.readCommit(state.head)).manifest.schema;
       if (
         schema !== this.fingerprint &&
-        schema !== this.nullableMigration?.from
+        !this.nullableMigrations.some((migration) => schema === migration.from)
       ) {
         throw new TypeError(
           "Storage schema does not match the supplied schema",
         );
       }
     }
-    if (this.nullableMigration) await this.migrateNullableColumns();
+    await this.migrateNullableColumns();
     const main = this.#branches.get("main");
     if (main === undefined) throw new Error("Storage has no main branch");
     const head = await this.readCommit(main.head);
@@ -818,61 +843,61 @@ export class NodeStorageDatabase implements StorageDatabase {
   }
 
   private async migrateNullableColumns(): Promise<void> {
-    for (const [branch, current] of this.#branches) {
-      const parent = await this.readCommit(current.head);
-      if (parent.manifest.schema === this.fingerprint) continue;
-      const manifest = cloneManifest(parent.manifest);
-      const changes: StoredChange[] = [];
-      for (const [name, columns] of Object.entries(
-        this.nullableMigration!.columns,
-      )) {
-        const table = manifest.tables[name]!;
-        const metadata = this.tables.get(name)!;
-        const original = table.primary;
-        for await (const entry of this.tree.scan(original)) {
-          const before = decodeRow(entry.value);
-          const after = {
-            ...before,
-            ...Object.fromEntries(columns.map((column) => [column, null])),
-          };
-          table.primary = await this.tree.mutate(table.primary, [
-            { type: "put", key: entry.key, value: encodeValue(after) },
-          ]);
-          changes.push({
-            table: name,
-            key: primaryKey(metadata, before),
-            before,
-            after,
-          });
+    for (const migration of this.nullableMigrations) {
+      for (const [branch, current] of this.#branches) {
+        const parent = await this.readCommit(current.head);
+        if (parent.manifest.schema !== migration.from) continue;
+        const manifest = cloneManifest(parent.manifest);
+        const changes: StoredChange[] = [];
+        for (const [name, columns] of Object.entries(migration.columns)) {
+          const table = manifest.tables[name]!;
+          const metadata = this.tables.get(name)!;
+          const original = table.primary;
+          for await (const entry of this.tree.scan(original)) {
+            const before = decodeRow(entry.value);
+            const after = {
+              ...before,
+              ...Object.fromEntries(columns.map((column) => [column, null])),
+            };
+            table.primary = await this.tree.mutate(table.primary, [
+              { type: "put", key: entry.key, value: encodeValue(after) },
+            ]);
+            changes.push({
+              table: name,
+              key: primaryKey(metadata, before),
+              before,
+              after,
+            });
+          }
         }
-      }
-      manifest.schema = this.fingerprint;
-      const stored: StoredCommit = {
-        id: newCommitId(),
-        committedAtMs: Date.now(),
-        parent: current.head,
-        branch,
-        sequence: current.sequence + 1,
-        manifest,
-        changes,
-      };
-      const offset = await this.store.append("commit", encodeValue(stored));
-      await this.store.append(
-        "ref",
-        encodeValue({
-          operation: "commit",
+        manifest.schema = migration.to;
+        const stored: StoredCommit = {
+          id: newCommitId(),
+          committedAtMs: Date.now(),
+          parent: current.head,
           branch,
+          sequence: current.sequence + 1,
+          manifest,
+          changes,
+        };
+        const offset = await this.store.append("commit", encodeValue(stored));
+        await this.store.append(
+          "ref",
+          encodeValue({
+            operation: "commit",
+            branch,
+            head: stored.id!,
+            sequence: stored.sequence,
+          } satisfies StoredRef),
+        );
+        await this.store.sync();
+        this.#commits.set(stored.id!, { offset, value: stored });
+        this.#branches.set(branch, {
+          ...current,
           head: stored.id!,
           sequence: stored.sequence,
-        } satisfies StoredRef),
-      );
-      await this.store.sync();
-      this.#commits.set(stored.id!, { offset, value: stored });
-      this.#branches.set(branch, {
-        ...current,
-        head: stored.id!,
-        sequence: stored.sequence,
-      });
+        });
+      }
     }
   }
 
@@ -1382,6 +1407,11 @@ export type NodeStorageOptions = Readonly<{
   /** Explicitly upgrade the exact schema obtained by removing these nullable,
    * non-indexed columns. Existing rows receive null; historical commits are unchanged. */
   addNullableColumns?: Readonly<Record<string, readonly string[]>>;
+  /** Ordered additions, oldest first. Opens any declared intermediate schema and
+   * applies only the remaining steps. Do not combine with addNullableColumns. */
+  nullableColumnMigrations?: readonly Readonly<
+    Record<string, readonly string[]>
+  >[];
   cacheBytes?: number;
   maxEntries?: number;
   memory?: MemoryManager;
