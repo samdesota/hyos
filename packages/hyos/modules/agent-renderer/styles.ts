@@ -173,49 +173,22 @@ export const agentStyles = String.raw`
   }
   .conversation.side-open { grid-template-columns: minmax(0, 1fr) min(var(--patch-panel-width, 520px), calc(100% - 360px)); }
   .conversation.side-collapsed { grid-template-columns: minmax(0, 1fr) auto; }
-  .conversation.side-collapsed.browser-open {
-    grid-template-columns: minmax(0, 1fr) auto minmax(340px, 460px);
-  }
-  .conversation.side-open.browser-open {
-    grid-template-columns:
-      minmax(0, 1fr)
-      min(var(--patch-panel-width, 520px), calc(100% - 820px))
-      minmax(340px, 460px);
-  }
   .conversation-head { display: flex; align-items: center; gap: 12px; padding: 16px 22px; border-bottom: 1px solid #2b2c28; }
   .conversation-title { min-width: 0; }
   .conversation-title strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .conversation-title span { color: #898b82; font-size: 12px; }
   .cancel { margin-left: auto; padding: 8px 11px; color: #ffb0a8; background: #3a2826; }
-  .patch-toggle {
-    margin-left: auto; padding: 7px 10px; border: 1px solid #3a3c35; border-radius: 8px;
-    color: #aaaCA2; background: transparent; cursor: pointer;
-  }
-  .cancel + .patch-toggle { margin-left: 0; }
-  .patch-toggle:hover, .patch-toggle.active { color: #e3e2dc; background: #292b26; }
-  .patch-toggle span { margin-left: 5px; color: #d9ff62; font-size: 11px; }
-  .browser-toggle {
-    margin-left: auto; padding: 7px 10px; border: 1px solid #3a3c35; border-radius: 8px;
-    color: #aaaCA2; background: transparent; cursor: pointer;
-  }
-  .cancel + .browser-toggle { margin-left: 0; }
-  .browser-toggle:hover, .browser-toggle.active { color: #e3e2dc; background: #292b26; }
-  .browser-panel {
-    position: relative; grid-column: 3; grid-row: 1 / -1;
-    display: flex; flex-direction: column; min-width: 0; min-height: 0;
-    border-left: 1px solid #30312d; background: #1d1e1b;
-  }
   .browser-panel-toolbar {
     display: flex; align-items: center; gap: 6px;
     min-height: 67px; padding: 12px;
     border-bottom: 1px solid #30312d;
   }
-  .browser-nav, .browser-panel-close {
+  .browser-nav {
     flex: none; display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
     border: 0; border-radius: 7px; color: #8e9087; background: transparent;
     cursor: pointer; font-size: 15px; line-height: 1;
   }
-  .browser-nav:hover:not(:disabled), .browser-panel-close:hover { color: #eceae5; background: #30312d; }
+  .browser-nav:hover:not(:disabled) { color: #eceae5; background: #30312d; }
   .browser-address {
     flex: 1; min-width: 0; height: 28px; padding: 0 10px;
     border: 1px solid #3a3c35; border-radius: 8px; outline: 0;
@@ -230,11 +203,6 @@ export const agentStyles = String.raw`
     color: #72746c; font-size: 12px;
   }
   .browser-panel-empty p { margin: 0; }
-  .browser-panel-empty button {
-    padding: 6px 12px; border: 0; border-radius: 8px;
-    color: #10120e; background: #d9ff62; font-size: 12px; font-weight: 650; cursor: pointer;
-  }
-  .browser-panel-empty button:hover { background: #e4ff86; }
   .browser-panel-error {
     overflow: hidden; padding: 6px 12px; border-top: 1px solid #3f2c29;
     color: #ff8f83; font-size: 11px; text-overflow: ellipsis; white-space: nowrap;
@@ -460,18 +428,6 @@ export const agentStyles = String.raw`
   }
   .patch-resize-handle:hover::after, .resizing-patch-panel .patch-resize-handle::after { background: #8ca43f; }
   .resizing-patch-panel, .resizing-patch-panel * { cursor: col-resize !important; user-select: none !important; }
-  .patch-feed-head {
-    display: flex; align-items: center; justify-content: space-between; min-height: 67px; padding: 13px 14px 12px 16px;
-    border-bottom: 1px solid #30312d;
-  }
-  .patch-feed-head strong, .patch-feed-head span { display: block; }
-  .patch-feed-head strong { font-size: 13px; }
-  .patch-feed-head span { margin-top: 3px; color: #7f8178; font-size: 10px; }
-  .patch-feed-head button {
-    width: 28px; height: 28px; border: 0; border-radius: 7px; color: #8e9087; background: transparent;
-    cursor: pointer; font-size: 20px; line-height: 1;
-  }
-  .patch-feed-head button:hover { color: #eceae5; background: #30312d; }
   .patch-list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
   .patch-empty { padding: 24px 12px; color: #72746c; font-size: 12px; line-height: 1.5; text-align: center; }
   .patch-entry {
