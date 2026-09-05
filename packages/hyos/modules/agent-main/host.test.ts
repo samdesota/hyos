@@ -239,6 +239,57 @@ test("a terse resume carries the persisted session transcript", () => {
   );
 });
 
+test("the slim transcript keeps thinking and truncates tool responses", () => {
+  const now = new Date();
+  const message = (
+    overrides: Partial<import("../../capabilities/agent.js").AgentMessage>,
+  ) => ({
+    id: crypto.randomUUID(),
+    sessionId: "session-1",
+    role: "user" as const,
+    status: "complete" as const,
+    content: "",
+    activity: null,
+    lastError: null,
+    usage: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  });
+  const slim = promptWithPersistedContext("next", [
+    message({ content: "Add the diff engine" }),
+    message({
+      role: "system",
+      activity: { type: "commentary", text: "Reading the executor first" },
+    }),
+    message({
+      role: "system",
+      activity: {
+        type: "tool",
+        category: "read",
+        label: "Read files",
+        detail: `${"a".repeat(300)}${"b".repeat(200)}`,
+      },
+    }),
+    message({ role: "assistant", content: "Engine skeleton is in place." }),
+    message({ content: "next" }),
+  ]);
+
+  assert.match(slim, /user: Add the diff engine/);
+  assert.match(slim, /agent reasoning: Reading the executor first/);
+  assert.ok(
+    slim.includes(`agent tool (Read files): ${"a".repeat(300)}…`),
+    "keeps a 300-char hint of the tool response",
+  );
+  assert.ok(
+    !slim.includes("b".repeat(10)),
+    "drops the rest of the tool response",
+  );
+  assert.match(slim, /assistant: Engine skeleton is in place\./);
+  assert.match(slim, /<turn id="turn-1">/);
+  assert.match(slim, /<current-user-message>\nnext/);
+});
+
 async function waitFor<T>(
   probe: () => Promise<T> | T,
   label: string,

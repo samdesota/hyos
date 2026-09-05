@@ -225,7 +225,7 @@ export function createGlmProvider(
         ? {
             name: "session_transcript",
             description:
-              'Read the full transcript of one earlier turn of this agent session — including its thinking and tool responses, which are omitted from the persisted transcript. Pass the turn id from the <turn id="..."> tag in the persisted transcript. The current turn\'s detail is not available.',
+              'Read the full transcript of one earlier turn of this agent session — full thinking, tool responses, and patches, beyond the trimmed view in the persisted transcript. Pass the turn id from the <turn id="..."> tag in the persisted transcript. The current turn\'s detail is not available.',
             category: "read",
             parameters: {
               type: "object",
