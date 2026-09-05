@@ -12,7 +12,7 @@ import { createParallelSearch } from "./parallel-search.js";
 import { environmentPrompt } from "./prompt.js";
 import { agentToolbelt, runToolCalls } from "./toolbelt.js";
 
-/** Total context window for the GPT-5.6 codex models, in tokens. */
+/** Context window reported by the codex backend for the listed models. */
 const CODEX_CONTEXT_WINDOW = 272_000;
 
 type CodexProviderConfig = Readonly<{
@@ -52,6 +52,7 @@ export function createCodexProvider(
       id: "codex",
       label: "Codex",
       models: [
+        { id: "gpt-6-astra", label: "GPT-6 Astra" },
         { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
         { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
         { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },

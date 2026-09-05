@@ -456,3 +456,12 @@ test("createAgentProviders wires the codex auth directory override", async () =>
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("codex offers the gpt-6-astra model", () => {
+  const { summary } = createCodexProvider();
+  assert.ok(
+    summary.models.some(
+      (model) => model.id === "gpt-6-astra" && model.label === "GPT-6 Astra",
+    ),
+  );
+});
