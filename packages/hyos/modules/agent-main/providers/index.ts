@@ -8,6 +8,9 @@ export type { AgentProvider, AgentRunInput, AgentRunResult } from "./types.js";
 export function createAgentProviders(
   enabled: readonly string[],
   config: Readonly<{
+    codex?: Readonly<{
+      authDirectory?: string;
+    }>;
     claude?: Readonly<{
       binaryPath?: string;
       configDirectory?: string;
@@ -21,7 +24,7 @@ export function createAgentProviders(
 ): ReadonlyMap<string, AgentProvider> {
   const available = new Map(
     [
-      createCodexProvider(),
+      createCodexProvider(config.codex),
       createClaudeProvider(config.claude),
       createGlmProvider(config.glm),
     ].map((provider) => [provider.summary.id, provider]),

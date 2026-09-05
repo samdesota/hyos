@@ -15,6 +15,9 @@ import { createAgentStore } from "./store.js";
 type AgentMainConfig = Readonly<{
   storagePath: string;
   providers: readonly string[];
+  codex?: Readonly<{
+    authDirectory?: string;
+  }>;
   claude?: Readonly<{
     binaryPath?: string;
     configDirectory?: string;
@@ -61,6 +64,7 @@ export = defineModule<AgentMainConfig>({
       remote,
       store,
       providers: createAgentProviders(config.providers, {
+        codex: config.codex,
         claude: config.claude,
         glm: config.glm
           ? {

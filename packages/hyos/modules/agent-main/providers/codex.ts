@@ -16,8 +16,8 @@ import { agentToolbelt, runToolCalls } from "./toolbelt.js";
 const CODEX_CONTEXT_WINDOW = 272_000;
 
 type CodexProviderConfig = Readonly<{
-  /** Codex CLI auth file (defaults to ~/.codex/auth.json). */
-  authFile?: string;
+  /** Directory holding the codex CLI's auth.json (defaults to ~/.codex). */
+  authDirectory?: string;
   baseUrl?: string;
   fetch?: typeof fetch;
 }>;
@@ -42,7 +42,7 @@ async function errorText(response: Response): Promise<string> {
 export function createCodexProvider(
   config: CodexProviderConfig = {},
 ): AgentProvider {
-  const authFile = config.authFile ?? codexAuthFile();
+  const authFile = codexAuthFile(config.authDirectory);
   const endpoint = (config.baseUrl ?? CODEX_RESPONSES_URL).replace(/\/$/, "");
   const request = config.fetch ?? fetch;
   const search = createParallelSearch({ fetch: config.fetch });

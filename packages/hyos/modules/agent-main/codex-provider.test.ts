@@ -10,6 +10,7 @@ import type {
 } from "../../capabilities/agent.js";
 import { CODEX_RESPONSES_URL } from "./providers/codex-responses.js";
 import { createCodexProvider } from "./providers/codex.js";
+import { createAgentProviders } from "./providers/index.js";
 import type { AgentRunInput, AgentRunSink } from "./providers/types.js";
 
 function sse(...events: readonly object[]): Response {
@@ -18,16 +19,16 @@ function sse(...events: readonly object[]): Response {
   );
 }
 
-async function authFixture(): Promise<string> {
+/** Temporary directory holding a valid codex auth.json. */
+async function authDirectoryFixture(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "hyos-codex-auth-"));
-  const authFile = join(directory, "auth.json");
   await writeFile(
-    authFile,
+    join(directory, "auth.json"),
     JSON.stringify({
       tokens: { access_token: "tok-123", account_id: "acc-123" },
     }),
   );
-  return authFile;
+  return directory;
 }
 
 type RecordedActivity = Readonly<{
@@ -103,7 +104,7 @@ const finalEvents = (text: string, usage: object) => [
 
 test("codex runs the hyos tool loop over the ChatGPT-subscription backend", async () => {
   const folder = await mkdtemp(join(tmpdir(), "hyos-codex-"));
-  const authFile = await authFixture();
+  const authDirectory = await authDirectoryFixture();
   await writeFile(join(folder, "notes.md"), "Secret notes\n");
   try {
     const requests: {
@@ -172,7 +173,7 @@ test("codex runs the hyos tool loop over the ChatGPT-subscription backend", asyn
         }),
       );
     };
-    const provider = createCodexProvider({ authFile, fetch: fakeFetch });
+    const provider = createCodexProvider({ authDirectory, fetch: fakeFetch });
     const { sink, activities, responses, usages } = recordingSink();
     const result = await provider.run(
       runInput({ folder }),
@@ -242,7 +243,7 @@ test("codex runs the hyos tool loop over the ChatGPT-subscription backend", asyn
 
 test("codex writes files and reports patch activities", async () => {
   const folder = await mkdtemp(join(tmpdir(), "hyos-codex-"));
-  const authFile = await authFixture();
+  const authDirectory = await authDirectoryFixture();
   try {
     const writeArgs = JSON.stringify({
       filePath: "answer.ts",
@@ -277,7 +278,7 @@ test("codex writes files and reports patch activities", async () => {
         }),
       );
     };
-    const provider = createCodexProvider({ authFile, fetch: fakeFetch });
+    const provider = createCodexProvider({ authDirectory, fetch: fakeFetch });
     const { sink, activities, responses } = recordingSink();
     const result = await provider.run(
       runInput({ folder }),
@@ -311,7 +312,7 @@ test("codex writes files and reports patch activities", async () => {
 
 test("codex withholds edit tools and blocks them on investigate-only turns", async () => {
   const folder = await mkdtemp(join(tmpdir(), "hyos-codex-"));
-  const authFile = await authFixture();
+  const authDirectory = await authDirectoryFixture();
   try {
     const writeArgs = JSON.stringify({
       filePath: "blocked.ts",
@@ -347,7 +348,7 @@ test("codex withholds edit tools and blocks them on investigate-only turns", asy
         }),
       );
     };
-    const provider = createCodexProvider({ authFile, fetch: fakeFetch });
+    const provider = createCodexProvider({ authDirectory, fetch: fakeFetch });
     const { sink, activities } = recordingSink();
     await provider.run(
       runInput({ folder, intent: "investigate" }),
@@ -378,13 +379,13 @@ test("codex withholds edit tools and blocks them on investigate-only turns", asy
 });
 
 test("codex maps reasoning effort into the request", async () => {
-  const authFile = await authFixture();
+  const authDirectory = await authDirectoryFixture();
   const bodies: Record<string, unknown>[] = [];
   const fakeFetch: typeof fetch = async (_url, init) => {
     bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
     return sse(...finalEvents("Done.", { input_tokens: 10, output_tokens: 2 }));
   };
-  const provider = createCodexProvider({ authFile, fetch: fakeFetch });
+  const provider = createCodexProvider({ authDirectory, fetch: fakeFetch });
   await provider.run(
     runInput({ reasoningEffort: "max" }),
     recordingSink().sink,
@@ -401,15 +402,15 @@ test("codex maps reasoning effort into the request", async () => {
 
 test("codex requires ChatGPT subscription auth before running", async () => {
   const provider = createCodexProvider({
-    authFile: join(tmpdir(), "hyos-codex-missing-auth.json"),
+    authDirectory: join(tmpdir(), "hyos-codex-missing-auth"),
   });
   await assert.rejects(() => provider.prepare!(), /codex login/);
 });
 
 test("codex surfaces HTTP errors and hints at re-login on 401", async () => {
-  const authFile = await authFixture();
+  const authDirectory = await authDirectoryFixture();
   const provider = createCodexProvider({
-    authFile,
+    authDirectory,
     fetch: async () =>
       new Response(JSON.stringify({ error: { message: "token expired" } }), {
         status: 401,
@@ -424,4 +425,34 @@ test("codex surfaces HTTP errors and hints at re-login on 401", async () => {
       ),
     /Codex request failed: token expired .*codex login/,
   );
+});
+
+test("createAgentProviders wires the codex auth directory override", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hyos-codex-wiring-"));
+  try {
+    const providers = createAgentProviders(["codex"], {
+      codex: { authDirectory: directory },
+    });
+    const provider = providers.get("codex");
+    assert.ok(provider);
+    // Without auth.json, preparation fails pointing at the override directory.
+    await assert.rejects(
+      () => provider.prepare!(),
+      (error: unknown) => {
+        assert.match(String(error), /no auth file at .*auth\.json/);
+        assert.ok(String(error).includes(join(directory, "auth.json")));
+        return true;
+      },
+    );
+    // Once the CLI-style auth file exists in the override, preparation succeeds.
+    await writeFile(
+      join(directory, "auth.json"),
+      JSON.stringify({
+        tokens: { access_token: "tok-1", account_id: "acc-1" },
+      }),
+    );
+    await provider.prepare!();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
