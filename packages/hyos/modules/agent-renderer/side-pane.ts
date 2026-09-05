@@ -82,6 +82,37 @@ export function reconcileSideTabs(
 }
 
 /**
+ * A session's private side-pane state: the strip's tabs and the focused tab
+ * id. Host browser tabs are global, but each session's strip only shows the
+ * host tabs it adopted, so switching sessions swaps the pane — releasing the
+ * outgoing session's presentations — while its pages keep running in the
+ * host for the session to re-adopt later.
+ */
+export type SideTabScope = Readonly<{
+  tabs: readonly SideTab[];
+  activeId: string | null;
+}>;
+
+/** Pane scope key while no session exists yet (the new-session view). */
+export const NEW_SESSION_SCOPE_KEY = "~new-session";
+
+export function sideTabScopeKey(sessionId: string | null): string {
+  return sessionId ?? NEW_SESSION_SCOPE_KEY;
+}
+
+/** The strip a session starts with: only the pinned Patches tab. */
+export function initialSideTabScope(): SideTabScope {
+  return { tabs: pinnedSideTabs, activeId: "patches" };
+}
+
+/** The host browser tab ids a scope's strip adopted. */
+export function scopeBrowserTabIds(scope: SideTabScope): TabId[] {
+  return scope.tabs.flatMap((tab) =>
+    tab.kind === "browser" ? [tab.tabId] : [],
+  );
+}
+
+/**
  * The side tab to focus after closing one: the next tab in strip order, else
  * the previous one — mirroring the browser host's fallback activation. Null
  * when the closed tab was unknown or nothing remains.

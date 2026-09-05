@@ -33,14 +33,18 @@ import { mountMarkdown } from "./markdown.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
 import {
   activeSideTab,
+  initialSideTabScope,
   isPinnedSideTab,
   neighborSideTabId,
   pinnedSideTabs,
   reconcileSideTabs,
+  scopeBrowserTabIds,
   sideTabDescriptors,
   sideTabLabel,
+  sideTabScopeKey,
   unadoptedHostTab,
   type SideTab,
+  type SideTabScope,
 } from "./side-pane.js";
 import { agentStyles } from "./styles.js";
 import { selectedMode } from "./mode-selection.js";
@@ -473,6 +477,28 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   );
   const [browserState, setBrowserState] = createSignal(emptyBrowserState);
   const [browserError, setBrowserError] = createSignal<string | null>(null);
+
+  // Each session owns its strip: switching sessions stashes the outgoing
+  // strip and adopts the incoming one, so browser tabs are private to a
+  // session while their pages keep running in the host in the background.
+  const sideTabScopes = new Map<string, SideTabScope>();
+  const swapSideTabScope = (incomingId: string | null): void => {
+    sideTabScopes.set(sideTabScopeKey(activeId()), {
+      tabs: sideTabs(),
+      activeId: activeSideTabId(),
+    });
+    const stashed = sideTabScopes.get(sideTabScopeKey(incomingId));
+    sideTabScopes.delete(sideTabScopeKey(incomingId));
+    // Host tabs may have closed while this session was inactive; dropping
+    // them here keeps a re-adopted strip from showing dead tabs.
+    const tabs = reconcileSideTabs(
+      stashed?.tabs ?? initialSideTabScope().tabs,
+      browserState(),
+    );
+    setSideTabs(tabs);
+    setActiveSideTabId(stashed?.activeId ?? "patches");
+  };
+
   const [patchPanelWidth, setPatchPanelWidth] = createSignal(520);
   let transcript: HTMLDivElement | undefined;
   let patchList: HTMLDivElement | undefined;
@@ -575,7 +601,11 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   void props.browserClient
     .execute({ type: "snapshot" })
     .then(acceptBrowserState)
-    .catch(() => {});
+    // A boot-time failure (host unloading) shows up in the browser tab
+    // content instead of leaving a silently dead strip.
+    .catch((value: unknown) => {
+      setBrowserError(value instanceof Error ? value.message : String(value));
+    });
 
   const runBrowser = async (
     command: BrowserCommand,
@@ -769,6 +799,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   const selectSession = async (sessionId: string): Promise<void> => {
     const generation = ++feedGeneration;
     closeFeed();
+    swapSideTabScope(sessionId);
     setActiveId(sessionId);
     syncHashToSession(sessionId);
     setPrompt("");
@@ -801,6 +832,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   const newSession = (): void => {
     feedGeneration += 1;
     closeFeed();
+    swapSideTabScope(null);
     setActiveId(null);
     syncHashToSession(null);
     setMessages([]);
@@ -878,6 +910,25 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     }
   };
 
+  // Archiving a session retires its browser tabs for real: the host pages
+  // close (the strip × stays for closing tabs one at a time while the
+  // session is active), and an unarchive later starts from a clean strip.
+  const closeSessionBrowserTabs = (sessionId: string): void => {
+    const active = activeId() === sessionId;
+    const scope = active
+      ? { tabs: sideTabs(), activeId: activeSideTabId() }
+      : sideTabScopes.get(sideTabScopeKey(sessionId));
+    sideTabScopes.delete(sideTabScopeKey(sessionId));
+    if (!scope) return;
+    if (active) {
+      setSideTabs(pinnedSideTabs);
+      setActiveSideTabId("patches");
+    }
+    for (const tabId of scopeBrowserTabIds(scope)) {
+      void runBrowser({ type: "close-tab", tabId });
+    }
+  };
+
   const setSessionArchived = async (
     sessionId: string,
     archived: boolean,
@@ -888,6 +939,9 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
         type: archived ? "archive-session" : "unarchive-session",
         sessionId,
       });
+      // Only after the archive succeeded, so a failed request leaves the
+      // session and its pages untouched.
+      if (archived) closeSessionBrowserTabs(sessionId);
     } catch (value) {
       showError(value);
     }
