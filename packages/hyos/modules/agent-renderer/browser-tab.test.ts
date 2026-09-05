@@ -2,11 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { BrowserState } from "../../capabilities/browser.js";
-import {
-  activeTabOf,
-  emptyBrowserState,
-  toolbarAddress,
-} from "./BrowserPanel.js";
+import { emptyBrowserState, tabOf, toolbarAddress } from "./browser-tab.js";
 
 function browserState(overrides: Partial<BrowserState> = {}): BrowserState {
   return {
@@ -38,24 +34,21 @@ function browserState(overrides: Partial<BrowserState> = {}): BrowserState {
   };
 }
 
-test("the browser panel presents the active tab", () => {
-  assert.equal(activeTabOf(browserState())?.id, "tab-1");
-  assert.equal(
-    activeTabOf(browserState({ activeTabId: "tab-2" }))?.url,
-    "https://hyos.dev/",
-  );
+test("the browser tab content presents the tab the strip focuses", () => {
+  assert.equal(tabOf(browserState(), "tab-1")?.id, "tab-1");
+  assert.equal(tabOf(browserState(), "tab-2")?.url, "https://hyos.dev/");
 });
 
-test("a missing or stale active tab presents nothing", () => {
-  assert.equal(activeTabOf(emptyBrowserState), null);
-  assert.equal(activeTabOf(browserState({ activeTabId: null })), null);
+test("a missing or stale tab id presents nothing", () => {
+  assert.equal(tabOf(emptyBrowserState, "tab-1"), null);
+  assert.equal(tabOf(browserState(), null), null);
   // Tab ids change when browser.main hot-reloads; a stale id must not
   // present a presentation the host no longer knows.
-  assert.equal(activeTabOf(browserState({ activeTabId: "tab-9" })), null);
+  assert.equal(tabOf(browserState(), "tab-9"), null);
 });
 
 test("the toolbar keeps a draft address while editing and follows the tab otherwise", () => {
-  const tab = activeTabOf(browserState());
+  const tab = tabOf(browserState(), "tab-1");
   assert.equal(toolbarAddress("https://a.dev/", tab, true), "https://a.dev/");
   assert.equal(
     toolbarAddress("https://a.dev/", tab, false),

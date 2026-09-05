@@ -1,33 +1,116 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { BrowserState, TabId } from "../../capabilities/browser.js";
+import { emptyBrowserState } from "./browser-tab.js";
 import {
   activeSideTab,
   isPinnedSideTab,
+  neighborSideTabId,
   pinnedSideTabs,
+  reconcileSideTabs,
   sideTabDescriptors,
+  sideTabLabel,
+  unadoptedHostTab,
+  type SideTab,
 } from "./side-pane.js";
+
+const browserSideTab = (tabId: TabId): SideTab => ({
+  id: tabId,
+  kind: "browser",
+  tabId,
+});
+
+function hostState(tabIds: TabId[]): BrowserState {
+  return {
+    generation: 1,
+    sequence: 1,
+    activeTabId: tabIds[0] ?? null,
+    tabs: tabIds.map((id) => ({
+      id,
+      url: `https://${id}.example/`,
+      title: id,
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      error: null,
+    })),
+  };
+}
 
 test("the patches tab is pinned to the strip and cannot be closed", () => {
   assert.deepEqual(pinnedSideTabs, [{ id: "patches", kind: "patches" }]);
   assert.equal(isPinnedSideTab({ id: "patches", kind: "patches" }), true);
+  assert.equal(isPinnedSideTab(browserSideTab("tab-1")), false);
 });
 
 test("the pane shows the active tab, falling back to a pinned tab on a stale id", () => {
-  assert.equal(activeSideTab(pinnedSideTabs, "patches")?.id, "patches");
-  assert.equal(activeSideTab(pinnedSideTabs, null)?.id, "patches");
+  const tabs = [...pinnedSideTabs, browserSideTab("tab-1")];
+  assert.equal(activeSideTab(tabs, "tab-1")?.id, "tab-1");
+  assert.equal(activeSideTab(tabs, "patches")?.id, "patches");
+  assert.equal(activeSideTab(tabs, null)?.id, "patches");
   // Dynamic tab ids disappear (closed, or dropped by a hot reload); the
   // selection must fall back to the pinned tab instead of blanking.
-  assert.equal(activeSideTab(pinnedSideTabs, "tab-9")?.id, "patches");
+  assert.equal(activeSideTab(tabs, "tab-9")?.id, "patches");
   assert.equal(activeSideTab([], null), null);
 });
 
 test("every tab kind has a strip descriptor with a label and glyph", () => {
-  const kinds = new Set(pinnedSideTabs.map((tab) => tab.kind));
-  assert.ok(kinds.size > 0);
-  for (const kind of kinds) {
+  for (const kind of ["patches", "browser"] as const) {
     const descriptor = sideTabDescriptors[kind];
     assert.ok(descriptor.label.length > 0);
     assert.ok(descriptor.icon.length > 0);
   }
+});
+
+test("+ adopts the first host tab the strip does not already show", () => {
+  const state = hostState(["tab-1", "tab-2"]);
+  assert.equal(unadoptedHostTab(state, pinnedSideTabs)?.id, "tab-1");
+  assert.equal(
+    unadoptedHostTab(state, [...pinnedSideTabs, browserSideTab("tab-1")])?.id,
+    "tab-2",
+  );
+  assert.equal(
+    unadoptedHostTab(state, [
+      ...pinnedSideTabs,
+      browserSideTab("tab-1"),
+      browserSideTab("tab-2"),
+    ]),
+    null,
+  );
+  // A host with no tabs at all has nothing to adopt.
+  assert.equal(unadoptedHostTab(emptyBrowserState, pinnedSideTabs), null);
+});
+
+test("reconciliation drops browser tabs the host no longer knows", () => {
+  const tabs = [
+    ...pinnedSideTabs,
+    browserSideTab("tab-1"),
+    browserSideTab("tab-2"),
+  ];
+  // A hot reload recreates browser.main and its tab ids.
+  const reloaded = reconcileSideTabs(tabs, hostState(["tab-1"]));
+  assert.deepEqual(reloaded, [...pinnedSideTabs, browserSideTab("tab-1")]);
+  // Nothing stale: the same array comes back so publishes don't churn.
+  assert.equal(reconcileSideTabs(tabs, hostState(["tab-1", "tab-2"])), tabs);
+});
+
+test("closing a side tab focuses the nearest remaining neighbor", () => {
+  const tabs = [
+    pinnedSideTabs[0],
+    browserSideTab("tab-1"),
+    browserSideTab("tab-2"),
+  ];
+  assert.equal(neighborSideTabId(tabs, "tab-2"), "tab-1");
+  assert.equal(neighborSideTabId(tabs, "tab-1"), "tab-2");
+  assert.equal(neighborSideTabId(tabs, "gone"), null);
+});
+
+test("browser strip tabs are labelled by their page title, with a fallback", () => {
+  assert.equal(sideTabLabel(pinnedSideTabs[0], hostState([])), "Patches");
+  assert.equal(
+    sideTabLabel(browserSideTab("tab-1"), hostState(["tab-1"])),
+    "tab-1",
+  );
+  assert.equal(sideTabLabel(browserSideTab("tab-9"), hostState([])), "Browser");
 });

@@ -413,13 +413,25 @@ export const agentStyles = String.raw`
   }
   .side-tab {
     display: inline-flex; align-items: center; gap: 6px;
-    padding: 6px 10px; border: 1px solid #3a3c35; border-radius: 8px;
+    max-width: 170px; padding: 6px 10px; border: 1px solid #3a3c35; border-radius: 8px;
     color: #aaaca2; background: transparent; cursor: pointer; font-size: 12px;
   }
   .side-tab:hover, .side-tab.active { color: #e3e2dc; background: #292b26; }
   .side-tab.active { border-color: #4a4d43; }
-  .side-tab-icon { font-size: 13px; line-height: 1; }
-  .side-tab-badge { color: #d9ff62; font-size: 11px; }
+  .side-tab-icon { flex: none; font-size: 13px; line-height: 1; }
+  .side-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .side-tab-badge { flex: none; color: #d9ff62; font-size: 11px; }
+  .side-tab-close {
+    flex: none; display: grid; place-items: center; width: 16px; height: 16px;
+    margin-right: -3px; border-radius: 5px; color: #8e9087; font-size: 12px; line-height: 1;
+  }
+  .side-tab-close:hover { color: #eceae5; background: #3f423a; }
+  .side-tab-add {
+    flex: none; display: grid; place-items: center; width: 26px; height: 26px; padding: 0;
+    border: 1px solid #3a3c35; border-radius: 7px; color: #8e9087; background: transparent;
+    cursor: pointer; font-size: 14px; line-height: 1;
+  }
+  .side-tab-add:hover { color: #eceae5; background: #292b26; }
   .side-collapse {
     margin-left: auto; display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
     border: 0; border-radius: 7px; color: #8e9087; background: transparent;
@@ -427,6 +439,7 @@ export const agentStyles = String.raw`
   }
   .side-collapse:hover { color: #eceae5; background: #30312d; }
   .side-pane-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .browser-tab { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .side-pane.collapsed { width: 46px; }
   .side-pane.collapsed .patch-resize-handle { display: none; }
   .side-pane.collapsed .side-tabs {
@@ -435,7 +448,8 @@ export const agentStyles = String.raw`
   }
   .side-pane.collapsed .side-collapse { order: -1; margin-left: 0; }
   .side-pane.collapsed .side-tab { padding: 8px; }
-  .side-pane.collapsed .side-tab-label, .side-pane.collapsed .side-tab-badge { display: none; }
+  .side-pane.collapsed .side-tab-label, .side-pane.collapsed .side-tab-badge,
+  .side-pane.collapsed .side-tab-close { display: none; }
   .patch-resize-handle {
     position: absolute; z-index: 2; top: 0; bottom: 0; left: -5px; width: 10px;
     cursor: col-resize; touch-action: none;

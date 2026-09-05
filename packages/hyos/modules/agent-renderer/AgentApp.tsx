@@ -18,19 +18,29 @@ import type {
   AgentProviderSummary,
   AgentSessionSummary,
 } from "../../capabilities/agent.js";
+import type {
+  BrowserCommand,
+  BrowserState,
+} from "../../capabilities/browser.js";
 import { stripPlanBlocks } from "../../capabilities/plan.js";
 import type { BrowserClient } from "../browser-client/types.js";
 import type { BrowserViewModule } from "../browser-view/types.js";
 import type { AgentClient, AgentMessageFeed } from "./client.js";
 import { createAutoScrollController } from "./auto-scroll.js";
-import { BrowserPanel } from "./BrowserPanel.js";
+import { BrowserTabContent, emptyBrowserState } from "./browser-tab.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { mountMarkdown } from "./markdown.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
 import {
   activeSideTab,
+  isPinnedSideTab,
+  neighborSideTabId,
   pinnedSideTabs,
+  reconcileSideTabs,
   sideTabDescriptors,
+  sideTabLabel,
+  unadoptedHostTab,
+  type SideTab,
 } from "./side-pane.js";
 import { agentStyles } from "./styles.js";
 import { selectedMode } from "./mode-selection.js";
@@ -456,11 +466,14 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   const patchScroll = createAutoScrollController();
   const narrowSide = window.matchMedia("(max-width: 1080px)");
   const [sideCollapsed, setSideCollapsed] = createSignal(narrowSide.matches);
+  const [sideTabs, setSideTabs] =
+    createSignal<readonly SideTab[]>(pinnedSideTabs);
   const [activeSideTabId, setActiveSideTabId] = createSignal<string | null>(
     "patches",
   );
+  const [browserState, setBrowserState] = createSignal(emptyBrowserState);
+  const [browserError, setBrowserError] = createSignal<string | null>(null);
   const [patchPanelWidth, setPatchPanelWidth] = createSignal(520);
-  const [browserPanelOpen, setBrowserPanelOpen] = createSignal(false);
   let transcript: HTMLDivElement | undefined;
   let patchList: HTMLDivElement | undefined;
   let modelPicker: HTMLDivElement | undefined;
@@ -524,8 +537,12 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   );
   const patches = createMemo(() => patchEntries(messages()));
   const sideActive = createMemo(() =>
-    activeSideTab(pinnedSideTabs, activeSideTabId()),
+    activeSideTab(sideTabs(), activeSideTabId()),
   );
+  const activeBrowserTab = createMemo(() => {
+    const tab = sideActive();
+    return tab?.kind === "browser" ? tab : null;
+  });
   const activePlan = createMemo(() => activeSession()?.plan ?? null);
   const planAfterIndex = createMemo(() =>
     activePlan() ? planPanelIndex(timeline()) : -1,
@@ -545,6 +562,83 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     if (event.matches) setSideCollapsed(true);
   };
   narrowSide.addEventListener("change", collapseSideWhenNarrow);
+
+  // Browser host state drives the strip's browser tabs: every publish also
+  // reconciles, so tabs closed or lost to a browser.main hot reload
+  // disappear from the strip instead of presenting a dead view.
+  const acceptBrowserState = (next: BrowserState): void => {
+    setBrowserState(next);
+    setSideTabs((tabs) => reconcileSideTabs(tabs, next));
+  };
+  const unsubscribeBrowser = props.browserClient.subscribe(acceptBrowserState);
+  onCleanup(() => unsubscribeBrowser());
+  void props.browserClient
+    .execute({ type: "snapshot" })
+    .then(acceptBrowserState)
+    .catch(() => {});
+
+  const runBrowser = async (
+    command: BrowserCommand,
+  ): Promise<BrowserState | null> => {
+    setBrowserError(null);
+    try {
+      const next = await props.browserClient.execute(command);
+      acceptBrowserState(next);
+      return next;
+    } catch (value) {
+      setBrowserError(value instanceof Error ? value.message : String(value));
+      return null;
+    }
+  };
+
+  // Keep the host's active tab on the focused strip tab so toolbar commands
+  // (navigate, back, …) address the page the pane is showing.
+  createEffect(() => {
+    const tab = sideActive();
+    if (tab?.kind !== "browser") return;
+    if (browserState().activeTabId === tab.tabId) return;
+    void runBrowser({ type: "activate-tab", tabId: tab.tabId });
+  });
+
+  // `+` focuses a host tab the strip does not already show, and only creates
+  // a new one once every host tab is already in the strip.
+  const openBrowserSideTab = (): void => {
+    const adoptable = unadoptedHostTab(browserState(), sideTabs());
+    if (adoptable) {
+      setSideTabs((tabs) => [
+        ...tabs,
+        { id: adoptable.id, kind: "browser", tabId: adoptable.id },
+      ]);
+      setActiveSideTabId(adoptable.id);
+      setSideCollapsed(false);
+      return;
+    }
+    void runBrowser({ type: "create-tab" }).then((next) => {
+      const tabId = next?.activeTabId;
+      if (!tabId) return;
+      setSideTabs((tabs) =>
+        tabs.some((tab) => tab.kind === "browser" && tab.tabId === tabId)
+          ? tabs
+          : [...tabs, { id: tabId, kind: "browser", tabId }],
+      );
+      setActiveSideTabId(tabId);
+      setSideCollapsed(false);
+    });
+  };
+
+  const closeSideTab = (tab: SideTab): void => {
+    if (isPinnedSideTab(tab)) return;
+    const neighborId = neighborSideTabId(sideTabs(), tab.id);
+    setSideTabs((tabs) => tabs.filter(({ id }) => id !== tab.id));
+    if (activeSideTabId() === tab.id) {
+      setActiveSideTabId(neighborId ?? "patches");
+    }
+    // Closing the host tab releases its presentation and, when it was the
+    // last one, makes the host recreate a fresh tab for the next `+` click.
+    if (tab.kind === "browser") {
+      void runBrowser({ type: "close-tab", tabId: tab.tabId });
+    }
+  };
 
   const closeModelMenuOnPointerDown = (event: PointerEvent): void => {
     if (event.target instanceof Node && !modelPicker?.contains(event.target)) {
@@ -1224,7 +1318,6 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                 classList={{
                   "side-open": !sideCollapsed(),
                   "side-collapsed": sideCollapsed(),
-                  "browser-open": browserPanelOpen(),
                 }}
                 style={`--patch-panel-width: ${patchPanelWidth()}px`}
               >
@@ -1250,16 +1343,6 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                       Stop
                     </button>
                   </Show>
-                  <button
-                    class="browser-toggle"
-                    classList={{ active: browserPanelOpen() }}
-                    type="button"
-                    aria-expanded={browserPanelOpen()}
-                    aria-controls="agent-browser-panel"
-                    onClick={() => setBrowserPanelOpen((open) => !open)}
-                  >
-                    Browser
-                  </button>
                 </header>
                 <div
                   class="transcript"
@@ -1473,7 +1556,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                     role="tablist"
                     aria-label="Side panels"
                   >
-                    <For each={pinnedSideTabs}>
+                    <For each={sideTabs()}>
                       {(tab) => (
                         <button
                           type="button"
@@ -1482,7 +1565,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                           classList={{ active: sideActive()?.id === tab.id }}
                           aria-selected={sideActive()?.id === tab.id}
                           aria-controls="agent-side-pane-content"
-                          title={sideTabDescriptors[tab.kind].label}
+                          title={sideTabLabel(tab, browserState())}
                           onClick={() => {
                             setActiveSideTabId(tab.id);
                             setSideCollapsed(false);
@@ -1492,16 +1575,49 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                             {sideTabDescriptors[tab.kind].icon}
                           </span>
                           <span class="side-tab-label">
-                            {sideTabDescriptors[tab.kind].label}
+                            {sideTabLabel(tab, browserState())}
                           </span>
                           <Show when={tab.kind === "patches"}>
                             <span class="side-tab-badge">
                               {patches().length}
                             </span>
                           </Show>
+                          <Show when={!isPinnedSideTab(tab)}>
+                            <span
+                              class="side-tab-close"
+                              role="button"
+                              tabindex="0"
+                              aria-label={`Close ${sideTabLabel(tab, browserState())}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                closeSideTab(tab);
+                              }}
+                              onKeyDown={(event) => {
+                                if (
+                                  event.key === "Enter" ||
+                                  event.key === " "
+                                ) {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  closeSideTab(tab);
+                                }
+                              }}
+                            >
+                              ×
+                            </span>
+                          </Show>
                         </button>
                       )}
                     </For>
+                    <button
+                      type="button"
+                      class="side-tab-add"
+                      aria-label="Open browser tab"
+                      title="Open browser tab"
+                      onClick={() => openBrowserSideTab()}
+                    >
+                      +
+                    </button>
                     <button
                       type="button"
                       class="side-collapse"
@@ -1587,16 +1703,20 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                         </Show>
                       </div>
                     </Show>
+                    <Show when={activeBrowserTab()} keyed>
+                      {(tab) => (
+                        <BrowserTabContent
+                          root={props.root}
+                          state={browserState()}
+                          tabId={tab.tabId}
+                          error={browserError()}
+                          onCommand={(command) => void runBrowser(command)}
+                          BrowserView={props.BrowserView}
+                        />
+                      )}
+                    </Show>
                   </div>
                 </aside>
-                <Show when={browserPanelOpen()}>
-                  <BrowserPanel
-                    root={props.root}
-                    client={props.browserClient}
-                    BrowserView={props.BrowserView}
-                    onClose={() => setBrowserPanelOpen(false)}
-                  />
-                </Show>
               </section>
             )}
           </Show>
