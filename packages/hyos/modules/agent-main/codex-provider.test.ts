@@ -8,6 +8,12 @@ import type {
   AgentActivity,
   AgentMessageStatus,
 } from "../../capabilities/agent.js";
+import { formatPlanBlock } from "../../capabilities/plan.js";
+import {
+  incrementalFirstRequest,
+  incrementalPlanRule,
+  incrementalReminder,
+} from "./providers/glm-turn-policy.js";
 import { CODEX_RESPONSES_URL } from "./providers/codex-responses.js";
 import { createCodexProvider } from "./providers/codex.js";
 import { createAgentProviders } from "./providers/index.js";
@@ -398,6 +404,73 @@ test("codex maps reasoning effort into the request", async () => {
     new AbortController().signal,
   );
   assert.deepEqual(bodies[1].reasoning, { effort: "low", summary: "auto" });
+});
+
+test("codex incremental runs wire the plan and reminders into the request", async () => {
+  const authDirectory = await authDirectoryFixture();
+  const bodies: Record<string, unknown>[] = [];
+  const fakeFetch: typeof fetch = async (_url, init) => {
+    bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return sse(
+      ...finalEvents("Here is the first step. Shall I proceed?", {
+        input_tokens: 10,
+        output_tokens: 2,
+      }),
+    );
+  };
+  const provider = createCodexProvider({ authDirectory, fetch: fakeFetch });
+  const tasks = [
+    { text: "Plan format + prompt policy", done: true },
+    { text: "Plan parser", done: false },
+  ] as const;
+  const promptText = (body: Record<string, unknown>): string => {
+    const input = body.input as {
+      type: string;
+      role: string;
+      content: { type: string; text: string }[];
+    }[];
+    assert.equal(input[0].type, "message");
+    assert.equal(input[0].role, "user");
+    return input[0].content[0].text;
+  };
+
+  for (const firstTurn of [true, false]) {
+    await provider.run(
+      runInput({
+        prompt: "Plan this",
+        mode: "incremental",
+        firstTurn,
+        reasoningEffort: "high",
+        plan: { tasks },
+      }),
+      recordingSink().sink,
+      new AbortController().signal,
+    );
+  }
+  const block = formatPlanBlock(tasks);
+  for (const [index, firstTurn] of [true, false].entries()) {
+    // The turn policy forces low effort regardless of the session's setting.
+    assert.deepEqual(bodies[index].reasoning, {
+      effort: "low",
+      summary: "auto",
+    });
+    const text = promptText(bodies[index]);
+    assert.ok(text.startsWith(`${block}\n\n`));
+    assert.ok(text.includes("current plan of record"));
+    assert.ok(text.includes("Plan this"));
+    assert.ok(text.includes(incrementalPlanRule));
+    assert.ok(text.endsWith(incrementalReminder));
+    assert.equal(text.includes(incrementalFirstRequest), firstTurn);
+  }
+
+  // Standard mode keeps the prompt bare and honors the requested effort.
+  await provider.run(
+    runInput({ reasoningEffort: "high", plan: { tasks } }),
+    recordingSink().sink,
+    new AbortController().signal,
+  );
+  assert.deepEqual(bodies[2].reasoning, { effort: "high", summary: "auto" });
+  assert.equal(promptText(bodies[2]), "Inspect the workspace.");
 });
 
 test("codex requires ChatGPT subscription auth before running", async () => {
