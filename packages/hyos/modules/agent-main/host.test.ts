@@ -6,6 +6,7 @@ import { hydb, memoryStorage } from "@hyos/hydb";
 import {
   createAgentHost,
   promptWithPersistedContext,
+  toolDetailKeepSet,
   turnTranscript,
 } from "./host.js";
 import { agentSchema } from "./model.js";
@@ -239,7 +240,7 @@ test("a terse resume carries the persisted session transcript", () => {
   );
 });
 
-test("the slim transcript keeps thinking and truncates tool responses", () => {
+test("the slim transcript keeps thinking and recent tool responses intact", () => {
   const now = new Date();
   const message = (
     overrides: Partial<import("../../capabilities/agent.js").AgentMessage>,
@@ -256,6 +257,7 @@ test("the slim transcript keeps thinking and truncates tool responses", () => {
     updatedAt: now,
     ...overrides,
   });
+  const toolDetail = `${"a".repeat(300)}${"b".repeat(200)}`;
   const slim = promptWithPersistedContext("next", [
     message({ content: "Add the diff engine" }),
     message({
@@ -268,7 +270,7 @@ test("the slim transcript keeps thinking and truncates tool responses", () => {
         type: "tool",
         category: "read",
         label: "Read files",
-        detail: `${"a".repeat(300)}${"b".repeat(200)}`,
+        detail: toolDetail,
       },
     }),
     message({ role: "assistant", content: "Engine skeleton is in place." }),
@@ -277,17 +279,122 @@ test("the slim transcript keeps thinking and truncates tool responses", () => {
 
   assert.match(slim, /user: Add the diff engine/);
   assert.match(slim, /agent reasoning: Reading the executor first/);
+  // Recent tool results stay intact — no short-hint truncation.
   assert.ok(
-    slim.includes(`agent tool (Read files): ${"a".repeat(300)}…`),
-    "keeps a 300-char hint of the tool response",
-  );
-  assert.ok(
-    !slim.includes("b".repeat(10)),
-    "drops the rest of the tool response",
+    slim.includes(`agent tool (Read files): ${toolDetail}`),
+    "keeps recent tool responses intact",
   );
   assert.match(slim, /assistant: Engine skeleton is in place\./);
   assert.match(slim, /<turn id="turn-1">/);
   assert.match(slim, /<current-user-message>\nnext/);
+});
+
+test("the tool window keeps the most recent results within budget, at least 3", () => {
+  const now = new Date();
+  const message = (
+    overrides: Partial<import("../../capabilities/agent.js").AgentMessage>,
+  ) => ({
+    id: crypto.randomUUID(),
+    sessionId: "session-1",
+    role: "user" as const,
+    status: "complete" as const,
+    content: "",
+    activity: null,
+    lastError: null,
+    usage: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  });
+  const tool = () =>
+    message({
+      role: "system",
+      activity: {
+        type: "tool",
+        category: "read",
+        label: "Read files",
+        detail: "x".repeat(40),
+      },
+    });
+
+  // Budget 100 chars: the three most recent fit (floor), the oldest does not.
+  const outside = tool();
+  const kept = [tool(), tool(), tool()];
+  const history = [
+    message({ content: "one" }),
+    outside,
+    message({ content: "two" }),
+    ...kept,
+    message({ content: "next" }),
+  ];
+  const keep = toolDetailKeepSet(history, history.length - 1, 100, 3);
+  assert.deepEqual([...keep].sort(), kept.map((m) => m.id).sort());
+
+  // The floor holds even when the recent results blow the budget entirely.
+  const flooredHistory = [
+    message({ content: "one" }),
+    outside,
+    ...kept,
+    message({ content: "next" }),
+  ];
+  const floored = toolDetailKeepSet(
+    flooredHistory,
+    flooredHistory.length - 1,
+    0,
+    3,
+  );
+  assert.deepEqual([...floored].sort(), kept.map((m) => m.id).sort());
+});
+
+test("the slim transcript clears tool detail outside the recent window", () => {
+  const now = new Date();
+  const message = (
+    overrides: Partial<import("../../capabilities/agent.js").AgentMessage>,
+  ) => ({
+    id: crypto.randomUUID(),
+    sessionId: "session-1",
+    role: "user" as const,
+    status: "complete" as const,
+    content: "",
+    activity: null,
+    lastError: null,
+    usage: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  });
+  const tool = (label: string, mark: string) =>
+    message({
+      role: "system",
+      activity: {
+        type: "tool",
+        category: "read",
+        label,
+        // 60k chars ≈ 15k tokens each: three fill the ~40k-token window.
+        detail: mark.repeat(60_000),
+      },
+    });
+  const slim = promptWithPersistedContext("next", [
+    message({ content: "Request 1" }),
+    tool("Logs one", "1"),
+    message({ role: "assistant", content: "Response 1" }),
+    message({ content: "Request 2" }),
+    tool("Logs two", "2"),
+    message({ role: "assistant", content: "Response 2" }),
+    message({ content: "Request 3" }),
+    tool("Logs three", "3"),
+    message({ role: "assistant", content: "Response 3" }),
+    message({ content: "Request 4" }),
+    tool("Logs four", "4"),
+    message({ role: "assistant", content: "Response 4" }),
+    message({ content: "next" }),
+  ]);
+
+  // The oldest result falls outside the ~40k-token window: stubbed, not kept.
+  assert.match(slim, /agent tool \(Logs one\): \[older tool result cleared\]/);
+  assert.ok(!slim.includes("1".repeat(500)), "oldest tool detail is gone");
+  // The most recent result stays intact.
+  assert.ok(slim.includes("4".repeat(500)), "recent tool detail survives");
 });
 
 test("the slim transcript drops thinking for turns older than the last 5", () => {
