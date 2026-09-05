@@ -290,6 +290,50 @@ test("the slim transcript keeps thinking and truncates tool responses", () => {
   assert.match(slim, /<current-user-message>\nnext/);
 });
 
+test("the slim transcript drops thinking for turns older than the last 5", () => {
+  const now = new Date();
+  const message = (
+    overrides: Partial<import("../../capabilities/agent.js").AgentMessage>,
+  ) => ({
+    id: crypto.randomUUID(),
+    sessionId: "session-1",
+    role: "user" as const,
+    status: "complete" as const,
+    content: "",
+    activity: null,
+    lastError: null,
+    usage: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  });
+  // Six prior turns: exactly the oldest falls outside the last-5 window.
+  const turns = Array.from({ length: 6 }, (_, turn) => [
+    message({ content: `Request ${turn + 1}` }),
+    message({
+      role: "system",
+      activity: {
+        type: "commentary",
+        text: `Reasoning for turn ${turn + 1}`,
+      },
+    }),
+    message({ role: "assistant", content: `Response ${turn + 1}` }),
+  ]).flat();
+  const slim = promptWithPersistedContext("next", [
+    ...turns,
+    message({ content: "next" }),
+  ]);
+
+  assert.match(slim, /last 5 turns/);
+  assert.doesNotMatch(slim, /Reasoning for turn 1\b/);
+  for (let turn = 2; turn <= 6; turn += 1) {
+    assert.match(slim, new RegExp(`Reasoning for turn ${turn}`));
+  }
+  // The old turn itself stays — only its thinking is dropped.
+  assert.match(slim, /user: Request 1/);
+  assert.match(slim, /assistant: Response 1/);
+});
+
 async function waitFor<T>(
   probe: () => Promise<T> | T,
   label: string,
