@@ -47,7 +47,7 @@ import {
   type SideTabScope,
 } from "./side-pane.js";
 import { agentStyles } from "./styles.js";
-import { selectedMode } from "./mode-selection.js";
+import { selectedMode, supportsIncremental } from "./mode-selection.js";
 import { syncHashToSession, sessionFromHash } from "./session-route.js";
 
 type AgentAppProps = Readonly<{
@@ -1299,7 +1299,9 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                                 <div class="reasoning-picker">
                                   <span>Reasoning</span>
                                   <div class="reasoning-options">
-                                    <Show when={providerId() === "glm"}>
+                                    <Show
+                                      when={supportsIncremental(providerId())}
+                                    >
                                       <button
                                         type="button"
                                         class="incremental-option"
@@ -1504,7 +1506,11 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                                 <div class="reasoning-picker">
                                   <span>Reasoning</span>
                                   <div class="reasoning-options">
-                                    <Show when={session().providerId === "glm"}>
+                                    <Show
+                                      when={supportsIncremental(
+                                        session().providerId,
+                                      )}
+                                    >
                                       <button
                                         type="button"
                                         class="incremental-option"

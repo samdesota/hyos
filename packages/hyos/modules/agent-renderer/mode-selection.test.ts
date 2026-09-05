@@ -1,19 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { selectedMode } from "./mode-selection.js";
+import { selectedMode, supportsIncremental } from "./mode-selection.js";
 
 test("mode selection defaults to incremental and honors persisted standard sessions", () => {
-  assert.equal(selectedMode("glm"), "incremental");
-  assert.equal(selectedMode("glm", "standard"), "standard");
-  assert.equal(selectedMode("glm", "standard", "incremental"), "incremental");
-  assert.equal(selectedMode("glm", "incremental", "standard"), "standard");
+  for (const provider of ["glm", "codex"]) {
+    assert.equal(selectedMode(provider), "incremental");
+    assert.equal(selectedMode(provider, "standard"), "standard");
+    assert.equal(
+      selectedMode(provider, "standard", "incremental"),
+      "incremental",
+    );
+    assert.equal(selectedMode(provider, "incremental", "standard"), "standard");
+  }
 });
 
-test("non-GLM providers cannot receive incremental mode from the selector", () => {
-  for (const provider of ["claude", "codex", ""]) {
+test("providers without incremental support cannot receive it from the selector", () => {
+  for (const provider of ["claude", ""]) {
     assert.equal(
       selectedMode(provider, "incremental", "incremental"),
       "standard",
     );
+    assert.equal(supportsIncremental(provider), false);
   }
+  assert.equal(supportsIncremental("glm"), true);
+  assert.equal(supportsIncremental("codex"), true);
 });
