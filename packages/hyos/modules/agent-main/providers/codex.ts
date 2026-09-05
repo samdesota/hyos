@@ -15,6 +15,17 @@ import { agentToolbelt, runToolCalls } from "./toolbelt.js";
 /** Context window reported by the codex backend for the listed models. */
 const CODEX_CONTEXT_WINDOW = 272_000;
 
+/**
+ * Reasoning efforts the request builder maps faithfully to the codex backend.
+ * The backend accepts higher efforts too, but hyos would silently downgrade
+ * them ("max" → "high"), so only the faithful subset is declared. Declaring
+ * efforts is also what makes the renderer's reasoning/mode picker render.
+ */
+const CODEX_REASONING = {
+  reasoningEfforts: ["low", "medium", "high"],
+  defaultReasoningEffort: "medium",
+} as const;
+
 type CodexProviderConfig = Readonly<{
   /** Directory holding the codex CLI's auth.json (defaults to ~/.codex). */
   authDirectory?: string;
@@ -52,10 +63,10 @@ export function createCodexProvider(
       id: "codex",
       label: "Codex",
       models: [
-        { id: "gpt-6-astra", label: "GPT-6 Astra" },
-        { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-        { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-        { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+        { id: "gpt-6-astra", label: "GPT-6 Astra", ...CODEX_REASONING },
+        { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", ...CODEX_REASONING },
+        { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", ...CODEX_REASONING },
+        { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", ...CODEX_REASONING },
       ],
     },
     async prepare() {

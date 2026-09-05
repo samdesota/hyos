@@ -465,3 +465,12 @@ test("codex offers the gpt-6-astra model", () => {
     ),
   );
 });
+
+test("codex models declare reasoning efforts so the reasoning picker renders", () => {
+  const { summary } = createCodexProvider();
+  assert.ok(summary.models.length > 0);
+  for (const model of summary.models) {
+    assert.deepEqual(model.reasoningEfforts, ["low", "medium", "high"]);
+    assert.equal(model.defaultReasoningEffort, "medium");
+  }
+});
