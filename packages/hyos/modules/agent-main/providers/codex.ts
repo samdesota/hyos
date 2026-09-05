@@ -1,95 +1,52 @@
-import type { ThreadItem } from "@openai/codex-sdk";
-
-import type {
-  AgentActivity,
-  AgentMessageStatus,
-  AgentToolCategory,
-} from "../../../capabilities/agent.js";
 import type { AgentProvider, AgentRunSink } from "./types.js";
-import { createPatchActivity, promptWithPatchContract } from "./patches.js";
+import { codexAuthFile, readCodexAuth } from "./codex-auth.js";
+import {
+  CODEX_RESPONSES_URL,
+  consumeResponsesStream,
+  functionCallOutputItem,
+  responsesRequestBody,
+  userMessage,
+} from "./codex-responses.js";
+import { glmTurnPolicy } from "./glm-turn-policy.js";
+import { createParallelSearch } from "./parallel-search.js";
+import { environmentPrompt } from "./prompt.js";
+import { agentToolbelt, runToolCalls } from "./toolbelt.js";
 
-function commandCategory(command: string): AgentToolCategory {
-  const executable = command.trim().split(/\s+/, 1)[0]?.split("/").pop();
-  if (
-    executable &&
-    ["cat", "find", "git", "head", "ls", "pwd", "rg", "sed", "tail"].includes(
-      executable,
-    )
-  ) {
-    return "read";
-  }
-  return "command";
-}
+/** Total context window for the GPT-5.6 codex models, in tokens. */
+const CODEX_CONTEXT_WINDOW = 272_000;
 
-function toolActivity(
-  item: Exclude<
-    ThreadItem,
-    { type: "agent_message" | "reasoning" | "file_change" }
-  >,
-): AgentActivity {
-  switch (item.type) {
-    case "command_execution": {
-      const category = commandCategory(item.command);
-      return {
-        type: "tool",
-        category,
-        label: category === "read" ? "Read files" : "Ran a command",
-        detail: [item.command, item.aggregated_output]
-          .filter(Boolean)
-          .join("\n\n"),
-      };
-    }
-    case "web_search":
-      return {
-        type: "tool",
-        category: "search",
-        label: "Searched the web",
-        detail: item.query,
-      };
-    case "todo_list":
-      return {
-        type: "tool",
-        category: "plan",
-        label: "Updated the plan",
-        detail: item.items
-          .map((entry) => `${entry.completed ? "✓" : "○"} ${entry.text}`)
-          .join("\n"),
-      };
-    case "mcp_tool_call":
-      return {
-        type: "tool",
-        category: "tool",
-        label: `Used ${item.tool}`,
-        detail: JSON.stringify(item.arguments, null, 2),
-      };
-    case "error":
-      return {
-        type: "tool",
-        category: "tool",
-        label: "Tool error",
-        detail: item.message,
-      };
+type CodexProviderConfig = Readonly<{
+  /** Codex CLI auth file (defaults to ~/.codex/auth.json). */
+  authFile?: string;
+  baseUrl?: string;
+  fetch?: typeof fetch;
+}>;
+
+async function errorText(response: Response): Promise<string> {
+  const body = (await response.text()).trim();
+  if (!body) return `${response.status} ${response.statusText}`;
+  try {
+    const parsed = JSON.parse(body) as { error?: { message?: string } };
+    return parsed.error?.message ?? body;
+  } catch {
+    return body;
   }
 }
 
-function itemStatus(
-  eventType: "item.started" | "item.updated" | "item.completed",
-  item: ThreadItem,
-): AgentMessageStatus {
-  if (item.type === "command_execution" || item.type === "mcp_tool_call") {
-    return item.status === "failed"
-      ? "failed"
-      : item.status === "completed"
-        ? "complete"
-        : "streaming";
-  }
-  if (item.type === "file_change") {
-    return item.status === "failed" ? "failed" : "complete";
-  }
-  return eventType === "item.completed" ? "complete" : "streaming";
-}
+/**
+ * The codex provider talks directly to the ChatGPT-subscription Responses API
+ * (the same endpoint the codex CLI uses) and runs hyos's own tool loop, so it
+ * behaves like the GLM provider: hyos tools, hyos patch activities, and no
+ * server-side session (context restoration is handled by the host).
+ */
+export function createCodexProvider(
+  config: CodexProviderConfig = {},
+): AgentProvider {
+  const authFile = config.authFile ?? codexAuthFile();
+  const endpoint = (config.baseUrl ?? CODEX_RESPONSES_URL).replace(/\/$/, "");
+  const request = config.fetch ?? fetch;
+  const search = createParallelSearch({ fetch: config.fetch });
 
-export function createCodexProvider(): AgentProvider {
   return {
     summary: {
       id: "codex",
@@ -100,108 +57,98 @@ export function createCodexProvider(): AgentProvider {
         { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
       ],
     },
+    async prepare() {
+      await readCodexAuth(authFile);
+    },
     async run(input, sink: AgentRunSink, signal) {
-      const { Codex } = await import("@openai/codex-sdk");
-      const codex = new Codex();
-      const options = {
-        model: input.modelId,
-        workingDirectory: input.folder,
-        skipGitRepoCheck: true,
-        sandboxMode: "workspace-write" as const,
-        approvalPolicy: "never" as const,
-      };
-      const thread = input.providerSessionId
-        ? codex.resumeThread(input.providerSessionId, options)
-        : codex.startThread(options);
-      const streamed = await thread.runStreamed(
-        promptWithPatchContract(input.prompt),
-        { signal },
+      const auth = await readCodexAuth(authFile);
+      const policy = glmTurnPolicy(
+        input,
+        environmentPrompt(input.folder, input.modelId),
       );
-      let providerSessionId = input.providerSessionId;
-      let pendingMessage: { id: string; text: string } | null = null;
-      const patchExplanations = new Map<string, string>();
-
-      const commitCommentary = async (): Promise<void> => {
-        if (!pendingMessage?.text.trim()) return;
-        await sink.activity(
-          `commentary:${pendingMessage.id}`,
-          { type: "commentary", text: pendingMessage.text },
-          "complete",
-        );
-        pendingMessage = null;
-      };
-
-      for await (const event of streamed.events) {
-        if (event.type === "thread.started") {
-          providerSessionId = event.thread_id;
-          await sink.session(event.thread_id);
-          continue;
-        }
-        if (event.type === "turn.failed") throw new Error(event.error.message);
-        if (event.type === "error") throw new Error(event.message);
-        if (event.type === "turn.completed") {
-          if (pendingMessage?.text) await sink.response(pendingMessage.text);
-          pendingMessage = null;
-          continue;
-        }
-        if (
-          event.type !== "item.started" &&
-          event.type !== "item.updated" &&
-          event.type !== "item.completed"
-        )
-          continue;
-
-        const { item } = event;
-        if (item.type === "agent_message") {
-          if (pendingMessage && pendingMessage.id !== item.id)
-            await commitCommentary();
-          if (event.type === "item.completed")
-            pendingMessage = { id: item.id, text: item.text };
-          continue;
-        }
-
-        const pendingExplanation = pendingMessage?.text ?? "";
-        await commitCommentary();
-        if (item.type === "reasoning") {
-          await sink.activity(
-            `reasoning:${item.id}`,
-            { type: "commentary", text: item.text },
-            event.type === "item.completed" ? "complete" : "streaming",
+      const { offered, byName } = agentToolbelt(input, search);
+      const inputItems: unknown[] = [userMessage(policy.prompt)];
+      let round = 0;
+      while (true) {
+        if (signal.aborted) throw new Error("Cancelled");
+        const response = await request(endpoint, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${auth.accessToken}`,
+            "chatgpt-account-id": auth.accountId,
+            "content-type": "application/json",
+            accept: "text/event-stream",
+            originator: "codex_cli_rs",
+            "OpenAI-Beta": "responses=experimental",
+          },
+          body: JSON.stringify(
+            responsesRequestBody({
+              model: input.modelId,
+              instructions: policy.systemPrompt,
+              input: inputItems,
+              tools: offered,
+              effort: policy.effort,
+            }),
+          ),
+          signal,
+        });
+        if (!response.ok) {
+          const loginHint =
+            response.status === 401
+              ? " (run `codex login` to refresh your ChatGPT sign-in)"
+              : "";
+          throw new Error(
+            `Codex request failed: ${await errorText(response)}${loginHint}`,
           );
-          continue;
         }
-        if (item.type === "file_change") {
-          if (!patchExplanations.has(item.id)) {
-            patchExplanations.set(item.id, pendingExplanation);
-          }
-          const changes = item.changes.map(({ path, kind }) => ({
-            path,
-            kind,
-          }));
-          const activity = await createPatchActivity({
-            folder: input.folder,
-            explanation: patchExplanations.get(item.id) ?? "",
-            changes,
-            fallbackDiff: changes
-              .map(({ kind, path }) => `${kind}: ${path}`)
-              .join("\n"),
-          });
+
+        const streamed = await consumeResponsesStream(response, {
+          activity: sink.activity,
+        });
+        const usage = streamed.usage
+          ? {
+              promptTokens: streamed.usage.inputTokens,
+              completionTokens: streamed.usage.outputTokens,
+              contextWindow: CODEX_CONTEXT_WINDOW,
+            }
+          : null;
+        if (usage) await sink.usage?.(usage);
+
+        if (streamed.functionCalls.length === 0) {
+          if (streamed.text) await sink.response(streamed.text);
+          return { providerSessionId: null, ...(usage ? { usage } : {}) };
+        }
+        if (streamed.text.trim()) {
           await sink.activity(
-            `patch:${item.id}`,
-            activity,
-            itemStatus(event.type, item),
+            `codex-commentary:${round}`,
+            { type: "commentary", text: streamed.text },
+            "complete",
           );
-          continue;
         }
-        await sink.activity(
-          `tool:${item.id}`,
-          toolActivity(item),
-          itemStatus(event.type, item),
+
+        const executions = await runToolCalls({
+          folder: input.folder,
+          intent: input.intent,
+          toolsByName: byName,
+          calls: streamed.functionCalls.map((call) => ({
+            id: call.callId,
+            name: call.name,
+            arguments: call.arguments,
+          })),
+          signal,
+          activity: sink.activity,
+          itemIdPrefix: "codex-tool",
+        });
+        // Replay the backend's completed items verbatim (they carry the
+        // encrypted reasoning state) plus the tool outputs.
+        inputItems.push(
+          ...streamed.items,
+          ...executions.map(({ call, output }) =>
+            functionCallOutputItem(call.id, output),
+          ),
         );
+        round += 1;
       }
-
-      if (pendingMessage?.text) await sink.response(pendingMessage.text);
-      return { providerSessionId: providerSessionId ?? thread.id };
     },
   };
 }

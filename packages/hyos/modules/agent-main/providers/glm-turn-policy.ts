@@ -1,3 +1,4 @@
+import type { AgentReasoningEffort } from "../../../capabilities/agent.js";
 import type { AgentRunInput } from "./types.js";
 import { formatPlanBlock } from "../../../capabilities/plan.js";
 
@@ -13,7 +14,14 @@ export const incrementalImplementRule =
 export const incrementalPlanRule =
   'Incremental mode: maintain the session plan as a list of tasks. End every final response with the complete, updated plan in a fenced "hyos-plan" code block (info string hyos-plan), using task-list syntax "- [x] done task" and "- [ ] pending task". Rewrite the whole block each turn so it always reflects the true state of the plan, and mark a task done only after its change is verified.';
 
-export function glmTurnPolicy(input: AgentRunInput, systemPrompt: string) {
+export function glmTurnPolicy(
+  input: AgentRunInput,
+  systemPrompt: string,
+): Readonly<{
+  systemPrompt: string;
+  prompt: string;
+  effort: AgentReasoningEffort;
+}> {
   if (input.mode !== "incremental") {
     return {
       systemPrompt,
