@@ -42,6 +42,21 @@ function requiredString(input: Record<string, unknown>, key: string): string {
   return value;
 }
 
+/**
+ * Read a string argument, falling back to a snake_case alias. Models
+ * occasionally emit Claude-style `old_string`/`new_string` names instead of
+ * the camelCase parameters this toolset declares; accept both so a valid edit
+ * does not fail with "oldString is required".
+ */
+function stringArg(
+  input: Record<string, unknown>,
+  key: string,
+  alias?: string,
+): string | undefined {
+  const value = input[key] ?? (alias === undefined ? undefined : input[alias]);
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 function run(
   command: string,
   args: readonly string[],
@@ -272,12 +287,16 @@ export const openCodeTools: readonly OpenCodeTool[] = [
       ["filePath", "oldString", "newString", "explanation"],
     ),
     async execute(folder, input) {
-      const requestedPath = requiredString(input, "filePath");
+      const requestedPath = stringArg(input, "filePath", "file_path");
+      if (requestedPath === undefined) throw new Error("filePath is required");
+      const oldString = stringArg(input, "oldString", "old_string");
+      if (oldString === undefined) throw new Error("oldString is required");
+      const newString = input.newString ?? input.new_string;
       await editFile(folder, {
         file_path: requestedPath,
-        old_string: requiredString(input, "oldString"),
-        new_string: typeof input.newString === "string" ? input.newString : "",
-        replace_all: input.replaceAll === true,
+        old_string: oldString,
+        new_string: typeof newString === "string" ? newString : "",
+        replace_all: input.replaceAll === true || input.replace_all === true,
         explanation: requiredString(input, "explanation"),
       });
       return { output: "Edit applied successfully.", paths: [requestedPath] };
@@ -303,10 +322,12 @@ export const openCodeTools: readonly OpenCodeTool[] = [
       ["content", "filePath", "explanation"],
     ),
     async execute(folder, input) {
-      const requestedPath = requiredString(input, "filePath");
+      const requestedPath = stringArg(input, "filePath", "file_path");
+      if (requestedPath === undefined) throw new Error("filePath is required");
+      const content = input.content ?? input.file_content;
       await writeWholeFile(folder, {
         file_path: requestedPath,
-        content: typeof input.content === "string" ? input.content : "",
+        content: typeof content === "string" ? content : "",
         explanation: requiredString(input, "explanation"),
       });
       return { output: "Wrote file successfully.", paths: [requestedPath] };

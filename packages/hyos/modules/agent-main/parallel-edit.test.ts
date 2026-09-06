@@ -24,6 +24,60 @@ function editCall(
   };
 }
 
+test("edit and write accept snake_case argument aliases", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "hyos-edit-alias-"));
+  try {
+    await writeFile(join(folder, "doc.md"), "alpha\nbeta\n");
+    const tools = new Map(openCodeTools.map((tool) => [tool.name, tool]));
+    const results = await runToolCalls({
+      folder,
+      toolsByName: tools,
+      calls: [
+        {
+          id: "edit-alias",
+          name: "edit",
+          arguments: JSON.stringify({
+            file_path: "doc.md",
+            old_string: "alpha",
+            new_string: "ALPHA",
+            explanation: "Accept Claude-style snake_case names.",
+          }),
+        },
+      ],
+      signal: new AbortController().signal,
+      activity: async () => {},
+      itemIdPrefix: "test-tool",
+    });
+    assert.equal(results[0].output, "Edit applied successfully.");
+    assert.equal(
+      await readFile(join(folder, "doc.md"), "utf8"),
+      "ALPHA\nbeta\n",
+    );
+    const written = await runToolCalls({
+      folder,
+      toolsByName: tools,
+      calls: [
+        {
+          id: "write-alias",
+          name: "write",
+          arguments: JSON.stringify({
+            file_path: "doc.md",
+            content: "rewritten\n",
+            explanation: "Accept the file_path alias for writes.",
+          }),
+        },
+      ],
+      signal: new AbortController().signal,
+      activity: async () => {},
+      itemIdPrefix: "test-tool",
+    });
+    assert.equal(written[0].output, "Wrote file successfully.");
+    assert.equal(await readFile(join(folder, "doc.md"), "utf8"), "rewritten\n");
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
 test("two parallel edits to the same file both land without losing updates", async () => {
   const folder = await mkdtemp(join(tmpdir(), "hyos-parallel-edit-"));
   try {
