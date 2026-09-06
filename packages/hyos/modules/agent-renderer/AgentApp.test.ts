@@ -10,10 +10,13 @@ import {
   folderName,
   groupSessionsByFolder,
   implementNextPrompt,
+  loadFolderOrder,
   nextPlanTask,
+  orderedFolders,
   partitionSessions,
   planPanelIndex,
   recentFolders,
+  saveFolderOrder,
   timelineEntries,
   workPaneLabel,
 } from "./AgentApp.js";
@@ -171,6 +174,50 @@ test("recent folders are deduplicated in session order", () => {
     ]),
     ["/tmp/alpha", "/tmp/beta", "/tmp/gamma"],
   );
+});
+
+test("orderedFolders respects the saved order and appends new folders", () => {
+  const recent = ["/tmp/alpha", "/tmp/beta", "/tmp/gamma"];
+
+  assert.deepEqual(orderedFolders(recent, null), recent);
+  assert.deepEqual(orderedFolders(recent, []), recent);
+  assert.deepEqual(orderedFolders(recent, ["/tmp/gamma", "/tmp/alpha"]), [
+    "/tmp/gamma",
+    "/tmp/alpha",
+    "/tmp/beta",
+  ]);
+  // Saved entries that no longer exist are dropped.
+  assert.deepEqual(orderedFolders(recent, ["/tmp/gone", "/tmp/beta"]), [
+    "/tmp/beta",
+    "/tmp/alpha",
+    "/tmp/gamma",
+  ]);
+  // Duplicate saved entries don't duplicate folders.
+  assert.deepEqual(orderedFolders(recent, ["/tmp/alpha", "/tmp/alpha"]), [
+    "/tmp/alpha",
+    "/tmp/beta",
+    "/tmp/gamma",
+  ]);
+});
+
+test("folder order persists to storage and tolerates bad data", () => {
+  const store = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      store.set(key, value);
+    },
+  };
+
+  assert.equal(loadFolderOrder(storage), null);
+
+  saveFolderOrder(["/tmp/beta", "/tmp/alpha"], storage);
+  assert.deepEqual(loadFolderOrder(storage), ["/tmp/beta", "/tmp/alpha"]);
+
+  store.set("hyos.sidebar-folder-order", "not json");
+  assert.equal(loadFolderOrder(storage), null);
+  store.set("hyos.sidebar-folder-order", '["a", 3, "b"]');
+  assert.deepEqual(loadFolderOrder(storage), ["a", "b"]);
 });
 
 test("folderName extracts the basename of a folder path", () => {

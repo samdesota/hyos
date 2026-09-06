@@ -304,7 +304,7 @@ const SessionFolderList: Component<{
   );
 };
 
-/** Distinct folders from sessions, most recently updated first. */
+/** Distinct folders from sessions, in first-seen session order. */
 export function recentFolders(
   sessions: readonly AgentSessionSummary[],
 ): readonly string[] {
@@ -317,6 +317,62 @@ export function recentFolders(
     }
   }
   return folders;
+}
+
+const FOLDER_ORDER_KEY = "hyos.sidebar-folder-order";
+
+/** Read the persisted folder order, if any. */
+export function loadFolderOrder(
+  storage: Pick<Storage, "getItem"> = window.localStorage,
+): readonly string[] | null {
+  try {
+    const raw = storage.getItem(FOLDER_ORDER_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter((entry): entry is string => typeof entry === "string");
+  } catch {
+    return null;
+  }
+}
+
+/** Persist a folder order. */
+export function saveFolderOrder(
+  order: readonly string[],
+  storage: Pick<Storage, "setItem"> = window.localStorage,
+): void {
+  try {
+    storage.setItem(FOLDER_ORDER_KEY, JSON.stringify(order));
+  } catch {
+    // Storage unavailable (private mode, quota); order just won't persist.
+  }
+}
+
+/**
+ * Apply a saved manual order to the recent folders: saved folders keep their
+ * order, folders not in the saved order (new ones) append at the end.
+ */
+export function orderedFolders(
+  recent: readonly string[],
+  savedOrder: readonly string[] | null,
+): readonly string[] {
+  if (!savedOrder || savedOrder.length === 0) return recent;
+  const known = new Set(recent);
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  for (const folder of savedOrder) {
+    if (known.has(folder) && !seen.has(folder)) {
+      seen.add(folder);
+      ordered.push(folder);
+    }
+  }
+  for (const folder of recent) {
+    if (!seen.has(folder)) {
+      seen.add(folder);
+      ordered.push(folder);
+    }
+  }
+  return ordered;
 }
 
 export function folderName(folder: string): string {
@@ -514,7 +570,16 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   >({});
   const [followupMenuOpen, setFollowupMenuOpen] = createSignal(false);
   const [folderMenuOpen, setFolderMenuOpen] = createSignal(false);
-  const recentFoldersList = createMemo(() => recentFolders(sessions()));
+  const [folderOrder, setFolderOrder] = createSignal<readonly string[] | null>(
+    loadFolderOrder(),
+  );
+  const persistFolderOrder = (order: readonly string[]): void => {
+    setFolderOrder(order);
+    saveFolderOrder(order);
+  };
+  const recentFoldersList = createMemo(() =>
+    orderedFolders(recentFolders(sessions()), folderOrder()),
+  );
   const initialMode = () => selectedMode(providerId(), newMode());
   const followupMode = () => {
     const session = activeSession();
