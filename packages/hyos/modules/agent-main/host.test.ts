@@ -67,6 +67,17 @@ test("finishing a turn publishes the final message's new timeline position", asy
         }
       },
     } as never,
+    browser: {
+      id: "browser",
+      version: 2,
+      call: async () => ({
+        generation: 0,
+        sequence: 0,
+        activeTabId: null,
+        tabs: [],
+      }),
+      subscribe: () => () => {},
+    } as never,
     store,
     providers: new Map([[provider.summary.id, provider]]),
   });
@@ -139,6 +150,17 @@ test("an interrupted run resumes from its streamed provider session checkpoint",
     createAgentHost({
       window: {} as never,
       remote: { publish() {} } as never,
+      browser: {
+        id: "browser",
+        version: 2,
+        call: async () => ({
+          generation: 0,
+          sequence: 0,
+          activeTabId: null,
+          tabs: [],
+        }),
+        subscribe: () => () => {},
+      } as never,
       store,
       providers: new Map([[provider.summary.id, provider]]),
     });
@@ -500,6 +522,17 @@ test("a finished incremental turn persists its plan and replays it on the next t
   const host = createAgentHost({
     window: {} as never,
     remote: { publish() {} } as never,
+    browser: {
+      id: "browser",
+      version: 2,
+      call: async () => ({
+        generation: 0,
+        sequence: 0,
+        activeTabId: null,
+        tabs: [],
+      }),
+      subscribe: () => () => {},
+    } as never,
     store,
     providers: new Map([[provider.summary.id, provider]]),
   });

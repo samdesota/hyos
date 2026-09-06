@@ -38,6 +38,13 @@ export function toolActivity(toolName: string, detail: string): AgentActivity {
       label: "Read session transcript",
       detail,
     };
+  if (toolName === "browser_open_tab")
+    return {
+      type: "tool",
+      category: "command",
+      label: "Opened browser tab",
+      detail,
+    };
   const tool = openCodeTool(toolName);
   return {
     type: "tool",
@@ -83,6 +90,39 @@ function sessionTranscriptTool(input: AgentRunInput): OpenCodeTool {
   };
 }
 
+function browserOpenTabTool(input: AgentRunInput): OpenCodeTool | null {
+  if (!input.browserClient) return null;
+  return {
+    name: "browser_open_tab",
+    description:
+      "Open a new browser tab with the specified URL. Use this to view web pages or documentation.",
+    category: "command",
+    parameters: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "The URL to open in the new browser tab",
+        },
+      },
+      required: ["url"],
+      additionalProperties: false,
+    },
+    async execute(_folder, args) {
+      const url = typeof args.url === "string" ? args.url : "";
+      if (!url) throw new Error("url is required");
+      const state = await input.browserClient!.execute({
+        type: "create-tab",
+        url,
+      });
+      const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
+      return {
+        output: `Opened browser tab: ${activeTab?.title || url} (${url})`,
+      };
+    },
+  };
+}
+
 /**
  * The tools a model may call in a run: the OpenCode toolset, parallel web
  * search, and — when the host can serve transcripts — the session transcript
@@ -105,14 +145,14 @@ export function agentToolbelt(
   const transcriptTool = input.sessionTranscript
     ? sessionTranscriptTool(input)
     : null;
+  const browserTool = browserOpenTabTool(input);
+  const extraTools = [transcriptTool, browserTool].filter(
+    (tool): tool is OpenCodeTool => tool !== null,
+  );
   return {
-    offered: transcriptTool ? [...offeredBase, transcriptTool] : offeredBase,
-    byName: new Map(
-      [...all, ...(transcriptTool ? [transcriptTool] : [])].map((tool) => [
-        tool.name,
-        tool,
-      ]),
-    ),
+    offered:
+      extraTools.length > 0 ? [...offeredBase, ...extraTools] : offeredBase,
+    byName: new Map([...all, ...extraTools].map((tool) => [tool.name, tool])),
   };
 }
 

@@ -14,6 +14,7 @@ import {
   type AgentMessagePage,
   type AgentSessionsState,
 } from "../../capabilities/agent.js";
+import { browserCapability } from "../../capabilities/browser.js";
 import type { BrowserClient } from "../browser-client/types.js";
 import type {
   MainRemoteCapabilities,
@@ -312,11 +313,30 @@ function createChunkWriter(
 export function createAgentHost(options: {
   window: BrowserWindow;
   remote: MainRemoteCapabilities;
-  browser: ReturnType<MainRemoteCapabilities["consume"]>;
+  browser: ReturnType<
+    typeof MainRemoteCapabilities.prototype.consume<typeof browserCapability>
+  >;
   store: AgentStore;
   providers: ReadonlyMap<string, AgentProvider>;
 }): AgentHost {
   const { window, remote, browser, store, providers } = options;
+  const browserClient: BrowserClient = {
+    protocol: { name: "browser" as const, version: browser.version },
+    execute: (command) =>
+      browser.call("execute", command) as Promise<
+        import("../../capabilities/browser.js").BrowserState
+      >,
+    present: (presentation) =>
+      browser.call("present", presentation) as Promise<void>,
+    release: (presentationId) =>
+      browser.call("release", presentationId) as Promise<void>,
+    setOverlayRegions: (regions) =>
+      browser.call("setOverlayRegions", regions) as Promise<void>,
+    subscribe: (_listener) => {
+      // Main process consumers don't support subscriptions yet
+      return () => {};
+    },
+  };
   const activeRuns = new Map<string, ActiveRun>();
   const feeds = new Map<AgentFeedId, Feed>();
   let nextFeedId = 1;
@@ -501,7 +521,7 @@ export function createAgentHost(options: {
                 (await store.pageMessages(sessionId, null, 100)).messages,
                 turnId,
               ),
-            browserClient: browser,
+            browserClient,
           },
           {
             session: (providerSessionId) =>
