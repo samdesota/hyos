@@ -581,3 +581,58 @@ test("a finished incremental turn persists its plan and replays it on the next t
     await database.close();
   }
 });
+
+test("session tabs round-trip through the agent provider", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+  const host = createAgentHost({
+    window: {} as never,
+    remote: { publish: () => {} } as never,
+    browser: {
+      id: "browser",
+      version: 2,
+      call: async () => ({
+        generation: 0,
+        sequence: 0,
+        activeTabId: null,
+        tabs: [],
+      }),
+      subscribe: () => () => {},
+    } as never,
+    store,
+    providers: new Map(),
+  });
+
+  try {
+    await host.start();
+    const turn = await store.createSession({
+      prompt: "Open some tabs",
+      folder: "/tmp/project",
+      providerId: "test",
+      modelId: "test-model",
+    });
+    assert.equal(await host.provider.sessionTabs(turn.sessionId), null);
+
+    const tabs: import("../../capabilities/agent.js").AgentSessionTabs = {
+      tabs: [
+        { kind: "browser", url: "https://example.com/", title: "Example" },
+        {
+          kind: "browser",
+          url: "https://news.ycombinator.com/",
+          title: "Hacker News",
+        },
+      ],
+      activeIndex: 1,
+    };
+    await host.provider.saveSessionTabs(turn.sessionId, tabs);
+    assert.deepEqual(await host.provider.sessionTabs(turn.sessionId), tabs);
+
+    // Clearing drops the persisted tabs.
+    await host.provider.saveSessionTabs(turn.sessionId, null);
+    assert.equal(await host.provider.sessionTabs(turn.sessionId), null);
+  } finally {
+    await host.dispose();
+    await database.close();
+  }
+});

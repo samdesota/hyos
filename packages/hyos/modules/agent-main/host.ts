@@ -699,6 +699,9 @@ export function createAgentHost(options: {
     readFile: (sessionId, requestedPath) =>
       readSessionFile(store, sessionId, requestedPath),
     closeFeed,
+    sessionTabs: (sessionId) => store.loadSessionTabs(sessionId),
+    saveSessionTabs: (sessionId, tabs) =>
+      store.saveSessionTabs(sessionId, tabs),
   };
 
   return {

@@ -9,6 +9,7 @@ import {
   type AgentMessagePage,
   type AgentProviderSummary,
   type AgentSessionsState,
+  type AgentSessionTabs,
 } from "../../capabilities/agent.js";
 import type {
   RemoteConsumer,
@@ -33,6 +34,11 @@ export interface AgentClient {
     count?: number,
   ): Promise<AgentMessagePage>;
   readFile(sessionId: string, path: string): Promise<AgentFileContent>;
+  sessionTabs(sessionId: string): Promise<AgentSessionTabs | null>;
+  saveSessionTabs(
+    sessionId: string,
+    tabs: AgentSessionTabs | null,
+  ): Promise<void>;
   dispose(): void;
 }
 
@@ -107,6 +113,9 @@ export function createAgentClient(
     loadOlder: (sessionId, before, count = 200) =>
       agent.call("loadOlder", sessionId, before, count),
     readFile: (sessionId, path) => agent.call("readFile", sessionId, path),
+    sessionTabs: (sessionId) => agent.call("sessionTabs", sessionId),
+    saveSessionTabs: (sessionId, tabs) =>
+      agent.call("saveSessionTabs", sessionId, tabs),
     dispose() {
       unsubscribeFeedEvents();
       feeds.clear();

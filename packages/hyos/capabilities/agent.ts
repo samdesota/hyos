@@ -198,7 +198,7 @@ export type AgentCommandResult =
 
 export const agentCapability = defineRemoteCapability({
   id: "agent",
-  version: 1,
+  version: 2,
   methods: {
     execute: remoteMethod<
       readonly [command: AgentCommand],
@@ -223,6 +223,14 @@ export const agentCapability = defineRemoteCapability({
       AgentFileContent
     >(),
     closeFeed: remoteMethod<readonly [feedId: AgentFeedId], void>(),
+    sessionTabs: remoteMethod<
+      readonly [sessionId: AgentSessionId],
+      AgentSessionTabs | null
+    >(),
+    saveSessionTabs: remoteMethod<
+      readonly [sessionId: AgentSessionId, tabs: AgentSessionTabs | null],
+      void
+    >(),
   },
   events: {
     sessions: remoteEvent<AgentSessionsState>(),
