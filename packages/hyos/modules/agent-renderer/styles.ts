@@ -61,6 +61,10 @@ export const agentStyles = String.raw`
     letter-spacing: .09em; text-transform: uppercase;
   }
   .session-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 18px; }
+  .session-folder-group + .session-folder-group { margin-top: 10px; }
+  .session-folder-heading { margin: 0; padding: 8px 10px 4px; color: #b5b7ac; font-size: 12px; font-weight: 600; }
+  .session-folder-name, .session-folder-parent { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .session-folder-parent { margin-top: 3px; color: #85877e; font-size: 10px; font-weight: 400; }
   .session-row { display: flex; align-items: stretch; border-radius: 9px; }
   .session-open {
     flex: 1; min-width: 0; padding: 10px; border: 0; border-radius: 9px;

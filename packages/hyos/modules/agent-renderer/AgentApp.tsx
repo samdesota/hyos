@@ -6,6 +6,7 @@ import {
   createSignal,
   onCleanup,
   type Component,
+  type JSX,
 } from "solid-js";
 
 import type {
@@ -267,6 +268,34 @@ export function groupSessionsByFolder(
     };
   });
 }
+
+const SessionFolderList: Component<{
+  sessions: readonly AgentSessionSummary[];
+  children: (session: AgentSessionSummary) => JSX.Element;
+}> = (props) => {
+  const groups = createMemo(() => groupSessionsByFolder(props.sessions));
+  return (
+    <For each={groups()}>
+      {(group) => (
+        <section
+          class="session-folder-group"
+          aria-label={group.folder || group.label}
+        >
+          <h3
+            class="session-folder-heading"
+            title={group.folder || group.label}
+          >
+            <span class="session-folder-name">{group.label}</span>
+            <Show when={group.parentPath}>
+              <span class="session-folder-parent">{group.parentPath}</span>
+            </Show>
+          </h3>
+          <For each={group.sessions}>{props.children}</For>
+        </section>
+      )}
+    </For>
+  );
+};
 
 /** Distinct folders from sessions, most recently updated first. */
 export function recentFolders(
@@ -1109,7 +1138,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
           </div>
           <div class="session-label">Sessions</div>
           <div class="session-list" id="agent-session-list">
-            <For each={activeSessions()}>
+            <SessionFolderList sessions={activeSessions()}>
               {(session) => (
                 <div
                   class="session-row"
@@ -1137,7 +1166,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                   </button>
                 </div>
               )}
-            </For>
+            </SessionFolderList>
             <Show when={archivedSessions().length > 0}>
               <button
                 type="button"
@@ -1149,7 +1178,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                 <i class="archived-chevron">{archivedOpen() ? "▾" : "▸"}</i>
               </button>
               <Show when={archivedOpen()}>
-                <For each={archivedSessions()}>
+                <SessionFolderList sessions={archivedSessions()}>
                   {(session) => (
                     <div
                       class="session-row archived"
@@ -1179,7 +1208,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
                       </button>
                     </div>
                   )}
-                </For>
+                </SessionFolderList>
               </Show>
             </Show>
           </div>
