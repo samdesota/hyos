@@ -380,7 +380,7 @@ export const agentStyles = String.raw`
   }
   .side-tabs {
     display: flex; align-items: center; gap: 6px;
-    min-height: 67px; padding: 12px 12px 12px 16px;
+    min-height: 47px; padding: 6px 8px 6px 10px;
     border-bottom: 1px solid #30312d;
   }
   .side-tab {
@@ -422,6 +422,7 @@ export const agentStyles = String.raw`
   .side-pane.collapsed .side-tab { padding: 8px; }
   .side-pane.collapsed .side-tab-label, .side-pane.collapsed .side-tab-badge,
   .side-pane.collapsed .side-tab-close { display: none; }
+  .side-pane.collapsed .side-pane-body { display: none; }
   .patch-resize-handle {
     position: absolute; z-index: 2; top: 0; bottom: 0; left: -5px; width: 10px;
     cursor: col-resize; touch-action: none;
