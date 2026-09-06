@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { z } from "zod";
+
+import type { AgentSessionTabs } from "../../capabilities/agent.js";
 import { hydb, memoryStorage } from "@hyos/hydb";
 
-import { agentSchema } from "./model.js";
+import { agentSchema, agentSessions } from "./model.js";
 import { createAgentStore } from "./store.js";
 
 test("agent sessions persist chunked messages and publish HyDB changes", async () => {
@@ -274,6 +277,89 @@ test("session plans persist on the summary and round-trip", async () => {
 
     await store.updatePlan(turn.sessionId, null);
     assert.equal((await store.getSession(turn.sessionId)).plan, null);
+  } finally {
+    await database.close();
+  }
+});
+
+test("session tabs persist on the session row and decode defensively", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Open some tabs",
+      folder: "/tmp/project",
+      providerId: "glm",
+      modelId: "zai/glm-5.3-flash",
+    });
+    assert.equal(await store.loadSessionTabs(turn.sessionId), null);
+
+    const tabs: AgentSessionTabs = {
+      tabs: [
+        { kind: "browser", url: "https://example.com/", title: "Example" },
+        {
+          kind: "browser",
+          url: "https://news.ycombinator.com/",
+          title: "Hacker News",
+        },
+      ],
+      activeIndex: 1,
+    };
+    await store.saveSessionTabs(turn.sessionId, tabs);
+    assert.deepEqual(await store.loadSessionTabs(turn.sessionId), tabs);
+
+    // Tab bookkeeping is background pane state: saving must not bump
+    // updatedAt, which would reorder the sessions list.
+    const updatedAt = (await store.listSessions())[0].updatedAt;
+    await store.saveSessionTabs(turn.sessionId, tabs);
+    assert.equal(
+      (await store.listSessions())[0].updatedAt.getTime(),
+      updatedAt.getTime(),
+    );
+
+    await store.saveSessionTabs(turn.sessionId, null);
+    assert.equal(await store.loadSessionTabs(turn.sessionId), null);
+
+    // Garbage in the column — torn or hand-edited — reads as "no tabs".
+    const writeRawTabs = hydb.command({
+      input: z.object({ sessionId: z.string(), tabs: z.string().nullable() }),
+      async handler(transaction, input) {
+        await transaction.update(agentSessions, [input.sessionId], {
+          tabs: input.tabs,
+        });
+      },
+    });
+    const writeRaw = async (raw: string): Promise<void> => {
+      await database.execute(writeRawTabs, {
+        sessionId: turn.sessionId,
+        tabs: raw,
+      });
+    };
+    await writeRaw("not-json");
+    assert.equal(await store.loadSessionTabs(turn.sessionId), null);
+    await writeRaw('{"version":99,"tabs":[],"activeIndex":0}');
+    assert.equal(await store.loadSessionTabs(turn.sessionId), null);
+    // Unknown tab kinds belong to newer builds and are dropped; the broken
+    // entry goes too, and the focused index clamps into the survivors.
+    await writeRaw(
+      JSON.stringify({
+        version: 1,
+        tabs: [
+          { kind: "browser", url: "https://example.com/", title: "Example" },
+          { kind: "terminal", cwd: "/tmp/project" },
+          { kind: "browser", url: "", title: "Broken" },
+        ],
+        activeIndex: 2,
+      }),
+    );
+    assert.deepEqual(await store.loadSessionTabs(turn.sessionId), {
+      tabs: [
+        { kind: "browser", url: "https://example.com/", title: "Example" },
+      ],
+      activeIndex: 0,
+    });
   } finally {
     await database.close();
   }

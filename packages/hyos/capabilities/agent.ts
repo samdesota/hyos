@@ -30,6 +30,20 @@ export type AgentPlan = Readonly<{
   tasks: readonly AgentPlanTask[];
 }>;
 
+// A session's persisted tabs: which tabs it shows and which is focused, so
+// the pane survives app restarts. Entries are kind-discriminated so new tab
+// kinds join the same stored container without another schema change.
+export type AgentSessionTab = Readonly<{
+  kind: "browser";
+  url: string;
+  title: string;
+}>;
+
+export type AgentSessionTabs = Readonly<{
+  tabs: readonly AgentSessionTab[];
+  activeIndex: number;
+}>;
+
 export type AgentActivity =
   | Readonly<{
       type: "commentary";

@@ -14,6 +14,7 @@ import type {
   AgentReasoningEffort,
   AgentSessionStatus,
   AgentSessionSummary,
+  AgentSessionTabs,
 } from "../../capabilities/agent.js";
 import {
   agentMessageChunks,
@@ -101,6 +102,60 @@ function decodePlan(value: string | null | undefined): AgentPlan | null {
         : [];
     });
     return tasks.length > 0 ? { tasks } : null;
+  } catch {
+    return null;
+  }
+}
+
+const sessionTabsVersion = 1;
+
+function encodeSessionTabs(tabs: AgentSessionTabs | null): string | null {
+  if (!tabs) return null;
+  return JSON.stringify({
+    version: sessionTabsVersion,
+    tabs: tabs.tabs,
+    activeIndex: tabs.activeIndex,
+  });
+}
+
+// Tabs are stored as a versioned, kind-discriminated JSON blob so new tab
+// kinds join without a schema change. Decoding keeps the kinds this build
+// understands and drops the rest — plus torn or hand-edited JSON — instead
+// of failing the whole session load.
+function decodeSessionTabs(
+  value: string | null | undefined,
+): AgentSessionTabs | null {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const container = parsed as {
+      version?: unknown;
+      tabs?: unknown;
+      activeIndex?: unknown;
+    };
+    if (
+      container.version !== sessionTabsVersion ||
+      !Array.isArray(container.tabs)
+    ) {
+      return null;
+    }
+    const tabs = container.tabs.flatMap((entry) => {
+      if (typeof entry !== "object" || entry === null) return [];
+      const tab = entry as { kind?: unknown; url?: unknown; title?: unknown };
+      if (tab.kind !== "browser") return [];
+      if (typeof tab.url !== "string" || tab.url.length === 0) return [];
+      if (typeof tab.title !== "string") return [];
+      return [{ kind: "browser" as const, url: tab.url, title: tab.title }];
+    });
+    if (tabs.length === 0) return null;
+    const activeIndex =
+      typeof container.activeIndex === "number" &&
+      Number.isInteger(container.activeIndex) &&
+      container.activeIndex >= 0
+        ? Math.min(container.activeIndex, tabs.length - 1)
+        : 0;
+    return { tabs, activeIndex };
   } catch {
     return null;
   }
@@ -405,6 +460,18 @@ const updatePlanCommand = hydb.command({
   },
 });
 
+// Tab saves are background pane state, persisted on every debounced publish:
+// unlike every other session write they must not bump updatedAt, or the
+// sessions list would reorder underneath the user.
+const updateSessionTabsCommand = hydb.command({
+  input: z.object({ sessionId: z.string(), tabs: z.string().nullable() }),
+  async handler(transaction, input) {
+    await transaction.update(agentSessions, [input.sessionId], {
+      tabs: input.tabs,
+    });
+  },
+});
+
 const endRunCommand = hydb.command({
   input: z.object({
     sessionId: z.string(),
@@ -542,6 +609,11 @@ export interface AgentStore {
     providerSessionId: string,
   ): Promise<void>;
   updatePlan(sessionId: string, plan: AgentPlan | null): Promise<void>;
+  loadSessionTabs(sessionId: string): Promise<AgentSessionTabs | null>;
+  saveSessionTabs(
+    sessionId: string,
+    tabs: AgentSessionTabs | null,
+  ): Promise<void>;
   updateUsage(
     sessionId: string,
     messageId: string,
@@ -742,6 +814,21 @@ export function createAgentStore(database: Database): AgentStore {
         sessionId,
         plan: encodePlan(plan),
         now: now(),
+      });
+    },
+    async loadSessionTabs(sessionId) {
+      const row = await database.fetch(
+        hydb
+          .query(agentSessions)
+          .where((session) => session.id.eq(sessionId))
+          .require(),
+      );
+      return decodeSessionTabs(row.tabs);
+    },
+    async saveSessionTabs(sessionId, tabs) {
+      await database.execute(updateSessionTabsCommand, {
+        sessionId,
+        tabs: encodeSessionTabs(tabs),
       });
     },
     async updateUsage(sessionId, messageId, usage) {

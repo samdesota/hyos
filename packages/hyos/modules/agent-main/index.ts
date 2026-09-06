@@ -57,6 +57,7 @@ export = defineModule<AgentMainConfig>({
           ],
         },
         { hyos_agent_sessions: ["plan"] },
+        { hyos_agent_sessions: ["tabs"] },
       ],
     });
     const database = await hydb.database({ schema: agentSchema, storage });
