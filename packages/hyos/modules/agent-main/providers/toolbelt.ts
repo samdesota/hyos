@@ -168,6 +168,28 @@ export type ToolExecution = Readonly<{
  * activities, and map failures to tool results. Shared by the GLM and codex
  * providers, which map `output` into their own wire formats.
  */
+/**
+ * Serialize edit-category executions per resolved file path with a
+ * promise-chain mutex: parallel tool calls to the same file run one at a time
+ * so read-modify-write edits cannot clobber each other.
+ */
+const editLocks = new Map<string, Promise<void>>();
+
+function withPathLock<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const previous = editLocks.get(key) ?? Promise.resolve();
+  const guarded = previous.catch(() => {}).then(run);
+  const release = guarded
+    .then(
+      () => {},
+      () => {},
+    )
+    .then(() => {
+      if (editLocks.get(key) === release) editLocks.delete(key);
+    });
+  editLocks.set(key, release);
+  return guarded;
+}
+
 export async function runToolCalls(options: {
   folder: string;
   intent?: "implement" | "investigate";
@@ -219,28 +241,50 @@ export async function runToolCalls(options: {
           tool.category === "edit" && typeof args.filePath === "string"
             ? [args.filePath]
             : [];
-        const before = new Map<string, string>();
-        for (const editPath of editPaths) {
-          before.set(
-            editPath,
-            await readWorkspaceFile(options.folder, editPath),
-          );
-        }
-        const result = await tool.execute(options.folder, args, options.signal);
+        // Serialize per resolved path and capture the `before` snapshot
+        // inside the lock so patch diffs reflect exactly this call's change.
+        const runSerialized = async (): Promise<{
+          result: Awaited<ReturnType<OpenCodeTool["execute"]>>;
+          fallbackDiff: string;
+        }> => {
+          const serialize = editPaths.length > 0;
+          const execute = async () => {
+            const before = new Map<string, string>();
+            for (const editPath of editPaths) {
+              before.set(
+                editPath,
+                await readWorkspaceFile(options.folder, editPath),
+              );
+            }
+            const result = await tool.execute(
+              options.folder,
+              args,
+              options.signal,
+            );
+            const fallbackDiff = (
+              await Promise.all(
+                (tool.category === "edit" && result.paths
+                  ? result.paths
+                  : []
+                ).map(async (editedPath) =>
+                  contentDiff(
+                    editedPath,
+                    before.get(editedPath) ?? "",
+                    await readWorkspaceFile(options.folder, editedPath),
+                  ),
+                ),
+              )
+            ).join("\n");
+            return { result, fallbackDiff };
+          };
+          return serialize
+            ? withPathLock(path.resolve(options.folder, editPaths[0]), execute)
+            : execute();
+        };
+        const { result, fallbackDiff } = await runSerialized();
         if (tool.category === "edit" && result.paths) {
           const explanation =
             typeof args.explanation === "string" ? args.explanation : "";
-          const fallbackDiff = (
-            await Promise.all(
-              result.paths.map(async (editedPath) =>
-                contentDiff(
-                  editedPath,
-                  before.get(editedPath) ?? "",
-                  await readWorkspaceFile(options.folder, editedPath),
-                ),
-              ),
-            )
-          ).join("\n");
           await options.activity(
             providerItemId,
             await createPatchActivity({
