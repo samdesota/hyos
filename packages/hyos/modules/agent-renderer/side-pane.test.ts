@@ -12,10 +12,12 @@ import {
   NEW_SESSION_SCOPE_KEY,
   pinnedSideTabs,
   reconcileSideTabs,
+  restoreSessionTabs,
   scopeBrowserTabIds,
   sideTabDescriptors,
   sideTabLabel,
   sideTabScopeKey,
+  snapshotSessionTabs,
   unadoptedHostTab,
   type SideTab,
   type SideTabScope,
@@ -208,4 +210,131 @@ test("adopting a stashed scope drops host tabs closed while the session was inac
   assert.deepEqual(scopeBrowserTabIds({ tabs, activeId: stashed.activeId }), [
     "tab-1",
   ]);
+});
+
+test("snapshotting a scope stores its browser tabs and focused index", () => {
+  const state = hostState(["tab-1", "tab-2"]);
+  const scope: SideTabScope = {
+    tabs: [...pinnedSideTabs, browserSideTab("tab-1"), browserSideTab("tab-2")],
+    activeId: "tab-2",
+  };
+  assert.deepEqual(snapshotSessionTabs(scope, state), {
+    tabs: [
+      { kind: "browser", url: "https://tab-1.example/", title: "tab-1" },
+      { kind: "browser", url: "https://tab-2.example/", title: "tab-2" },
+    ],
+    activeIndex: 1,
+  });
+  // The pinned tab focused: nothing browser-y to focus on restore.
+  assert.deepEqual(
+    snapshotSessionTabs({ ...scope, activeId: "patches" }, state),
+    {
+      tabs: [
+        { kind: "browser", url: "https://tab-1.example/", title: "tab-1" },
+        { kind: "browser", url: "https://tab-2.example/", title: "tab-2" },
+      ],
+      activeIndex: -1,
+    },
+  );
+});
+
+test("snapshotting skips stale host tabs and nulls a browser-free scope", () => {
+  const state = hostState(["tab-1"]);
+  const scope: SideTabScope = {
+    tabs: [...pinnedSideTabs, browserSideTab("tab-1"), browserSideTab("tab-9")],
+    activeId: "tab-9",
+  };
+  // tab-9 is already gone from the host; the stale focus focuses nothing.
+  assert.deepEqual(snapshotSessionTabs(scope, state), {
+    tabs: [{ kind: "browser", url: "https://tab-1.example/", title: "tab-1" }],
+    activeIndex: -1,
+  });
+  // Only pinned tabs: nothing worth persisting, the store nulls it anyway.
+  assert.equal(snapshotSessionTabs(initialSideTabScope(), state), null);
+});
+
+test("a snapshot restores back onto the same host tabs with focus intact", () => {
+  const state = hostState(["tab-1", "tab-2"]);
+  const scope: SideTabScope = {
+    tabs: [...pinnedSideTabs, browserSideTab("tab-1"), browserSideTab("tab-2")],
+    activeId: "tab-2",
+  };
+  assert.deepEqual(
+    restoreSessionTabs(snapshotSessionTabs(scope, state), state),
+    {
+      placements: [
+        { kind: "reuse", tabId: "tab-1", url: "https://tab-1.example/" },
+        { kind: "reuse", tabId: "tab-2", url: "https://tab-2.example/" },
+      ],
+      activeIndex: 1,
+    },
+  );
+});
+
+test("restoring reuses host tabs by url and opens the rest fresh", () => {
+  // The host restarted (browser.main hot reload): the old page is still open
+  // under a new tab id, so the saved tab reuses it; the other url is gone.
+  const state = hostState(["tab-7"]);
+  const restored = restoreSessionTabs(
+    {
+      tabs: [
+        { kind: "browser", url: "https://tab-7.example/", title: "kept" },
+        { kind: "browser", url: "https://fresh.example/", title: "gone" },
+      ],
+      activeIndex: 1,
+    },
+    state,
+  );
+  assert.deepEqual(restored, {
+    placements: [
+      { kind: "reuse", tabId: "tab-7", url: "https://tab-7.example/" },
+      { kind: "create", url: "https://fresh.example/" },
+    ],
+    activeIndex: 1,
+  });
+});
+
+test("restoring never reuses one host tab for two saved entries", () => {
+  const url = "https://tab-1.example/";
+  const restored = restoreSessionTabs(
+    {
+      tabs: [
+        { kind: "browser", url, title: "first" },
+        { kind: "browser", url, title: "second" },
+      ],
+      activeIndex: 1,
+    },
+    hostState(["tab-1"]),
+  );
+  assert.deepEqual(restored, {
+    placements: [
+      { kind: "reuse", tabId: "tab-1", url },
+      { kind: "create", url },
+    ],
+    activeIndex: 1,
+  });
+});
+
+test("restoring falls back to no focus when the saved focus is unusable", () => {
+  const state = hostState(["tab-1"]);
+  const saved = {
+    tabs: [{ kind: "browser", url: "https://tab-1.example/", title: "a" }],
+    activeIndex: 3,
+  } as const;
+  // Out of range, negative, and non-integer focuses all restore unfocused;
+  // the pane then falls back to its pinned tab.
+  assert.equal(restoreSessionTabs(saved, state).activeIndex, -1);
+  assert.equal(
+    restoreSessionTabs({ ...saved, activeIndex: -1 }, state).activeIndex,
+    -1,
+  );
+  assert.equal(
+    restoreSessionTabs({ ...saved, activeIndex: 0.5 }, state).activeIndex,
+    -1,
+  );
+  // Nothing saved: nothing to restore or focus.
+  assert.deepEqual(restoreSessionTabs(null, state), {
+    placements: [],
+    activeIndex: -1,
+  });
 });

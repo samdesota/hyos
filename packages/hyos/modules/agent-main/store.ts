@@ -149,12 +149,14 @@ function decodeSessionTabs(
       return [{ kind: "browser" as const, url: tab.url, title: tab.title }];
     });
     if (tabs.length === 0) return null;
+    // -1 survives decode: it means "no browser tab focused" — the pane's
+    // pinned tab is showing. Any other unusable index falls back to -1 too,
+    // so restoring never invents a browser focus that was never saved.
     const activeIndex =
       typeof container.activeIndex === "number" &&
-      Number.isInteger(container.activeIndex) &&
-      container.activeIndex >= 0
-        ? Math.min(container.activeIndex, tabs.length - 1)
-        : 0;
+      Number.isInteger(container.activeIndex)
+        ? Math.min(Math.max(container.activeIndex, -1), tabs.length - 1)
+        : -1;
     return { tabs, activeIndex };
   } catch {
     return null;

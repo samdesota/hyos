@@ -360,6 +360,22 @@ test("session tabs persist on the session row and decode defensively", async () 
       ],
       activeIndex: 0,
     });
+    // -1 is meaningful: no browser tab was focused (the pinned tab was).
+    await writeRaw(
+      JSON.stringify({
+        version: 1,
+        tabs: [
+          { kind: "browser", url: "https://example.com/", title: "Example" },
+        ],
+        activeIndex: -1,
+      }),
+    );
+    assert.deepEqual(await store.loadSessionTabs(turn.sessionId), {
+      tabs: [
+        { kind: "browser", url: "https://example.com/", title: "Example" },
+      ],
+      activeIndex: -1,
+    });
   } finally {
     await database.close();
   }

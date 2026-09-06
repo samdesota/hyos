@@ -3,6 +3,10 @@ import type {
   BrowserTabState,
   TabId,
 } from "../../capabilities/browser.js";
+import type {
+  AgentSessionTab,
+  AgentSessionTabs,
+} from "../../capabilities/agent.js";
 
 /**
  * Model for the session side pane's tabs. The pane hosts one tab per
@@ -143,6 +147,92 @@ export function scopeBrowserTabIds(scope: SideTabScope): TabId[] {
   return scope.tabs.flatMap((tab) =>
     tab.kind === "browser" ? [tab.tabId] : [],
   );
+}
+
+/**
+ * The session's pane as the generic per-session shape the agent store
+ * persists: one browser entry per adopted host tab, in strip order, with the
+ * focused entry's index — or -1 when the pinned tab (or nothing browser-y)
+ * was focused, since the pinned tabs are implicit on restore. Host tab ids
+ * are session-agnostic runtime ids, so only what outlives them — url and
+ * title — is kept. Null when the scope shows no browser tabs: the store
+ * decodes an empty list to null anyway, so saving nothing avoids churn.
+ */
+export function snapshotSessionTabs(
+  scope: SideTabScope,
+  state: BrowserState,
+): AgentSessionTabs | null {
+  const byTabId = new Map(state.tabs.map((tab) => [tab.id, tab]));
+  const tabs: AgentSessionTab[] = [];
+  const indices = new Map<TabId, number>();
+  for (const tab of scope.tabs) {
+    if (tab.kind !== "browser") continue;
+    const hostTab = byTabId.get(tab.tabId);
+    if (!hostTab) continue; // stale; reconciliation drops it anyway
+    indices.set(tab.tabId, tabs.length);
+    tabs.push({ kind: "browser", url: hostTab.url, title: hostTab.title });
+  }
+  if (tabs.length === 0) return null;
+  const focused = scope.tabs.find(({ id }) => id === scope.activeId);
+  return {
+    tabs,
+    activeIndex:
+      focused && focused.kind === "browser"
+        ? (indices.get(focused.tabId) ?? -1)
+        : -1,
+  };
+}
+
+/**
+ * One restored browser tab resolved against the live host state: adopt an
+ * existing host tab showing the same url, or open a fresh one.
+ */
+export type SessionTabPlacement =
+  | Readonly<{ kind: "reuse"; tabId: TabId; url: string }>
+  | Readonly<{ kind: "create"; url: string }>;
+
+export type SessionTabsRestore = Readonly<{
+  /** One placement per saved browser tab, in saved order. */
+  placements: readonly SessionTabPlacement[];
+  /** The placement to focus, or -1 → the caller falls back to the pinned tab. */
+  activeIndex: number;
+}>;
+
+/**
+ * Resolve a session's saved tabs against the live host state. Host tabs are
+ * global and keep running across scope swaps, so a saved tab reuses the
+ * first host tab not already claimed by an earlier entry that shows its url
+ * — restoring after a restart must not duplicate pages that are still open —
+ * and only urls with no live match open fresh. A focus that cannot be
+ * honored — no saved tabs, or an index out of range — restores as -1, letting
+ * the pane fall back to its pinned tab instead of inventing a selection.
+ */
+export function restoreSessionTabs(
+  saved: AgentSessionTabs | null,
+  state: BrowserState,
+): SessionTabsRestore {
+  const savedTabs = saved?.tabs ?? [];
+  if (savedTabs.length === 0) return { placements: [], activeIndex: -1 };
+  const claimed = new Set<TabId>();
+  const placements = savedTabs.map((tab): SessionTabPlacement => {
+    const hostTab = state.tabs.find(
+      ({ id, url }) => !claimed.has(id) && url === tab.url,
+    );
+    if (!hostTab) return { kind: "create", url: tab.url };
+    claimed.add(hostTab.id);
+    return { kind: "reuse", tabId: hostTab.id, url: tab.url };
+  });
+  const index = saved?.activeIndex;
+  return {
+    placements,
+    activeIndex:
+      typeof index === "number" &&
+      Number.isInteger(index) &&
+      index >= 0 &&
+      index < placements.length
+        ? index
+        : -1,
+  };
 }
 
 /**
