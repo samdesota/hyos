@@ -59,8 +59,15 @@ const REASONING_EFFORTS: readonly AgentReasoningEffort[] = [
   "max",
 ];
 
-/** Gateway providers known to serve the GLM family well. */
-const GLM_GATEWAY_PROVIDERS = ["friendli", "baseten", "zai"] as const;
+/**
+ * Gateway providers serving the GLM family, preferred order first. Baseten
+ * leads: live probes show it honors reasoning effort and skips thinking on
+ * easy prompts, while friendli ignores effort and always reasons.
+ */
+const GLM_GATEWAY_PROVIDERS = ["baseten", "friendli", "zai"] as const;
+
+/** DeepSeek V4 Pro is served by baseten (preferred) and deepinfra only. */
+const DEEPSEEK_V4_PRO_GATEWAY_PROVIDERS = ["baseten", "deepinfra"] as const;
 
 type GatewayModel = Readonly<{
   id: string;
@@ -108,6 +115,12 @@ const GATEWAY_MODELS: readonly GatewayModel[] = [
     label: "DeepSeek V4 Pro",
     defaultReasoningEffort: "low",
     contextWindow: 1_000_000,
+    providerOptions: {
+      gateway: {
+        order: DEEPSEEK_V4_PRO_GATEWAY_PROVIDERS,
+        only: DEEPSEEK_V4_PRO_GATEWAY_PROVIDERS,
+      },
+    },
   },
   {
     id: "deepseek/deepseek-v4-flash",

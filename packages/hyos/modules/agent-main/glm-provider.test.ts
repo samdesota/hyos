@@ -221,20 +221,35 @@ test("GLM reports per-turn context usage from stream chunks", async () => {
   assert.deepEqual(requests[0].stream_options, { include_usage: true });
   assert.deepEqual(requests[0].providerOptions, {
     gateway: {
-      order: ["friendli", "baseten", "zai"],
-      only: ["friendli", "baseten", "zai"],
+      order: ["baseten", "friendli", "zai"],
+      only: ["baseten", "friendli", "zai"],
     },
   });
 });
 
 test("gateway models report per-model context windows and routing", async () => {
+  const glmRouting = {
+    gateway: {
+      order: ["baseten", "friendli", "zai"],
+      only: ["baseten", "friendli", "zai"],
+    },
+  };
+  const deepSeekProRouting = {
+    gateway: {
+      order: ["baseten", "deepinfra"],
+      only: ["baseten", "deepinfra"],
+    },
+  };
   const cases = [
-    { modelId: "zai/glm-5.2", routed: true },
-    { modelId: "deepseek/deepseek-v4-pro", routed: false },
-    { modelId: "deepseek/deepseek-v4-flash", routed: false },
-    { modelId: "alibaba/qwen3.5-plus", routed: false },
+    { modelId: "zai/glm-5.2", providerOptions: glmRouting },
+    {
+      modelId: "deepseek/deepseek-v4-pro",
+      providerOptions: deepSeekProRouting,
+    },
+    { modelId: "deepseek/deepseek-v4-flash", providerOptions: null },
+    { modelId: "alibaba/qwen3.5-plus", providerOptions: null },
   ] as const;
-  for (const { modelId, routed } of cases) {
+  for (const { modelId, providerOptions } of cases) {
     const requests: Record<string, unknown>[] = [];
     const usages: AgentTokenUsage[] = [];
     const fakeFetch: typeof fetch = async (_url, init) => {
@@ -267,13 +282,8 @@ test("gateway models report per-model context windows and routing", async () => 
     );
     assert.equal(requests[0].model as string | undefined, modelId);
     assert.deepEqual(requests[0].reasoning, { effort: "low" });
-    if (routed) {
-      assert.deepEqual(requests[0].providerOptions, {
-        gateway: {
-          order: ["friendli", "baseten", "zai"],
-          only: ["friendli", "baseten", "zai"],
-        },
-      });
+    if (providerOptions) {
+      assert.deepEqual(requests[0].providerOptions, providerOptions);
     } else {
       assert.equal("providerOptions" in requests[0], false);
     }
