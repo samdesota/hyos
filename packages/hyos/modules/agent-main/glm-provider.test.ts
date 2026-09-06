@@ -142,6 +142,38 @@ test("GLM incremental requests can finish conversationally without edits", async
   }
 });
 
+test("GLM-5.2 sends the non-thinking payload in incremental mode only", async () => {
+  const requests: Record<string, unknown>[] = [];
+  const fakeFetch: typeof fetch = async (_url, init) => {
+    requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return stream({ choices: [{ delta: { content: "Done." } }] });
+  };
+  const provider = createGlmProvider({ apiKey: "test", fetch: fakeFetch });
+  const run = (overrides: Record<string, unknown>) =>
+    provider.run(
+      {
+        prompt: "Go.",
+        folder: "/tmp",
+        modelId: "zai/glm-5.2",
+        providerSessionId: null,
+        reasoningEffort: "high",
+        ...overrides,
+      },
+      { session() {}, activity() {}, response() {} },
+      new AbortController().signal,
+    );
+
+  await run({ mode: "incremental" });
+  assert.deepEqual(requests[0].reasoning, { effort: "none" });
+
+  await run({});
+  assert.deepEqual(requests[1].reasoning, { effort: "high" });
+
+  // Other models keep their policy effort in incremental mode.
+  await run({ modelId: "zai/glm-5.3-flash", mode: "incremental" });
+  assert.deepEqual(requests[2].reasoning, { effort: "low" });
+});
+
 test("GLM reports per-turn context usage from stream chunks", async () => {
   const requests: Record<string, unknown>[] = [];
   const usages: AgentTokenUsage[] = [];
@@ -195,6 +227,66 @@ test("GLM reports per-turn context usage from stream chunks", async () => {
   });
 });
 
+test("gateway models report per-model context windows and routing", async () => {
+  const cases = [
+    { modelId: "zai/glm-5.2", routed: true },
+    { modelId: "deepseek/deepseek-v4-pro", routed: false },
+    { modelId: "deepseek/deepseek-v4-flash", routed: false },
+    { modelId: "alibaba/qwen3.5-plus", routed: false },
+  ] as const;
+  for (const { modelId, routed } of cases) {
+    const requests: Record<string, unknown>[] = [];
+    const usages: AgentTokenUsage[] = [];
+    const fakeFetch: typeof fetch = async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return stream(
+        { choices: [{ delta: { content: "Done." } }] },
+        {
+          usage: { prompt_tokens: 1_200, completion_tokens: 64 },
+        },
+      );
+    };
+    const provider = createGlmProvider({ apiKey: "test", fetch: fakeFetch });
+    const result = await provider.run(
+      {
+        prompt: "Measure context.",
+        folder: "/tmp",
+        modelId,
+        providerSessionId: null,
+        reasoningEffort: "low",
+      },
+      {
+        session() {},
+        usage(usage) {
+          usages.push(usage);
+        },
+        response() {},
+        activity() {},
+      },
+      new AbortController().signal,
+    );
+    assert.equal(requests[0].model as string | undefined, modelId);
+    assert.deepEqual(requests[0].reasoning, { effort: "low" });
+    if (routed) {
+      assert.deepEqual(requests[0].providerOptions, {
+        gateway: {
+          order: ["friendli", "baseten", "zai"],
+          only: ["friendli", "baseten", "zai"],
+        },
+      });
+    } else {
+      assert.equal("providerOptions" in requests[0], false);
+    }
+    const expected = {
+      promptTokens: 1_200,
+      completionTokens: 64,
+      contextWindow: 1_000_000,
+    };
+    assert.deepEqual(result.usage, expected);
+    assert.deepEqual(usages, [expected]);
+  }
+});
+
 function stream(...events: readonly object[]): Response {
   return new Response(
     `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`,
@@ -223,6 +315,31 @@ test("GLM exposes the OpenCode tool interface with explained edits", () => {
   const model = createGlmProvider({ apiKey: "test" }).summary.models[0];
   assert.equal(model.defaultReasoningEffort, "medium");
   assert.deepEqual(model.reasoningEfforts, ["low", "medium", "high", "max"]);
+});
+
+test("the gateway catalog lists the GLM, DeepSeek, and Qwen models", () => {
+  const { id, label, models } = createGlmProvider({ apiKey: "test" }).summary;
+  assert.equal(id, "glm");
+  assert.deepEqual(
+    models.map(({ id: modelId, label: modelLabel }) => [modelId, modelLabel]),
+    [
+      ["zai/glm-5.3-flash", "GLM-5.3 Flash"],
+      ["zai/glm-5.2", "GLM-5.2"],
+      ["deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"],
+      ["deepseek/deepseek-v4-flash", "DeepSeek V4 Flash"],
+      ["alibaba/qwen3.5-plus", "Qwen3.5 Plus"],
+    ],
+  );
+  // GLM-5.3 Flash keeps its old default; the open-weight models the user is
+  // benchmarking start at low reasoning effort.
+  for (const model of models) {
+    assert.deepEqual(model.reasoningEfforts, ["low", "medium", "high", "max"]);
+    assert.equal(
+      model.defaultReasoningEffort,
+      model.id === "zai/glm-5.3-flash" ? "medium" : "low",
+    );
+  }
+  assert.equal(label, "AI Gateway");
 });
 
 test("GLM streams reasoning, executes tools, and continues to a final response", async () => {

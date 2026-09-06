@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 
+import type { AgentReasoningEffort } from "../../../capabilities/agent.js";
 import { glmTurnPolicy } from "./glm-turn-policy.js";
 import { environmentPrompt } from "./prompt.js";
 import type { OpenCodeTool } from "./opencode-tools.js";
@@ -47,8 +48,84 @@ type StreamDelta = Readonly<{
   }>[];
 }>;
 
-/** Total context window for GLM models, in tokens. */
-const GLM_CONTEXT_WINDOW = 800_000;
+/** Total context window to assume for an unknown model id, in tokens. */
+const DEFAULT_CONTEXT_WINDOW = 1_000_000;
+
+/** Reasoning efforts accepted by the gateway for every listed model. */
+const REASONING_EFFORTS: readonly AgentReasoningEffort[] = [
+  "low",
+  "medium",
+  "high",
+  "max",
+];
+
+/** Gateway providers known to serve the GLM family well. */
+const GLM_GATEWAY_PROVIDERS = ["friendli", "baseten", "zai"] as const;
+
+type GatewayModel = Readonly<{
+  id: string;
+  label: string;
+  /** Reasoning effort used when the user has not chosen one. */
+  defaultReasoningEffort: AgentReasoningEffort;
+  /** Total context window reported by the gateway, in tokens. */
+  contextWindow: number;
+  /** Gateway routing preferences; unset lets the gateway auto-route. */
+  providerOptions?: Record<string, unknown>;
+  /**
+   * Send the gateway's documented non-thinking payload
+   * (`reasoning: { effort: "none" }`) in incremental mode.
+   */
+  nonThinkingIncremental?: boolean;
+}>;
+
+/**
+ * Models served through the AI gateway. Open-weight models default to low
+ * reasoning effort: they overthink at higher efforts, and the user is
+ * benchmarking how much thinking each model actually does.
+ */
+const GATEWAY_MODELS: readonly GatewayModel[] = [
+  {
+    id: "zai/glm-5.3-flash",
+    label: "GLM-5.3 Flash",
+    defaultReasoningEffort: "medium",
+    contextWindow: 800_000,
+    providerOptions: {
+      gateway: { order: GLM_GATEWAY_PROVIDERS, only: GLM_GATEWAY_PROVIDERS },
+    },
+  },
+  {
+    id: "zai/glm-5.2",
+    label: "GLM-5.2",
+    defaultReasoningEffort: "low",
+    contextWindow: 1_000_000,
+    nonThinkingIncremental: true,
+    providerOptions: {
+      gateway: { order: GLM_GATEWAY_PROVIDERS, only: GLM_GATEWAY_PROVIDERS },
+    },
+  },
+  {
+    id: "deepseek/deepseek-v4-pro",
+    label: "DeepSeek V4 Pro",
+    defaultReasoningEffort: "low",
+    contextWindow: 1_000_000,
+  },
+  {
+    id: "deepseek/deepseek-v4-flash",
+    label: "DeepSeek V4 Flash",
+    defaultReasoningEffort: "low",
+    contextWindow: 1_000_000,
+  },
+  {
+    id: "alibaba/qwen3.5-plus",
+    label: "Qwen3.5 Plus",
+    defaultReasoningEffort: "low",
+    contextWindow: 1_000_000,
+  },
+];
+
+function gatewayModel(modelId: string): GatewayModel | null {
+  return GATEWAY_MODELS.find((model) => model.id === modelId) ?? null;
+}
 
 function toolsPayload(
   tools: readonly OpenCodeTool[],
@@ -130,25 +207,27 @@ export function createGlmProvider(
   return {
     summary: {
       id: "glm",
-      label: "GLM",
-      models: [
-        {
-          id: "zai/glm-5.3-flash",
-          label: "GLM-5.3 Flash",
-          reasoningEfforts: ["low", "medium", "high", "max"],
-          defaultReasoningEffort: "medium",
-        },
-      ],
+      label: "AI Gateway",
+      models: GATEWAY_MODELS.map((model) => ({
+        id: model.id,
+        label: model.label,
+        reasoningEfforts: REASONING_EFFORTS,
+        defaultReasoningEffort: model.defaultReasoningEffort,
+      })),
     },
     async prepare() {
       await apiKey();
     },
     async run(input, sink: AgentRunSink, signal) {
       const key = await apiKey();
+      const model = gatewayModel(input.modelId);
+      const contextWindow = model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
       const policy = glmTurnPolicy(
         input,
         environmentPrompt(input.folder, input.modelId),
       );
+      const nonThinking =
+        input.mode === "incremental" && model?.nonThinkingIncremental === true;
       const { offered, byName } = agentToolbelt(input, search);
       const messages: ChatMessage[] = [
         {
@@ -173,14 +252,13 @@ export function createGlmProvider(
             tool_choice: "auto",
             stream: true,
             stream_options: { include_usage: true },
-            reasoning: { effort: policy.effort },
+            reasoning: nonThinking
+              ? { effort: "none" }
+              : { effort: policy.effort },
             max_tokens: 32_768,
-            providerOptions: {
-              gateway: {
-                order: ["friendli", "baseten", "zai"],
-                only: ["friendli", "baseten", "zai"],
-              },
-            },
+            ...(model?.providerOptions
+              ? { providerOptions: model.providerOptions }
+              : {}),
           }),
           signal,
         });
@@ -237,7 +315,7 @@ export function createGlmProvider(
               typeof lastUsage.completion_tokens === "number"
                 ? lastUsage.completion_tokens
                 : null,
-            contextWindow: GLM_CONTEXT_WINDOW,
+            contextWindow,
           });
         }
 
@@ -260,7 +338,7 @@ export function createGlmProvider(
                       typeof lastUsage.completion_tokens === "number"
                         ? lastUsage.completion_tokens
                         : null,
-                    contextWindow: GLM_CONTEXT_WINDOW,
+                    contextWindow,
                   },
                 }
               : {}),
