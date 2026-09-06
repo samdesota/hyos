@@ -18,10 +18,12 @@ import type {
   AgentMessageChange,
   AgentProviderSummary,
   AgentSessionSummary,
+  AgentSessionTabs,
 } from "../../capabilities/agent.js";
 import type {
   BrowserCommand,
   BrowserState,
+  TabId,
 } from "../../capabilities/browser.js";
 import { stripPlanBlocks } from "../../capabilities/plan.js";
 import type { BrowserClient } from "../browser-client/types.js";
@@ -35,19 +37,23 @@ import { resizedPatchPanelWidth } from "./patch-panel.js";
 import {
   activeSideTab,
   autoAdoptHostTabs,
+  createdHostTabId,
   initialSideTabScope,
   isPinnedSideTab,
   neighborSideTabId,
   pinnedSideTabs,
   reconcileSideTabs,
+  restoreSessionTabs,
   scopeBrowserTabIds,
   sideTabDescriptors,
   sideTabLabel,
   sideTabScopeKey,
+  snapshotSessionTabs,
   unadoptedHostTab,
   type SideTab,
   type SideTabScope,
 } from "./side-pane.js";
+import { createSessionTabsPersister } from "./session-tabs.js";
 import { agentStyles } from "./styles.js";
 import { selectedMode, supportsIncremental } from "./mode-selection.js";
 import { syncHashToSession, sessionFromHash } from "./session-route.js";
@@ -552,11 +558,38 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   const [browserState, setBrowserState] = createSignal(emptyBrowserState);
   const [browserError, setBrowserError] = createSignal<string | null>(null);
 
+  // Persisted pane state: the active session's strip is snapshotted into
+  // the agent sessions DB so a restart or a renderer reload brings its
+  // browser tabs back. Host publishes arrive for every loading tick, so
+  // the write is debounced and the snapshot is taken when it fires — never
+  // when scheduled — coalescing a burst into one fresh write under the
+  // session that is active at that moment.
+  const tabsPersister = createSessionTabsPersister({
+    delay: 500,
+    snapshot: () => {
+      const sessionId = activeId();
+      if (!sessionId) return null;
+      return {
+        sessionId,
+        tabs: snapshotSessionTabs(
+          { tabs: sideTabs(), activeId: activeSideTabId() },
+          browserState(),
+        ),
+      };
+    },
+    save: ({ sessionId, tabs }) =>
+      props.client.saveSessionTabs(sessionId, tabs),
+  });
+
   // Each session owns its strip: switching sessions stashes the outgoing
   // strip and adopts the incoming one, so browser tabs are private to a
   // session while their pages keep running in the host in the background.
   const sideTabScopes = new Map<string, SideTabScope>();
   const swapSideTabScope = (incomingId: string | null): void => {
+    // Flush before stashing: the outgoing session's latest strip — including
+    // focus changes that never triggered a publish — is persisted under its
+    // own id before the pane moves on.
+    tabsPersister.flush();
     sideTabScopes.set(sideTabScopeKey(activeId()), {
       tabs: sideTabs(),
       activeId: activeSideTabId(),
@@ -673,14 +706,19 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     setBrowserState(next);
     setSideTabs((tabs) => reconcileSideTabs(tabs, next));
     const adopted = autoAdoptHostTabs(sideTabs(), next, previous);
-    if (!adopted) return;
-    setSideTabs(adopted.tabs);
-    setActiveSideTabId(adopted.activeId);
-    setSideCollapsed(false);
+    if (adopted) {
+      setSideTabs(adopted.tabs);
+      setActiveSideTabId(adopted.activeId);
+      setSideCollapsed(false);
+    }
+    // Every accepted publish may have changed what the pane shows (tab
+    // titles drift as pages load, even when the strip does not); the
+    // persister coalesces that churn into one debounced write.
+    tabsPersister.request();
   };
   const unsubscribeBrowser = props.browserClient.subscribe(acceptBrowserState);
   onCleanup(() => unsubscribeBrowser());
-  void props.browserClient
+  const bootBrowserSnapshot: Promise<void> = props.browserClient
     .execute({ type: "snapshot" })
     .then(acceptBrowserState)
     // A boot-time failure (host unloading) shows up in the browser tab
@@ -869,9 +907,83 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     feed = undefined;
   };
 
+  // Re-open a session's persisted browser tabs on its first open: host tabs
+  // still showing a saved url are re-adopted in place, urls with no live tab
+  // are opened fresh in saved order, and the saved focus is re-applied.
+  // `generation` abandons the restore the moment another selection wins —
+  // the strip it was building belongs to a session that is no longer shown,
+  // so the tabs it opened in the meantime are closed again.
+  const restoreSavedTabs = async (
+    sessionId: string,
+    generation: number,
+  ): Promise<void> => {
+    let saved: AgentSessionTabs | null = null;
+    try {
+      saved = await props.client.sessionTabs(sessionId);
+    } catch {
+      // Background pane state: a failed load just leaves the strip as-is.
+      return;
+    }
+    // A renderer reload keeps the host's tabs alive, but the boot snapshot
+    // revealing them may still be in flight; restoring against it keeps a
+    // fast reopen from opening duplicates for tabs that never went away.
+    await bootBrowserSnapshot;
+    if (generation !== feedGeneration || !saved) return;
+    const { placements, activeIndex } = restoreSessionTabs(
+      saved,
+      browserState(),
+    );
+    let focusedId: string | null = null;
+    const created: TabId[] = [];
+    // A created host tab can also land in the strip on its own: the host
+    // publishes it and auto-adoption beats the loop to it. Appends are
+    // therefore idempotent, and the saved focus is re-asserted once the
+    // whole strip is in place.
+    const appendBrowserSideTab = (tabId: TabId): void => {
+      setSideTabs((tabs) =>
+        tabs.some((tab) => tab.kind === "browser" && tab.tabId === tabId)
+          ? tabs
+          : [...tabs, { id: tabId, kind: "browser", tabId }],
+      );
+    };
+    for (const [index, placement] of placements.entries()) {
+      let tabId: TabId | null = null;
+      if (placement.kind === "reuse") {
+        tabId = placement.tabId;
+      } else {
+        const before = browserState();
+        const next = await runBrowser({
+          type: "create-tab",
+          url: placement.url,
+        });
+        tabId = next ? createdHostTabId(before, next) : null;
+        if (tabId) created.push(tabId);
+      }
+      if (generation !== feedGeneration) {
+        for (const orphan of created) {
+          void runBrowser({ type: "close-tab", tabId: orphan });
+        }
+        return;
+      }
+      if (!tabId) continue;
+      appendBrowserSideTab(tabId);
+      if (index === activeIndex) focusedId = tabId;
+    }
+    if (focusedId) {
+      setActiveSideTabId(focusedId);
+      setSideCollapsed(false);
+    }
+  };
+
   const selectSession = async (sessionId: string): Promise<void> => {
     const generation = ++feedGeneration;
     closeFeed();
+    // Only a session's first open restores its persisted tabs: an in-memory
+    // stash is fresher than the DB, and re-selecting the active session
+    // must not resurrect tabs the user has closed since.
+    const firstOpen =
+      !sideTabScopes.has(sideTabScopeKey(sessionId)) &&
+      sessionId !== activeId();
     swapSideTabScope(sessionId);
     setActiveId(sessionId);
     syncHashToSession(sessionId);
@@ -883,6 +995,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     setError(null);
     transcriptScroll.reset();
     patchScroll.reset();
+    if (firstOpen) void restoreSavedTabs(sessionId, generation);
     try {
       const opened = await props.client.openFeed(sessionId, 200);
       if (generation !== feedGeneration) {
@@ -1000,6 +1113,10 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
     for (const tabId of scopeBrowserTabIds(scope)) {
       void runBrowser({ type: "close-tab", tabId });
     }
+    // Archived sessions start from a clean strip after unarchive, so the
+    // persisted tabs go too — otherwise a restore would reopen the pages
+    // the archive just retired.
+    void props.client.saveSessionTabs(sessionId, null).catch(() => undefined);
   };
 
   const setSessionArchived = async (
@@ -1094,6 +1211,9 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   onCleanup(() => {
     feedGeneration += 1;
     closeFeed();
+    // A teardown (window close, hot reload) gets one last best-effort write
+    // of the active session's pane before the pending timer dies with it.
+    tabsPersister.flush();
     unsubscribeSessions();
     narrowSide.removeEventListener("change", collapseSideWhenNarrow);
     document.removeEventListener("pointerdown", closeModelMenuOnPointerDown);

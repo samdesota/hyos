@@ -236,6 +236,19 @@ export function restoreSessionTabs(
 }
 
 /**
+ * The host tab a `create-tab` call added: the one absent from the state
+ * before the call. Null when the call returned nothing new (it failed, or
+ * the new tab could not be told apart from an external one).
+ */
+export function createdHostTabId(
+  before: BrowserState,
+  after: BrowserState,
+): TabId | null {
+  const known = new Set(before.tabs.map(({ id }) => id));
+  return after.tabs.find(({ id }) => !known.has(id))?.id ?? null;
+}
+
+/**
  * The side tab to focus after closing one: the next tab in strip order, else
  * the previous one — mirroring the browser host's fallback activation. Null
  * when the closed tab was unknown or nothing remains.

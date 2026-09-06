@@ -6,6 +6,7 @@ import { emptyBrowserState } from "./browser-tab.js";
 import {
   activeSideTab,
   autoAdoptHostTabs,
+  createdHostTabId,
   initialSideTabScope,
   isPinnedSideTab,
   neighborSideTabId,
@@ -337,4 +338,16 @@ test("restoring falls back to no focus when the saved focus is unusable", () => 
     placements: [],
     activeIndex: -1,
   });
+});
+
+test("the tab a create call opened is the one absent from the previous state", () => {
+  const before = hostState(["tab-1"]);
+  assert.equal(
+    createdHostTabId(before, hostState(["tab-1", "tab-2"])),
+    "tab-2",
+  );
+  // Nothing new: the call failed or only refreshed existing tabs.
+  assert.equal(createdHostTabId(before, before), null);
+  // A tab disappearing is a close, not a creation.
+  assert.equal(createdHostTabId(hostState(["tab-1", "tab-2"]), before), null);
 });
