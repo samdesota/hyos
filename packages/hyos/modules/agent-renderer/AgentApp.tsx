@@ -224,6 +224,50 @@ export function partitionSessions(
   return { active, archived };
 }
 
+export type SessionFolderGroup = Readonly<{
+  folder: string;
+  label: string;
+  parentPath: string | null;
+  sessions: readonly AgentSessionSummary[];
+}>;
+
+/** Group a newest-first session list, preserving group and session order.
+ * Call separately for active and archived sessions after partitioning.
+ */
+export function groupSessionsByFolder(
+  sessions: readonly AgentSessionSummary[],
+): readonly SessionFolderGroup[] {
+  const folders = new Map<string, AgentSessionSummary[]>();
+  for (const session of sessions) {
+    const group = folders.get(session.folder);
+    if (group) group.push(session);
+    else folders.set(session.folder, [session]);
+  }
+  const labels = new Map<string, number>();
+  const labelFor = (folder: string) =>
+    folder ? folderName(folder) || folder : "No project folder";
+  for (const folder of folders.keys()) {
+    const label = labelFor(folder);
+    labels.set(label, (labels.get(label) ?? 0) + 1);
+  }
+  return Array.from(folders, ([folder, groupedSessions]) => {
+    const label = labelFor(folder);
+    const trimmed = folder.replace(/\/+$/, "");
+    const separator = trimmed.lastIndexOf("/");
+    return {
+      folder,
+      label,
+      parentPath:
+        folder && labels.get(label)! > 1
+          ? separator === -1
+            ? "."
+            : trimmed.slice(0, separator) || "/"
+          : null,
+      sessions: groupedSessions,
+    };
+  });
+}
+
 /** Distinct folders from sessions, most recently updated first. */
 export function recentFolders(
   sessions: readonly AgentSessionSummary[],

@@ -8,6 +8,7 @@ import type {
 import {
   collapseWorkRuns,
   folderName,
+  groupSessionsByFolder,
   implementNextPrompt,
   nextPlanTask,
   partitionSessions,
@@ -53,6 +54,105 @@ test("sessions are partitioned into active and archived lists", () => {
     active: [sessions[0], sessions[2]],
     archived: [sessions[1]],
   });
+});
+
+test("folder groups preserve newest-first input order without mutating sessions", () => {
+  const sessions = Object.freeze([
+    Object.freeze({ ...sessionSummary("newest", null), folder: "/tmp/beta" }),
+    Object.freeze({ ...sessionSummary("middle", null), folder: "/tmp/alpha" }),
+    Object.freeze({ ...sessionSummary("oldest", null), folder: "/tmp/beta" }),
+  ]);
+  assert.deepEqual(groupSessionsByFolder(sessions), [
+    {
+      folder: "/tmp/beta",
+      label: "beta",
+      parentPath: null,
+      sessions: [sessions[0], sessions[2]],
+    },
+    {
+      folder: "/tmp/alpha",
+      label: "alpha",
+      parentPath: null,
+      sessions: [sessions[1]],
+    },
+  ]);
+  assert.deepEqual(groupSessionsByFolder([]), []);
+});
+
+test("folder groups use exact paths and disambiguate duplicate names", () => {
+  const paths = [
+    "/projects/app",
+    "/worktrees/app",
+    "/projects/app/",
+    "/projects/app/src",
+  ];
+  const groups = groupSessionsByFolder(
+    paths.map((folder, index) => ({
+      ...sessionSummary(String(index), null),
+      folder,
+    })),
+  );
+  assert.deepEqual(
+    groups.map(({ folder, label, parentPath }) => ({
+      folder,
+      label,
+      parentPath,
+    })),
+    [
+      { folder: paths[0], label: "app", parentPath: "/projects" },
+      { folder: paths[1], label: "app", parentPath: "/worktrees" },
+      { folder: paths[2], label: "app", parentPath: "/projects" },
+      { folder: paths[3], label: "src", parentPath: null },
+    ],
+  );
+});
+
+test("folder groups label empty and root folders", () => {
+  const groups = groupSessionsByFolder(
+    ["", "/"].map((folder) => ({
+      ...sessionSummary(folder, null),
+      folder,
+    })),
+  );
+  assert.deepEqual(
+    groups.map(({ folder, label, parentPath }) => ({
+      folder,
+      label,
+      parentPath,
+    })),
+    [
+      { folder: "", label: "No project folder", parentPath: null },
+      { folder: "/", label: "/", parentPath: null },
+    ],
+  );
+});
+
+test("active and archived folder groups remain separate", () => {
+  const live = sessionSummary("live", null);
+  const archived = sessionSummary("archived", new Date());
+  const other = {
+    ...sessionSummary("other", new Date()),
+    folder: "/elsewhere/project",
+  };
+  const partitions = partitionSessions([archived, live, other]);
+  const activeGroups = groupSessionsByFolder(partitions.active);
+  const archivedGroups = groupSessionsByFolder(partitions.archived);
+  assert.deepEqual(activeGroups, [
+    {
+      folder: live.folder,
+      label: "project",
+      parentPath: null,
+      sessions: [live],
+    },
+  ]);
+  assert.deepEqual(
+    archivedGroups.map((group) => group.sessions),
+    [[archived], [other]],
+  );
+  assert.deepEqual(
+    archivedGroups.map((group) => group.parentPath),
+    ["/tmp", "/elsewhere"],
+  );
 });
 
 test("recent folders are deduplicated in session order", () => {
