@@ -184,7 +184,7 @@ export const agentStyles = String.raw`
   .cancel { margin-left: auto; padding: 8px 11px; color: #ffb0a8; background: #3a2826; }
   .browser-panel-toolbar {
     display: flex; align-items: center; gap: 6px;
-    min-height: 67px; padding: 12px;
+    min-height: 47px; padding: 8px 12px;
     border-bottom: 1px solid #30312d;
   }
   .browser-nav {
