@@ -65,6 +65,39 @@ export function unadoptedHostTab(
 }
 
 /**
+ * The strip with host tabs that appeared in a publish — absent from the
+ * previous state and not already shown — appended, plus the id to focus, or
+ * null when nothing appeared, so frequent publishes never churn the list.
+ * A host restart (a new generation recreating its tabs, as after a hot
+ * reload) or a first observation re-seeds without adopting, so the boot
+ * snapshot still leaves a fresh strip on the pinned tabs alone and only tabs
+ * appearing while the pane watches — an agent's `browser_open_tab`, say —
+ * show up without a manual `+` click.
+ */
+export function autoAdoptHostTabs(
+  tabs: readonly SideTab[],
+  state: BrowserState,
+  previous: BrowserState | null,
+): Readonly<{ tabs: readonly SideTab[]; activeId: string }> | null {
+  if (!previous || previous.generation !== state.generation) return null;
+  const known = new Set(previous.tabs.map(({ id }) => id));
+  const shown = new Set(tabs.map(({ id }) => id));
+  const appeared = state.tabs
+    .map(({ id }) => id)
+    .filter((tabId) => !known.has(tabId) && !shown.has(tabId));
+  if (appeared.length === 0) return null;
+  return {
+    tabs: [
+      ...tabs,
+      ...appeared.map(
+        (tabId) => ({ id: tabId, kind: "browser", tabId }) as const,
+      ),
+    ],
+    activeId: appeared[0],
+  };
+}
+
+/**
  * Drop browser tabs the published host state no longer knows — closed, or
  * lost to a browser.main hot reload, which recreates the host and its tab
  * ids. Returns the input untouched when nothing is stale, so the frequent

@@ -34,6 +34,7 @@ import { mountMarkdown } from "./markdown.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
 import {
   activeSideTab,
+  autoAdoptHostTabs,
   initialSideTabScope,
   isPinnedSideTab,
   neighborSideTabId,
@@ -664,10 +665,18 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
 
   // Browser host state drives the strip's browser tabs: every publish also
   // reconciles, so tabs closed or lost to a browser.main hot reload
-  // disappear from the strip instead of presenting a dead view.
+  // disappear from the strip instead of presenting a dead view, and tabs
+  // that appear while the pane watches — an agent's browser_open_tab tool,
+  // say — are adopted and focused without a manual `+` click.
   const acceptBrowserState = (next: BrowserState): void => {
+    const previous = browserState();
     setBrowserState(next);
     setSideTabs((tabs) => reconcileSideTabs(tabs, next));
+    const adopted = autoAdoptHostTabs(sideTabs(), next, previous);
+    if (!adopted) return;
+    setSideTabs(adopted.tabs);
+    setActiveSideTabId(adopted.activeId);
+    setSideCollapsed(false);
   };
   const unsubscribeBrowser = props.browserClient.subscribe(acceptBrowserState);
   onCleanup(() => unsubscribeBrowser());
@@ -704,7 +713,8 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   });
 
   // `+` focuses a host tab the strip does not already show, and only creates
-  // a new one once every host tab is already in the strip.
+  // a new one once every host tab is already in the strip; a created tab
+  // lands in the strip through acceptBrowserState's auto-adoption.
   const openBrowserSideTab = (): void => {
     const adoptable = unadoptedHostTab(browserState(), sideTabs());
     if (adoptable) {
@@ -716,17 +726,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
       setSideCollapsed(false);
       return;
     }
-    void runBrowser({ type: "create-tab" }).then((next) => {
-      const tabId = next?.activeTabId;
-      if (!tabId) return;
-      setSideTabs((tabs) =>
-        tabs.some((tab) => tab.kind === "browser" && tab.tabId === tabId)
-          ? tabs
-          : [...tabs, { id: tabId, kind: "browser", tabId }],
-      );
-      setActiveSideTabId(tabId);
-      setSideCollapsed(false);
-    });
+    void runBrowser({ type: "create-tab" });
   };
 
   const closeSideTab = (tab: SideTab): void => {
