@@ -37,6 +37,26 @@
       this.ipcMain = null;
     }
 
+    consume(capability) {
+      const definition = this.definition(capability);
+      const id = definition.id;
+      return Object.freeze({
+        id,
+        version: definition.version,
+        call: async (method, ...args) => {
+          if (!definition.methods.has(method)) {
+            throw new Error(`${id} does not expose method ${method}`);
+          }
+          const provider = await this.waitForProvider(definition.id);
+          const fn = provider.implementation[method];
+          if (typeof fn !== "function") {
+            throw new Error(`Provider ${id} does not implement ${method}`);
+          }
+          return await fn(...args);
+        },
+      });
+    }
+
     configure(definitions) {
       const configured = indexDefinitions(definitions);
       for (const [id, provider] of this.providers) {

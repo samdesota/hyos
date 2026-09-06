@@ -6,6 +6,7 @@ import type {
   AgentProviderSummary,
   AgentReasoningEffort,
 } from "../../../capabilities/agent.js";
+import type { BrowserClient } from "../../browser-client/types.js";
 
 export type AgentRunInput = Readonly<{
   prompt: string;
@@ -25,6 +26,8 @@ export type AgentRunInput = Readonly<{
    * unknown ids or the current turn.
    */
   sessionTranscript?: (turnId: string) => Promise<string | null>;
+  /** Browser client for opening tabs and other browser operations. */
+  browserClient?: BrowserClient;
 }>;
 
 export type AgentTokenUsage = Readonly<{

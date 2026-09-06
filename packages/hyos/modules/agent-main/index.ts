@@ -5,6 +5,7 @@ import { openNodeStorage } from "@hyos/hydb/node";
 import type { BrowserWindow } from "electron";
 
 import { agentCapability } from "../../capabilities/agent.js";
+import { browserCapability } from "../../capabilities/browser.js";
 import type { MainRemoteCapabilities } from "../../remote-capabilities.js";
 import { defineModule } from "../../runtime.js";
 import { createAgentHost } from "./host.js";
@@ -42,6 +43,7 @@ export = defineModule<AgentMainConfig>({
     const root = ctx.get<string>("application.root");
     const window = ctx.get<BrowserWindow>("electron.overlay-window");
     const remote = ctx.get<MainRemoteCapabilities>("remote.capabilities");
+    const browser = remote.consume(browserCapability);
     const storage = await openNodeStorage({
       directory: path.resolve(root, config.storagePath),
       schema: agentSchema,
@@ -62,6 +64,7 @@ export = defineModule<AgentMainConfig>({
     const host = createAgentHost({
       window,
       remote,
+      browser,
       store,
       providers: createAgentProviders(config.providers, {
         codex: config.codex,

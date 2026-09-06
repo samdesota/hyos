@@ -50,6 +50,9 @@ export class MainRemoteCapabilities {
     event: Event,
     payload: EventPayload<Capability["events"][Event]>,
   ): void;
+  consume<Capability extends AnyCapability>(
+    capability: Capability,
+  ): Omit<RemoteConsumer<Capability>, "subscribe">;
 }
 
 export class RendererRemoteCapabilities {

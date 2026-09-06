@@ -14,6 +14,7 @@ import {
   type AgentMessagePage,
   type AgentSessionsState,
 } from "../../capabilities/agent.js";
+import type { BrowserClient } from "../browser-client/types.js";
 import type {
   MainRemoteCapabilities,
   RemoteProvider,
@@ -311,10 +312,11 @@ function createChunkWriter(
 export function createAgentHost(options: {
   window: BrowserWindow;
   remote: MainRemoteCapabilities;
+  browser: ReturnType<MainRemoteCapabilities["consume"]>;
   store: AgentStore;
   providers: ReadonlyMap<string, AgentProvider>;
 }): AgentHost {
-  const { window, remote, store, providers } = options;
+  const { window, remote, browser, store, providers } = options;
   const activeRuns = new Map<string, ActiveRun>();
   const feeds = new Map<AgentFeedId, Feed>();
   let nextFeedId = 1;
@@ -499,6 +501,7 @@ export function createAgentHost(options: {
                 (await store.pageMessages(sessionId, null, 100)).messages,
                 turnId,
               ),
+            browserClient: browser,
           },
           {
             session: (providerSessionId) =>
