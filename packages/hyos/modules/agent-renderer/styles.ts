@@ -121,6 +121,7 @@ export const agentStyles = String.raw`
   .status-dot.failed { background: #ff6f61; }
   .status-dot.cancelled { background: #c5a46d; }
   .agent-main { min-width: 0; min-height: 0; background: #171816; }
+  .global-browser { display: flex; width: 100%; height: 100%; min-height: 0; }
   .welcome { display: grid; place-items: center; width: 100%; height: 100%; padding: 38px; overflow-y: auto; }
   .welcome-card { width: min(760px, 100%); }
   .starter { padding: 18px; border: 1px solid #343630; border-radius: 16px; background: #20211e; }

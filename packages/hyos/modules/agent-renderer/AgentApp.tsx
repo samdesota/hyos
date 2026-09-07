@@ -640,19 +640,39 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   const focusedGlobalTab = createMemo(() =>
     activeGlobalTab(globalTabs(), activeGlobalTabId()),
   );
-  const openGlobalTab = (): void => {
+  // `+` focuses a host tab the strip does not already show, and only asks
+  // the host to create one once every host tab is in the strip; a created
+  // tab lands in the strip through the diff against the pre-call state.
+  const openGlobalTab = async (): Promise<void> => {
     const adoptable = unadoptedGlobalHostTab(browserState(), globalTabs());
-    if (!adoptable) return;
-    setGlobalTabs((tabs) => [
-      ...tabs,
-      { id: `global-${adoptable.id}`, kind: "browser", tabId: adoptable.id },
-    ]);
-    setActiveGlobalTabId(`global-${adoptable.id}`);
+    if (adoptable) {
+      setGlobalTabs((tabs) => [
+        ...tabs,
+        { id: `global-${adoptable.id}`, kind: "browser", tabId: adoptable.id },
+      ]);
+      setActiveGlobalTabId(`global-${adoptable.id}`);
+      return;
+    }
+    const before = browserState();
+    const next = await runBrowser({ type: "create-tab" });
+    const tabId = next ? createdHostTabId(before, next) : null;
+    if (!tabId) return;
+    setGlobalTabs((tabs) =>
+      tabs.some((tab) => tab.kind === "browser" && tab.tabId === tabId)
+        ? tabs
+        : [...tabs, { id: `global-${tabId}`, kind: "browser", tabId }],
+    );
+    setActiveGlobalTabId(`global-${tabId}`);
   };
   const closeGlobalTab = (tab: GlobalTab): void => {
     const neighborId = neighborGlobalTabId(globalTabs(), tab.id);
     setGlobalTabs((tabs) => tabs.filter(({ id }) => id !== tab.id));
     if (activeGlobalTabId() === tab.id) setActiveGlobalTabId(neighborId);
+    // Closing retires the page for real: the host tab goes with it, so the
+    // strip (and any session pane showing it) reconciles it away.
+    if (tab.kind === "browser") {
+      void runBrowser({ type: "close-tab", tabId: tab.tabId });
+    }
   };
 
   // Persisted pane state: the active session's strip is snapshotted into
@@ -852,9 +872,20 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   };
 
   // Keep the host's active tab on the focused strip tab so toolbar commands
-  // (navigate, back, …) address the page the pane is showing.
+  // (navigate, back, …) address the page the pane is showing. A focused
+  // global tab owns the host's active tab while it is up; the session pane
+  // yields so the two strips cannot fight over activation.
   createEffect(() => {
     const tab = sideActive();
+    if (tab?.kind !== "browser" || focusedGlobalTab()) return;
+    if (browserState().activeTabId === tab.tabId) return;
+    void runBrowser({ type: "activate-tab", tabId: tab.tabId });
+  });
+
+  // Same for the global strip: focusing a global browser tab makes it the
+  // host's active tab so its toolbar drives the page the main area shows.
+  createEffect(() => {
+    const tab = focusedGlobalTab();
     if (tab?.kind !== "browser") return;
     if (browserState().activeTabId === tab.tabId) return;
     void runBrowser({ type: "activate-tab", tabId: tab.tabId });
@@ -1501,8 +1532,22 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
         </aside>
 
         <main class="agent-main">
+          <Show when={focusedGlobalTab()} keyed>
+            {(tab) => (
+              <section class="global-browser" aria-label="Global browser tab">
+                <BrowserTabContent
+                  root={props.root}
+                  state={browserState()}
+                  tabId={tab.tabId}
+                  error={browserError()}
+                  onCommand={(command) => void runBrowser(command)}
+                  BrowserView={props.BrowserView}
+                />
+              </section>
+            )}
+          </Show>
           <Show
-            when={activeSession()}
+            when={!focusedGlobalTab() && activeSession()}
             fallback={
               <section class="welcome">
                 <div class="welcome-card">
