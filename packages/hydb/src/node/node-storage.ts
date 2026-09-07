@@ -690,25 +690,31 @@ export class NodeStorageDatabase implements StorageDatabase {
       queue: [] as CommitBatch[],
       wake: undefined as (() => void) | undefined,
     };
-    const replayGeneration = this.#generation;
-    replayGeneration.leases += 1;
     const wakeOnAbort = () => subscriber.wake?.();
     options.signal?.addEventListener("abort", wakeOnAbort, { once: true });
     this.#subscribers.add(subscriber);
     try {
-      try {
-        for await (const commit of this.readChanges(
-          replayGeneration,
-          branch,
-          options.after,
-          through,
-        )) {
-          if (options.signal?.aborted === true) return;
-          subscriber.retainAfter = commit.sequence;
-          yield commit;
+      // Only replay when there is a range to replay. The replay scans every
+      // ref record in the log; starting a stream at the current head (the
+      // common case) must not read the whole log before live commits queued
+      // by concurrent writers can be delivered.
+      if (options.after < through) {
+        const replayGeneration = this.#generation;
+        replayGeneration.leases += 1;
+        try {
+          for await (const commit of this.readChanges(
+            replayGeneration,
+            branch,
+            options.after,
+            through,
+          )) {
+            if (options.signal?.aborted === true) return;
+            subscriber.retainAfter = commit.sequence;
+            yield commit;
+          }
+        } finally {
+          await this.releaseGeneration(replayGeneration);
         }
-      } finally {
-        await this.releaseGeneration(replayGeneration);
       }
       while (!this.#closed && options.signal?.aborted !== true) {
         const commit = subscriber.queue.shift();
