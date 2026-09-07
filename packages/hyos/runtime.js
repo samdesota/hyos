@@ -1,5 +1,10 @@
 // PROTOTYPE: a tiny Cordis-shaped lifecycle host, not a Cordis implementation.
 (function exposeRuntime(globalObject) {
+  const bootStartedAt = globalObject.performance?.now?.() ?? Date.now();
+  const bootTrace = (host, event, detail = "") =>
+    console.log(
+      `[DEBUG-boot-7f2c] +${Math.round((globalObject.performance?.now?.() ?? Date.now()) - bootStartedAt)}ms ${host} ${event}${detail ? ` ${detail}` : ""}`,
+    );
   const definitions = new Map();
 
   function defineModule(definition) {
@@ -26,6 +31,7 @@
     }
 
     async mount(definition, placement) {
+      bootTrace(this.hostName, "module:mount:start", placement.id);
       if (placement.host !== this.hostName) {
         throw new Error(
           `Cannot mount ${placement.id} in ${this.hostName}; the manifest places it in ${placement.host}`,
@@ -72,6 +78,7 @@
         const dispose = await definition.apply(context, placement.config ?? {});
         if (typeof dispose === "function") disposers.push(dispose);
       } catch (error) {
+        bootTrace(this.hostName, "module:mount:failed", `${placement.id} ${error?.stack ?? error}`);
         while (disposers.length > 0) await disposers.pop()();
         throw error;
       }
@@ -85,6 +92,7 @@
         },
       };
       this.mounts.push(mount);
+      bootTrace(this.hostName, "module:mount:done", placement.id);
       return mount;
     }
 

@@ -262,6 +262,7 @@ class QueryDatabase implements Database {
         after,
         signal: this.#abortController.signal,
       })) {
+        console.log(`[hydb-execute] change-delivered(${commit.sequence})`);
         await this.applyCommit(commit);
       }
     } catch (error) {
@@ -282,22 +283,16 @@ class QueryDatabase implements Database {
         return { subscription, ms: traceNow() - acceptStartedAt };
       }),
     );
-    const applyMs = traceNow() - applyStartedAt;
-    if (applyMs >= 100) {
-      traceExecute(`apply-commit(${commit.sequence})`, applyMs);
-      const slow = accepts
-        .filter((accept) => accept.ms >= 50)
+    console.log(
+      `[hydb-execute] apply-commit(${commit.sequence}): ${Math.round(
+        traceNow() - applyStartedAt,
+      )}ms [${accepts
         .map(
           (accept) =>
-            `${accept.subscription.label}: ${Math.round(accept.ms)}ms`,
+            `sub#${accept.subscription.id}=${Math.round(accept.ms)}ms`,
         )
-        .join(", ");
-      if (slow) {
-        console.log(
-          `[hydb-execute] apply-commit(${commit.sequence}) slow accepts — ${slow}`,
-        );
-      }
-    }
+        .join(", ")}]`,
+    );
     this.#sequence = commit.sequence;
     for (const [sequence, waiters] of this.#sequenceWaiters) {
       if (sequence > this.#sequence) continue;
@@ -311,21 +306,42 @@ class QueryDatabase implements Database {
     if (this.#changeFailure !== undefined) {
       return Promise.reject(this.#changeFailure);
     }
-    if (this.#subscriptions.size > 0) {
-      const parked = [...this.#subscriptions].filter((sub) => !sub.live);
+    console.log(
+      `[hydb-execute] wait-for-sequence(${sequence}): parked — ${this.describeSubscriptions()}`,
+    );
+    const waitStartedAt = traceNow();
+    const watchdog = setInterval(() => {
       console.log(
-        `[hydb-execute] wait-for-sequence(${sequence}): ${parked.length}/${this.#subscriptions.size} subscriptions not live${
-          parked.length === 0
-            ? ""
-            : ` — parked by: ${parked.map((sub) => sub.label).join(", ")}`
-        }`,
+        `[hydb-execute] wait-for-sequence(${sequence}): ${Math.round(
+          traceNow() - waitStartedAt,
+        )}ms elapsed — ${this.describeSubscriptions()}`,
       );
-    }
+    }, 1000);
     return new Promise<void>((resolve, reject) => {
       const waiters = this.#sequenceWaiters.get(sequence) ?? [];
-      waiters.push({ resolve, reject });
+      waiters.push({
+        resolve: () => {
+          clearInterval(watchdog);
+          traceExecute(
+            `wait-for-sequence(${sequence})`,
+            traceNow() - waitStartedAt,
+          );
+          resolve();
+        },
+        reject: (error) => {
+          clearInterval(watchdog);
+          reject(error);
+        },
+      });
       this.#sequenceWaiters.set(sequence, waiters);
     });
+  }
+
+  private describeSubscriptions(): string {
+    if (this.#subscriptions.size === 0) return "no subscriptions";
+    return [...this.#subscriptions]
+      .map((subscription) => subscription.state)
+      .join(", ");
   }
 
   private rejectSequenceWaiters(error: unknown): void {

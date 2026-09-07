@@ -44,6 +44,12 @@ export function createElectronWindows(
   });
   if (rendererSurface === "base") {
     const alignOverlay = (): void => {};
+    baseWindow.webContents.on("console-message", (_event, _level, message) => {
+      if (message.includes("[DEBUG-boot-7f2c]")) console.log(message);
+    });
+    baseWindow.webContents.on("did-start-loading", () => console.log("[DEBUG-boot-7f2c] renderer navigation:start"));
+    baseWindow.webContents.on("did-finish-load", () => console.log("[DEBUG-boot-7f2c] renderer navigation:done"));
+    baseWindow.webContents.on("render-process-gone", (_event, details) => console.log(`[DEBUG-boot-7f2c] renderer process:gone ${details.reason} exit=${details.exitCode}`));
     void baseWindow.loadFile(path.join(root, "renderer/index.html"));
     if (showWindow) baseWindow.once("ready-to-show", () => baseWindow.show());
     return { baseWindow, overlayWindow: baseWindow, alignOverlay };

@@ -40,10 +40,14 @@ export = defineModule<AgentMainConfig>({
   provide: ["agent.sessions"],
 
   async apply(ctx, config) {
+    const bootStartedAt = performance.now();
+    const bootTrace = (event: string) =>
+      console.log(`[DEBUG-boot-7f2c] +${Math.round(performance.now() - bootStartedAt)}ms agent-main ${event}`);
     const root = ctx.get<string>("application.root");
     const window = ctx.get<BrowserWindow>("electron.overlay-window");
     const remote = ctx.get<MainRemoteCapabilities>("remote.capabilities");
     const browser = remote.consume(browserCapability);
+    bootTrace("storage:open:start");
     const storage = await openNodeStorage({
       directory: path.resolve(root, config.storagePath),
       schema: agentSchema,
@@ -60,7 +64,10 @@ export = defineModule<AgentMainConfig>({
         { hyos_agent_sessions: ["tabs"] },
       ],
     });
+    bootTrace("storage:open:done");
+    bootTrace("database:init:start");
     const database = await hydb.database({ schema: agentSchema, storage });
+    bootTrace("database:init:done");
     const store = createAgentStore(database);
     const host = createAgentHost({
       window,
@@ -85,6 +92,8 @@ export = defineModule<AgentMainConfig>({
     ctx.effect(() => () => database.close());
     ctx.effect(() => remote.provide(agentCapability, host.provider));
     ctx.effect(() => () => host.dispose());
+    bootTrace("host:start:start");
     await host.start();
+    bootTrace("host:start:done");
   },
 });

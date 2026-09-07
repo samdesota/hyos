@@ -15,6 +15,9 @@ const capabilitiesPath = path.join(__dirname, "capabilities/index.ts");
 const projectDirectory = __dirname;
 const rendererOutputDirectory = path.join(__dirname, "renderer/generated");
 const initialManifest = readManifest(manifestPath);
+const bootStartedAt = performance.now();
+const bootTrace = (event, detail = "") =>
+  console.log(`[DEBUG-boot-7f2c] +${Math.round(performance.now() - bootStartedAt)}ms main ${event}${detail ? ` ${detail}` : ""}`);
 const { applicationCapabilities } = require(capabilitiesPath);
 const remoteCapabilities = new MainRemoteCapabilities({
   definitions: applicationCapabilities,
@@ -464,7 +467,9 @@ async function runSmokeTest() {
 }
 
 async function start() {
+  bootTrace("start:entered");
   remoteCapabilities.attach(ipcMain);
+  bootTrace("renderer-build:start");
   await buildRendererArtifacts({
     manifest: initialManifest,
     manifestPath,
@@ -472,6 +477,7 @@ async function start() {
     projectDirectory,
     outputDirectory: rendererOutputDirectory,
   });
+  bootTrace("renderer-build:done");
   loader = new MainApplicationLoader({
     host: mainHost,
     manifestPath,
@@ -483,13 +489,15 @@ async function start() {
     return enqueueReload(() => reloadHot("manual reload"));
   });
 
+  bootTrace("module-loader:start");
   await loader.start();
+  bootTrace("module-loader:done", JSON.stringify(mainHost.snapshot().modules.map(({ id }) => id)));
   if (process.argv.includes("--smoke-test")) await runSmokeTest();
 }
 
 app
   .whenReady()
-  .then(start)
+  .then(() => { bootTrace("electron:ready"); return start(); })
   .catch((error) => {
     console.error(error);
     app.exitCode = 1;

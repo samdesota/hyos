@@ -10,6 +10,7 @@ import {
   type AgentProviderSummary,
   type AgentSessionsState,
   type AgentSessionTabs,
+  type AgentSessionTabsChange,
 } from "../../capabilities/agent.js";
 import type {
   RemoteConsumer,
@@ -27,6 +28,10 @@ export interface AgentClient {
   providers(): Promise<readonly AgentProviderSummary[]>;
   sessions(): Promise<AgentSessionsState>;
   subscribeSessions(listener: (state: AgentSessionsState) => void): () => void;
+  /** Fires whenever a session's persisted tab strip changes in the database. */
+  subscribeSessionTabs(
+    listener: (change: AgentSessionTabsChange) => void,
+  ): () => void;
   openFeed(sessionId: string, newestCount?: number): Promise<AgentMessageFeed>;
   loadOlder(
     sessionId: string,
@@ -80,6 +85,8 @@ export function createAgentClient(
     providers: () => agent.call("providers"),
     sessions: () => agent.call("sessions"),
     subscribeSessions: (listener) => agent.subscribe("sessions", listener),
+    subscribeSessionTabs: (listener) =>
+      agent.subscribe("sessionTabs", listener),
     async openFeed(sessionId, newestCount = 200) {
       const opened = await agent.call("openFeed", sessionId, newestCount);
       const feed: LocalFeed = {

@@ -44,6 +44,17 @@ export type AgentSessionTabs = Readonly<{
   activeIndex: number;
 }>;
 
+/**
+ * One change to a session's persisted tab strip, published to the renderer
+ * as it lands in the database — the intent-carrying signal (an agent opened
+ * a tab, the user edited the strip) that replaces inferring from browser
+ * host publishes.
+ */
+export type AgentSessionTabsChange = Readonly<{
+  sessionId: AgentSessionId;
+  tabs: AgentSessionTabs | null;
+}>;
+
 export type AgentActivity =
   | Readonly<{
       type: "commentary";
@@ -198,7 +209,7 @@ export type AgentCommandResult =
 
 export const agentCapability = defineRemoteCapability({
   id: "agent",
-  version: 2,
+  version: 3,
   methods: {
     execute: remoteMethod<
       readonly [command: AgentCommand],
@@ -235,5 +246,6 @@ export const agentCapability = defineRemoteCapability({
   events: {
     sessions: remoteEvent<AgentSessionsState>(),
     messageChange: remoteEvent<AgentFeedChange>(),
+    sessionTabs: remoteEvent<AgentSessionTabsChange>(),
   },
 });

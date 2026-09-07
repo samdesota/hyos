@@ -251,6 +251,10 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
     return this.#disposePromise;
   }
 
+  get id(): number {
+    return this.#id;
+  }
+
   /** Identity + readiness for the wait-for-sequence stall diagnostics. */
   get label(): string {
     return `sub#${this.#id} (${this.#scopes
@@ -260,6 +264,13 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
 
   get live(): boolean {
     return this.#live;
+  }
+
+  /** Compact liveness snapshot for the wait-for-sequence watchdog. */
+  get state(): string {
+    return `sub#${this.#id}${this.#live ? " live" : " BOOT"} buffered=${
+      this.#buffer.length
+    }`;
   }
 
   private async bootstrap(): Promise<void> {
@@ -370,12 +381,11 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
         const scopeStartedAt = bootstrapTraceNow();
         const changes = this.filterChanges(scope, commit);
         await query.apply(scope.plan.source, changes);
-        const scopeMs = bootstrapTraceNow() - scopeStartedAt;
-        if (scopeMs >= 20) {
-          scopeTimings.push(
-            `${describeAccess(scope.plan.access)}: ${Math.round(scopeMs)}ms`,
-          );
-        }
+        scopeTimings.push(
+          `${describeAccess(scope.plan.access)}: ${Math.round(
+            bootstrapTraceNow() - scopeStartedAt,
+          )}ms`,
+        );
       }
       let demandsMs = 0;
       if (this.#pendingDemands.length > 0) {
@@ -393,18 +403,14 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
         demandsMs = bootstrapTraceNow() - demandsStartedAt;
       }
       query.flush();
-      const applyMs = bootstrapTraceNow() - applyStartedAt;
-      if (applyMs >= 50) {
-        bootstrapTrace(
-          `sub#${this.#id} apply(${commit.sequence}): ${Math.round(applyMs)}ms` +
-            (scopeTimings.length > 0
-              ? ` [${scopeTimings.join(", ")}]`
-              : "") +
-            (demandsMs >= 20
-              ? ` settle-demands: ${Math.round(demandsMs)}ms`
-              : ""),
-        );
-      }
+      bootstrapTrace(
+        `sub#${this.#id} apply(${commit.sequence}): ${Math.round(
+          bootstrapTraceNow() - applyStartedAt,
+        )}ms [${scopeTimings.join(", ")}]` +
+          (demandsMs > 0
+            ? ` settle-demands: ${Math.round(demandsMs)}ms`
+            : ""),
+      );
     }
     this.#lastSequence = commit.sequence;
   }
