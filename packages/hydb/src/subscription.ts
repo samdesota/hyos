@@ -184,6 +184,7 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
   readonly #rowsBySource = new Map<QuerySource, Map<string, StoredRow>>();
   readonly #rowBytesBySource = new Map<QuerySource, Map<string, number>>();
   readonly #memory: MemoryHandle;
+  readonly #id = ++subscriptionCounter;
   #rowBytes = 0;
   #query?: DifferentialQuery<QueryValue>;
   #snapshot?: StorageSnapshot;
@@ -250,8 +251,19 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
     return this.#disposePromise;
   }
 
+  /** Identity + readiness for the wait-for-sequence stall diagnostics. */
+  get label(): string {
+    return `sub#${this.#id} (${this.#scopes
+      .map((scope) => describeAccess(scope.plan.access))
+      .join(" + ")})`;
+  }
+
+  get live(): boolean {
+    return this.#live;
+  }
+
   private async bootstrap(): Promise<void> {
-    const bootstrapId = ++subscriptionCounter;
+    const bootstrapId = this.#id;
     const description = this.#scopes
       .map((scope) => `${describeAccess(scope.plan.access)}[${scope.mode}]`)
       .join(" + ");

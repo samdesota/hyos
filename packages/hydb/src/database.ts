@@ -292,6 +292,16 @@ class QueryDatabase implements Database {
     if (this.#changeFailure !== undefined) {
       return Promise.reject(this.#changeFailure);
     }
+    if (this.#subscriptions.size > 0) {
+      const parked = [...this.#subscriptions].filter((sub) => !sub.live);
+      console.log(
+        `[hydb-execute] wait-for-sequence(${sequence}): ${parked.length}/${this.#subscriptions.size} subscriptions not live${
+          parked.length === 0
+            ? ""
+            : ` — parked by: ${parked.map((sub) => sub.label).join(", ")}`
+        }`,
+      );
+    }
     return new Promise<void>((resolve, reject) => {
       const waiters = this.#sequenceWaiters.get(sequence) ?? [];
       waiters.push({ resolve, reject });
