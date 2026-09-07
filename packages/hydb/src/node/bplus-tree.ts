@@ -448,6 +448,18 @@ export class ImmutableBPlusTree {
       return;
     }
     const children = reverse ? [...page.children].reverse() : page.children;
+    // Fetch the whole next level concurrently instead of one page at a time;
+    // on a cold cache this turns serialized disk reads into parallel ones.
+    const childPages = await Promise.all(
+      children.map((child) => this.#cache.get(child)),
+    );
+    // Warm the level after next in the background so descending stays hot.
+    for (const childPage of childPages) {
+      if (childPage.kind !== "internal") continue;
+      for (const grandchild of childPage.children) {
+        void this.#cache.get(grandchild).catch(() => undefined);
+      }
+    }
     for (const child of children) yield* this.walk(child, reverse);
   }
 

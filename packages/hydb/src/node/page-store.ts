@@ -34,6 +34,24 @@ function checksum(payload: Uint8Array): Buffer {
     .subarray(0, checksumBytes);
 }
 
+// Reads up to this many bytes in one shot hoping to capture header + payload.
+const readProbeBytes = 64 * 1024;
+
+function parseHeader(
+  header: Buffer,
+  position: number,
+  fileSize: number,
+): { type: RecordType; length: number; checksum: Uint8Array } | undefined {
+  if (!header.subarray(0, 4).equals(magic) || header[4] !== formatVersion) {
+    return undefined;
+  }
+  const type = codeType.get(header[5]!);
+  if (type === undefined) return undefined;
+  const length = header.readUInt32BE(6);
+  if (position + headerBytes + length > fileSize) return undefined;
+  return { type, length, checksum: header.subarray(10) };
+}
+
 async function readInto(
   file: FileHandle,
   buffer: Buffer,
@@ -175,17 +193,40 @@ export class AppendOnlyPageStore {
     position: number,
     fileSize = this.#end,
   ): Promise<StoredRecord | undefined> {
+    // Most records are small; a single read of header + payload prefix avoids
+    // one syscall and await round-trip per record on every cold scan.
+    const probeBytes = Math.min(readProbeBytes, fileSize - position);
+    if (probeBytes >= headerBytes) {
+      const probe = Buffer.allocUnsafe(probeBytes);
+      const read = await readInto(this.file, probe, position);
+      if (read >= headerBytes) {
+        const parsed = parseHeader(
+          probe.subarray(0, headerBytes),
+          position,
+          fileSize,
+        );
+        if (parsed !== undefined && read >= headerBytes + parsed.length) {
+          const payload = probe.subarray(
+            headerBytes,
+            headerBytes + parsed.length,
+          );
+          if (!checksum(payload).equals(parsed.checksum)) return undefined;
+          return Object.freeze({ id: position, type: parsed.type, payload });
+        }
+      }
+    }
+    // Fallback for large or truncated-at-edge records: header, then payload.
     const parsed = await this.readHeader(position, fileSize);
     if (parsed === undefined) return undefined;
-    const { type, length, checksum: expectedChecksum } = parsed;
-    const payload = Buffer.allocUnsafe(length);
+    const payload = Buffer.allocUnsafe(parsed.length);
     if (
-      (await readInto(this.file, payload, position + headerBytes)) !== length
+      (await readInto(this.file, payload, position + headerBytes)) !==
+      parsed.length
     ) {
       return undefined;
     }
-    if (!checksum(payload).equals(expectedChecksum)) return undefined;
-    return Object.freeze({ id: position, type, payload });
+    if (!checksum(payload).equals(parsed.checksum)) return undefined;
+    return Object.freeze({ id: position, type: parsed.type, payload });
   }
 
   private async readHeader(
@@ -199,14 +240,7 @@ export class AppendOnlyPageStore {
     if ((await readInto(this.file, header, position)) !== headerBytes) {
       return undefined;
     }
-    if (!header.subarray(0, 4).equals(magic) || header[4] !== formatVersion) {
-      return undefined;
-    }
-    const type = codeType.get(header[5]!);
-    if (type === undefined) return undefined;
-    const length = header.readUInt32BE(6);
-    if (position + headerBytes + length > fileSize) return undefined;
-    return { type, length, checksum: header.subarray(10) };
+    return parseHeader(header, position, fileSize);
   }
 
   private assertOpen(): void {
