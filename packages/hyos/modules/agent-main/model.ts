@@ -108,3 +108,4 @@ export const agentSchema = hydb.schema({
 
 export type StoredAgentSession = InferRow<typeof agentSessions>;
 export type StoredAgentMessage = InferRow<typeof agentMessages>;
+export type StoredAgentMessageChunk = InferRow<typeof agentMessageChunks>;

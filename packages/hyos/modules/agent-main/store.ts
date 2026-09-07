@@ -23,6 +23,7 @@ import {
   agentMessages,
   agentSessions,
   type StoredAgentMessage,
+  type StoredAgentMessageChunk,
 } from "./model.js";
 
 const sessionStatusSchema = z.enum(["running", "ready", "failed", "cancelled"]);
@@ -683,14 +684,32 @@ export function createAgentStore(database: Database): AgentStore {
     return { ...sessionSummary(row), providerSessionId: row.providerSessionId };
   }
 
-  async function messageValue(row: StoredAgentMessage): Promise<AgentMessage> {
+  async function fetchSessionChunks(
+    sessionId: string,
+  ): Promise<Map<string, StoredAgentMessageChunk[]>> {
+    // One query for the whole session's chunks instead of one per message:
+    // hydb serializes fetches (~11ms each), so per-message queries made
+    // opening a 200-message page cost seconds. Grouped in memory by message.
     const chunks = await database.fetch(
       hydb
         .query(agentMessageChunks)
-        .where((chunk) => chunk.messageId.eq(row.id))
+        .where((chunk) => chunk.sessionId.eq(sessionId))
         .orderBy((chunk) => [chunk.index.asc(), chunk.id.asc()])
         .many(),
     );
+    const byMessage = new Map<string, StoredAgentMessageChunk[]>();
+    for (const chunk of chunks) {
+      const existing = byMessage.get(chunk.messageId);
+      if (existing) existing.push(chunk);
+      else byMessage.set(chunk.messageId, [chunk]);
+    }
+    return byMessage;
+  }
+
+  function messageValue(
+    row: StoredAgentMessage,
+    chunks: StoredAgentMessageChunk[],
+  ): AgentMessage {
     const storedContent = chunks.map((chunk) => chunk.content).join("");
     const content = storedContent.startsWith(commentaryPrefix)
       ? encodeActivity({
@@ -911,7 +930,11 @@ export function createAgentStore(database: Database): AgentStore {
           )
         : 0;
       const selected = rows.slice(start, start + Math.max(1, count));
-      const assembled = await Promise.all(selected.reverse().map(messageValue));
+      selected.reverse();
+      const chunksByMessage = await fetchSessionChunks(sessionId);
+      const assembled = selected.map((row) =>
+        messageValue(row, chunksByMessage.get(row.id) ?? []),
+      );
       const maxPageBytes = 512 * 1024;
       let bytes = 0;
       let firstIncluded = assembled.length;
