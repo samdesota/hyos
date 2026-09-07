@@ -758,7 +758,9 @@ export function createAgentStore(database: Database): AgentStore {
       return { sessionId, assistantMessageId };
     },
     async startTurn(sessionId, prompt, mode, reasoningEffort) {
+      const getSessionStartedAt = perfNow();
       const session = await getSession(sessionId);
+      perfLog(`send:getSession(${sessionId})`, perfNow() - getSessionStartedAt);
       const assistantMessageId = randomUUID();
       await database.execute(startTurnCommand, {
         sessionId,
@@ -949,7 +951,10 @@ export function createAgentStore(database: Database): AgentStore {
       const messages = assembled.slice(firstIncluded);
       const oldest = messages[0];
       const assembleMs = perfNow() - t;
-      perfLog(`session-open:page-fetch(${sessionId}) [${rows.length} rows]`, fetchMs);
+      perfLog(
+        `session-open:page-fetch(${sessionId}) [${rows.length} rows]`,
+        fetchMs,
+      );
       perfLog(`session-open:page-assemble(${sessionId})`, assembleMs);
       perfLog(`session-open:pageMessages(${sessionId})`, perfNow() - startedAt);
       return {
@@ -1006,24 +1011,21 @@ export function createAgentStore(database: Database): AgentStore {
           lastTabs.set(row.id, row.tabs ?? null);
       };
       void seed();
-      return database.subscribe(
-        hydb.query(agentSessions).many(),
-        () => {
-          void (async () => {
-            for (const row of await database.fetch(
-              hydb.query(agentSessions).many(),
-            )) {
-              const encoded = row.tabs ?? null;
-              if (lastTabs.get(row.id) === encoded) continue;
-              lastTabs.set(row.id, encoded);
-              listener({
-                sessionId: row.id,
-                tabs: decodeSessionTabs(encoded),
-              });
-            }
-          })();
-        },
-      );
+      return database.subscribe(hydb.query(agentSessions).many(), () => {
+        void (async () => {
+          for (const row of await database.fetch(
+            hydb.query(agentSessions).many(),
+          )) {
+            const encoded = row.tabs ?? null;
+            if (lastTabs.get(row.id) === encoded) continue;
+            lastTabs.set(row.id, encoded);
+            listener({
+              sessionId: row.id,
+              tabs: decodeSessionTabs(encoded),
+            });
+          }
+        })();
+      });
     },
     async recoverInterruptedSessions() {
       const rows = await database.fetch(

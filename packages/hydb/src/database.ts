@@ -23,6 +23,15 @@ import {
 
 const databaseSchemas = new WeakMap<Database, AnySchema>();
 
+// Stage-level timing for database.execute/transact. Always-on: the commit
+// path already traces at 4–56ms while callers still observe multi-second
+// stalls, so the remaining stages (queue, snapshot, command invoke, and the
+// post-commit waitForSequence) need numbers to attribute the difference.
+const traceNow = (): number => globalThis.performance?.now?.() ?? Date.now();
+const traceExecute = (event: string, ms: number): void => {
+  console.log(`[hydb-execute] ${event}: ${Math.round(ms)}ms`);
+};
+
 export interface Database {
   fetch<QueryValue extends Query<any>>(
     query: QueryValue,
@@ -120,9 +129,14 @@ class QueryDatabase implements Database {
     command: CommandValue,
     input: InferCommandInput<CommandValue>,
   ): Promise<InferCommandResult<CommandValue>> {
+    const startedAt = traceNow();
     const execution = this.#commandQueue.then(async () => {
+      const queueMs = traceNow() - startedAt;
+      const snapshotStartedAt = traceNow();
       const snapshot = await this.storage.snapshot();
+      const snapshotMs = traceNow() - snapshotStartedAt;
       try {
+        const invokeStartedAt = traceNow();
         const invocation = await invokeCommand(
           command,
           input,
@@ -130,13 +144,26 @@ class QueryDatabase implements Database {
           snapshot,
           this.memory,
         );
+        const invokeMs = traceNow() - invokeStartedAt;
         try {
           if (invocation.mutations.length === 0) return invocation.result;
           const commit = await this.storage.commit({
             expectedHead: snapshot.commit,
             mutations: invocation.mutations,
           });
+          const waitStartedAt = traceNow();
           await this.waitForSequence(commit.sequence);
+          const waitMs = traceNow() - waitStartedAt;
+          traceExecute("execute:queue-wait", queueMs);
+          traceExecute("execute:snapshot", snapshotMs);
+          traceExecute("execute:invoke", invokeMs);
+          if (waitMs >= 1) traceExecute("execute:wait-for-sequence", waitMs);
+          if (queueMs + snapshotMs + invokeMs + waitMs >= 500) {
+            traceExecute(
+              `execute:total(${commit.sequence})`,
+              traceNow() - startedAt,
+            );
+          }
           return invocation.result;
         } finally {
           invocation.releaseMemory();
