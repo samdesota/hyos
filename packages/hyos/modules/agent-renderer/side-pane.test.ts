@@ -5,7 +5,6 @@ import type { BrowserState, TabId } from "../../capabilities/browser.js";
 import { emptyBrowserState } from "./browser-tab.js";
 import {
   activeSideTab,
-  autoAdoptHostTabs,
   createdHostTabId,
   initialSideTabScope,
   isPinnedSideTab,
@@ -102,62 +101,6 @@ test("reconciliation drops browser tabs the host no longer knows", () => {
   assert.deepEqual(reloaded, [...pinnedSideTabs, browserSideTab("tab-1")]);
   // Nothing stale: the same array comes back so publishes don't churn.
   assert.equal(reconcileSideTabs(tabs, hostState(["tab-1", "tab-2"])), tabs);
-});
-
-test("auto-adoption adopts and focuses host tabs that appear in a publish", () => {
-  // An agent's browser_open_tab created tab-2 between two publishes.
-  const adopted = autoAdoptHostTabs(
-    pinnedSideTabs,
-    hostState(["tab-1", "tab-2"]),
-    hostState(["tab-1"]),
-  );
-  assert.deepEqual(adopted?.tabs, [...pinnedSideTabs, browserSideTab("tab-2")]);
-  assert.equal(adopted?.activeId, "tab-2");
-});
-
-test("auto-adoption ignores first observations and host restarts", () => {
-  const state = hostState(["tab-1", "tab-2"]);
-  // No previous publish: nothing counts as new, so a fresh strip keeps the
-  // host's boot tab hidden until the user adopts it.
-  assert.equal(autoAdoptHostTabs(pinnedSideTabs, state, null), null);
-  // A publish that lands before the boot snapshot is also a first view.
-  assert.equal(
-    autoAdoptHostTabs(pinnedSideTabs, state, emptyBrowserState),
-    null,
-  );
-  // A new generation recreated the host's tabs (browser.main hot reload);
-  // those are re-seeded, not adopted.
-  assert.equal(
-    autoAdoptHostTabs(pinnedSideTabs, { ...state, generation: 2 }, state),
-    null,
-  );
-});
-
-test("auto-adoption never duplicates tabs the strip already shows", () => {
-  const tabs = [
-    ...pinnedSideTabs,
-    browserSideTab("tab-1"),
-    browserSideTab("tab-2"),
-  ];
-  // tab-2 appeared in this publish, but the strip adopted it already (the
-  // `+` click beat the publish).
-  assert.equal(
-    autoAdoptHostTabs(
-      tabs,
-      hostState(["tab-1", "tab-2"]),
-      hostState(["tab-1"]),
-    ),
-    null,
-  );
-  // Nothing new at all: routine publishes leave the strip untouched.
-  assert.equal(
-    autoAdoptHostTabs(
-      tabs,
-      hostState(["tab-1", "tab-2"]),
-      hostState(["tab-1", "tab-2"]),
-    ),
-    null,
-  );
 });
 
 test("closing a side tab focuses the nearest remaining neighbor", () => {

@@ -21,7 +21,6 @@ import { createAutoScrollController } from "./auto-scroll.js";
 import { emptyBrowserState } from "./browser-tab.js";
 import {
   activeSideTab,
-  autoAdoptHostTabs,
   createdHostTabId,
   initialSideTabScope,
   isPinnedSideTab,
@@ -33,6 +32,7 @@ import {
   sideTabScopeKey,
   snapshotSessionTabs,
   unadoptedHostTab,
+  type SessionTabPlacement,
   type SideTab,
   type SideTabScope,
 } from "./side-pane.js";
@@ -311,9 +311,11 @@ export function createAppState({ client, browserClient }: AppStateProps) {
 
   // Browser host state drives the strip's browser tabs: every publish also
   // reconciles, so tabs closed or lost to a browser.main hot reload
-  // disappear from the strip instead of presenting a dead view, and tabs
-  // that appear while the pane watches — an agent's browser_open_tab tool,
-  // say — are adopted and focused without a manual `+` click.
+  // disappear from the strip instead of presenting a dead view. Tabs that
+  // appear on their own — an agent's browser_open_tab, say — are adopted
+  // through the session strip subscription below, never here: adoption is
+  // driven by the persisted strip, so it cannot steal focus on an unrelated
+  // publish tick.
   let browserPublishCount = 0;
   const acceptBrowserState = (next: BrowserState): void => {
     browserPublishCount += 1;
@@ -324,16 +326,9 @@ export function createAppState({ client, browserClient }: AppStateProps) {
       console.log(
         `[DEBUG-boot-7f2c] agent-renderer browser-state count=${browserPublishCount} tabs=${next.tabs.length}`,
       );
-    const previous = browserState();
     setBrowserState(next);
     setSideTabs((tabs) => reconcileSideTabs(tabs, next));
     setGlobalTabs((tabs) => reconcileGlobalTabs(tabs, next));
-    const adopted = autoAdoptHostTabs(sideTabs(), next, previous);
-    if (adopted) {
-      setSideTabs(adopted.tabs);
-      setActiveSideTabId(adopted.activeId);
-      setSideCollapsed(false);
-    }
     // Every accepted publish may have changed what the pane shows (tab
     // titles drift as pages load, even when the strip does not); the
     // persister coalesces that churn into one debounced write.
@@ -388,8 +383,9 @@ export function createAppState({ client, browserClient }: AppStateProps) {
   });
 
   // `+` focuses a host tab the strip does not already show, and only creates
-  // a new one once every host tab is already in the strip; a created tab
-  // lands in the strip through acceptBrowserState's auto-adoption.
+  // a new one once every host tab is already in the strip; a created tab is
+  // appended here — adoption otherwise happens only through the session
+  // strip subscription.
   const openBrowserSideTab = (): void => {
     const adoptable = unadoptedHostTab(browserState(), sideTabs());
     if (adoptable) {
@@ -401,7 +397,17 @@ export function createAppState({ client, browserClient }: AppStateProps) {
       setSideCollapsed(false);
       return;
     }
-    void runBrowser({ type: "create-tab" });
+    const before = browserState();
+    void runBrowser({ type: "create-tab" }).then((next) => {
+      const tabId = next ? createdHostTabId(before, next) : null;
+      if (!tabId) return;
+      setSideTabs((tabs) =>
+        tabs.some((tab) => tab.kind === "browser" && tab.tabId === tabId)
+          ? tabs
+          : [...tabs, { id: tabId, kind: "browser", tabId }],
+      );
+      setActiveSideTabId(tabId);
+    });
   };
 
   const closeSideTab = (tab: SideTab): void => {
@@ -521,12 +527,77 @@ export function createAppState({ client, browserClient }: AppStateProps) {
     feed = undefined;
   };
 
+  // Resolve saved strip placements against the live host state: reuse tabs
+  // that already show the url — another surface (the agent's own create-tab,
+  // or an earlier placement) may have opened it after the placements were
+  // computed — and open the rest fresh. `isStale` abandons the work the
+  // moment the strip being built belongs to a session no longer shown; the
+  // tabs opened in the meantime are closed again.
+  const resolvePlacements = async (
+    placements: readonly SessionTabPlacement[],
+    isStale: () => boolean,
+  ): Promise<readonly (TabId | null)[]> => {
+    const claimed = new Set<TabId>();
+    const created: TabId[] = [];
+    const tabIds: (TabId | null)[] = [];
+    for (const placement of placements) {
+      let tabId: TabId | null = null;
+      if (placement.kind === "reuse") {
+        tabId = placement.tabId;
+      } else {
+        const live = browserState().tabs.find(
+          ({ id, url }) => !claimed.has(id) && url === placement.url,
+        );
+        if (live) {
+          tabId = live.id;
+        } else {
+          const before = browserState();
+          const next = await runBrowser({
+            type: "create-tab",
+            url: placement.url,
+          });
+          tabId = next ? createdHostTabId(before, next) : null;
+          if (tabId) created.push(tabId);
+        }
+      }
+      if (tabId) claimed.add(tabId);
+      if (isStale()) {
+        for (const orphan of created) {
+          void runBrowser({ type: "close-tab", tabId: orphan });
+        }
+        return [];
+      }
+      tabIds.push(tabId);
+    }
+    return tabIds;
+  };
+
+  // Append the resolved tabs to the strip (idempotent: a `+` click or an
+  // earlier pass may have landed one already) and re-assert the saved
+  // focus. Never expands a collapsed pane — what to look at is the user's
+  // call; the strip simply reflects the session's persisted state.
+  const adoptResolvedTabs = (
+    tabIds: readonly (TabId | null)[],
+    focusedId: TabId | null,
+  ): void => {
+    setSideTabs((tabs) => {
+      const shown = new Set(
+        tabs.flatMap((tab) => (tab.kind === "browser" ? [tab.tabId] : [])),
+      );
+      const additions = tabIds
+        .filter((tabId): tabId is TabId => tabId !== null && !shown.has(tabId))
+        .map((tabId) => ({ id: tabId, kind: "browser" as const, tabId }));
+      return additions.length === 0 ? tabs : [...tabs, ...additions];
+    });
+    if (focusedId) setActiveSideTabId(focusedId);
+  };
+
   // Re-open a session's persisted browser tabs on its first open: host tabs
   // still showing a saved url are re-adopted in place, urls with no live tab
   // are opened fresh in saved order, and the saved focus is re-applied.
   // `generation` abandons the restore the moment another selection wins —
-  // the strip it was building belongs to a session that is no longer shown,
-  // so the tabs it opened in the meantime are closed again.
+  // the strip it was building belongs to a session that is no longer shown.
+  let stripRestoreInFlight = false;
   const restoreSavedTabs = async (
     sessionId: string,
     generation: number,
@@ -543,51 +614,69 @@ export function createAppState({ client, browserClient }: AppStateProps) {
     // fast reopen from opening duplicates for tabs that never went away.
     await bootBrowserSnapshot;
     if (generation !== feedGeneration || !saved) return;
-    const { placements, activeIndex } = restoreSessionTabs(
-      saved,
-      browserState(),
-    );
-    let focusedId: string | null = null;
-    const created: TabId[] = [];
-    // A created host tab can also land in the strip on its own: the host
-    // publishes it and auto-adoption beats the loop to it. Appends are
-    // therefore idempotent, and the saved focus is re-asserted once the
-    // whole strip is in place.
-    const appendBrowserSideTab = (tabId: TabId): void => {
-      setSideTabs((tabs) =>
-        tabs.some((tab) => tab.kind === "browser" && tab.tabId === tabId)
-          ? tabs
-          : [...tabs, { id: tabId, kind: "browser", tabId }],
+    stripRestoreInFlight = true;
+    try {
+      const { placements, activeIndex } = restoreSessionTabs(
+        saved,
+        browserState(),
       );
-    };
-    for (const [index, placement] of placements.entries()) {
-      let tabId: TabId | null = null;
-      if (placement.kind === "reuse") {
-        tabId = placement.tabId;
-      } else {
-        const before = browserState();
-        const next = await runBrowser({
-          type: "create-tab",
-          url: placement.url,
-        });
-        tabId = next ? createdHostTabId(before, next) : null;
-        if (tabId) created.push(tabId);
-      }
-      if (generation !== feedGeneration) {
-        for (const orphan of created) {
-          void runBrowser({ type: "close-tab", tabId: orphan });
-        }
-        return;
-      }
-      if (!tabId) continue;
-      appendBrowserSideTab(tabId);
-      if (index === activeIndex) focusedId = tabId;
-    }
-    if (focusedId) {
-      setActiveSideTabId(focusedId);
-      setSideCollapsed(false);
+      const tabIds = await resolvePlacements(
+        placements,
+        () => generation !== feedGeneration,
+      );
+      if (generation !== feedGeneration) return;
+      adoptResolvedTabs(
+        tabIds,
+        activeIndex >= 0 ? (tabIds[activeIndex] ?? null) : null,
+      );
+    } finally {
+      stripRestoreInFlight = false;
     }
   };
+
+  // Subscription-driven strip reconciliation: the session's persisted strip
+  // changed (the agent's browser_open_tab wrote it in step 2, another
+  // renderer wrote it, …). When it is the active session, adopt the tabs it
+  // names and apply its focus. Appending only: tabs the strip already shows
+  // are left in place, and a tab the user just closed — whose removal is
+  // still sitting in the persister's debounce — is not resurrected by a
+  // stale event. Unchanged writes never fire (the store suppresses them),
+  // so this runs only on real strip changes, and the echo write the apply
+  // itself triggers is swallowed there too.
+  let stripApplying = false;
+  const applySessionStrip = async (
+    sessionId: string,
+    saved: AgentSessionTabs | null,
+  ): Promise<void> => {
+    if (sessionId !== activeId() || stripRestoreInFlight || stripApplying)
+      return;
+    await bootBrowserSnapshot;
+    if (sessionId !== activeId() || stripRestoreInFlight) return;
+    stripApplying = true;
+    try {
+      const { placements, activeIndex } = restoreSessionTabs(
+        saved,
+        browserState(),
+      );
+      const tabIds = await resolvePlacements(placements, () => {
+        if (sessionId !== activeId() || stripRestoreInFlight) return true;
+        return false;
+      });
+      if (sessionId !== activeId()) return;
+      adoptResolvedTabs(
+        tabIds,
+        activeIndex >= 0 ? (tabIds[activeIndex] ?? null) : null,
+      );
+    } finally {
+      stripApplying = false;
+    }
+  };
+  const unsubscribeSessionTabs = client.subscribeSessionTabs(
+    ({ sessionId, tabs }) => {
+      void applySessionStrip(sessionId, tabs);
+    },
+  );
+  onCleanup(() => unsubscribeSessionTabs());
 
   const selectSession = async (sessionId: string): Promise<void> => {
     const generation = ++feedGeneration;
