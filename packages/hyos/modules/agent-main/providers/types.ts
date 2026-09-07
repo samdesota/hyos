@@ -5,11 +5,14 @@ import type {
   AgentPlan,
   AgentProviderSummary,
   AgentReasoningEffort,
+  AgentSessionTab,
 } from "../../../capabilities/agent.js";
 import type { BrowserClient } from "../../browser-client/types.js";
 
 export type AgentRunInput = Readonly<{
   prompt: string;
+  /** The session the run belongs to, when the run is session-backed. */
+  sessionId?: string;
   mode?: AgentMode;
   intent?: "implement" | "investigate";
   firstTurn?: boolean;
@@ -28,6 +31,12 @@ export type AgentRunInput = Readonly<{
   sessionTranscript?: (turnId: string) => Promise<string | null>;
   /** Browser client for opening tabs and other browser operations. */
   browserClient?: BrowserClient;
+  /**
+   * Appends one opened page to the run's session's persisted tab strip and
+   * focuses it — the durable record a subscribing renderer reconciles its
+   * strip against. Absent when the run has no session-backed tab store.
+   */
+  appendSessionTab?: (tab: AgentSessionTab) => Promise<void>;
 }>;
 
 export type AgentTokenUsage = Readonly<{

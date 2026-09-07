@@ -508,6 +508,7 @@ export function createAgentHost(options: {
         const result = await provider.run(
           {
             prompt: providerPrompt,
+            sessionId,
             mode: session.mode,
             intent,
             firstTurn,
@@ -522,6 +523,15 @@ export function createAgentHost(options: {
                 turnId,
               ),
             browserClient,
+            appendSessionTab: async (tab) => {
+              const saved = await store.loadSessionTabs(sessionId);
+              const tabs = [...(saved?.tabs ?? []), tab];
+              // The opened page is the point of the call, so it takes focus.
+              await store.saveSessionTabs(sessionId, {
+                tabs,
+                activeIndex: tabs.length - 1,
+              });
+            },
           },
           {
             session: (providerSessionId) =>
@@ -707,9 +717,13 @@ export function createAgentHost(options: {
   return {
     provider,
     async start() {
+      console.log("[DEBUG-boot-7f2c] agent-host recover:start");
       await store.recoverInterruptedSessions();
+      console.log("[DEBUG-boot-7f2c] agent-host recover:done");
       unsubscribeSessions = store.watchSessions(publishSessions);
+      console.log("[DEBUG-boot-7f2c] agent-host subscription:installed");
       publishSessions();
+      console.log("[DEBUG-boot-7f2c] agent-host initial-publish:scheduled");
     },
     async dispose() {
       accepting = false;
