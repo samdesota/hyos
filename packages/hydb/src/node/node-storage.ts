@@ -42,6 +42,7 @@ import {
   keyPrefixUpperBound,
 } from "./codec.js";
 import { AppendOnlyPageStore } from "./page-store.js";
+import { writeTrace, writeTraceNow } from "./write-trace.js";
 import {
   readStartupCheckpoint,
   writeStartupCheckpoint,
@@ -450,6 +451,10 @@ export class NodeStorageDatabase implements StorageDatabase {
   }
 
   static async open(options: NodeStorageOptions): Promise<NodeStorageDatabase> {
+    const debugBoot = (event: string) => {
+      if (process.env.HYOS_BOOT_TRACE === "1")
+        console.log(`[DEBUG-boot-7f2c] storage ${event}`);
+    };
     const requestedRetention =
       options.retention === undefined
         ? undefined
@@ -486,8 +491,14 @@ export class NodeStorageDatabase implements StorageDatabase {
       })
       .reverse();
     const dataPath = join(options.directory, "hydb.data");
+    debugBoot("checkpoint:read:start");
     const checkpoint = await readStartupCheckpoint(dataPath);
+    debugBoot(
+      `checkpoint:read:done valid=${Boolean(checkpoint)} offset=${checkpoint?.offset ?? 0}`,
+    );
+    debugBoot("page-store:open:start");
     const store = await AppendOnlyPageStore.open(dataPath, checkpoint?.offset);
+    debugBoot(`page-store:open:done end=${store.endOffset}`);
     const treeOptions = {
       cacheBytes: options.cacheBytes,
       maxEntries: options.maxEntries,
@@ -504,8 +515,12 @@ export class NodeStorageDatabase implements StorageDatabase {
       nullableMigrations,
     );
     try {
+      debugBoot("log-load:start");
       await database.load(checkpoint);
+      debugBoot("log-load:done");
+      debugBoot("checkpoint:write:start");
       await database.checkpoint();
+      debugBoot("checkpoint:write:done");
       return database;
     } catch (error) {
       tree.dispose();
@@ -728,7 +743,14 @@ export class NodeStorageDatabase implements StorageDatabase {
   private async checkpoint(): Promise<void> {
     // A checkpoint is a disposable accelerator; failure must not fail a commit or close.
     try {
+      const trace = (event: string) => {
+        if (process.env.HYOS_BOOT_TRACE === "1")
+          console.log(`[DEBUG-boot-7f2c] checkpoint ${event}`);
+      };
+      trace("data-sync:start");
       await this.store.sync();
+      trace("data-sync:done");
+      trace(`sidecar-write:start commits=${this.#commits.size}`);
       await writeStartupCheckpoint(this.dataPath, {
         offset: this.store.endOffset,
         branches: [...this.#branches],
@@ -743,6 +765,7 @@ export class NodeStorageDatabase implements StorageDatabase {
           historyFloors: Object.fromEntries(this.#historyFloors),
         },
       });
+      trace("sidecar-write:done");
     } catch {
       /* Fall back to log recovery on the next open. */
     }
@@ -954,6 +977,7 @@ export class NodeStorageDatabase implements StorageDatabase {
   }
 
   private async commitNow(request: CommitRequest): Promise<CommitBatch> {
+    const traceStartedAt = writeTraceNow();
     this.assertOpen();
     const branch = request.branch ?? "main";
     const current = this.#branches.get(branch);
@@ -977,6 +1001,7 @@ export class NodeStorageDatabase implements StorageDatabase {
     const parent = await this.readCommit(current.head);
     const manifest = cloneManifest(parent.manifest);
     const changes: StoredChange[] = [];
+    const mutationsStartedAt = writeTraceNow();
 
     for (const mutation of request.mutations) {
       const name = getTableDefinition(mutation.table).name;
@@ -1072,6 +1097,11 @@ export class NodeStorageDatabase implements StorageDatabase {
       manifest,
       changes,
     };
+    const appendStartedAt = writeTraceNow();
+    writeTrace(
+      `commit-apply(${branch}, ${changes.length} changes)`,
+      appendStartedAt - mutationsStartedAt,
+    );
     const offset = await this.store.append("commit", encodeValue(stored));
     const id = stored.id!;
     const ref: StoredRef = {
@@ -1081,7 +1111,11 @@ export class NodeStorageDatabase implements StorageDatabase {
       sequence: stored.sequence,
     };
     await this.store.append("ref", encodeValue(ref));
+    const syncStartedAt = writeTraceNow();
+    writeTrace("commit-append(2 records)", syncStartedAt - appendStartedAt);
     await this.store.sync();
+    writeTrace("commit-fsync", writeTraceNow() - syncStartedAt);
+    writeTrace(`commit-total(${branch})`, writeTraceNow() - traceStartedAt);
     this.#commits.set(id, { offset, value: stored });
     this.#branches.set(branch, {
       head: id,
@@ -1388,7 +1422,11 @@ export class NodeStorageDatabase implements StorageDatabase {
   }
 
   private enqueueWrite<Value>(operation: () => Promise<Value>): Promise<Value> {
-    const result = this.#writeQueue.then(operation);
+    const enqueuedAt = writeTraceNow();
+    const result = this.#writeQueue.then(() => {
+      writeTrace("queue-wait", writeTraceNow() - enqueuedAt);
+      return operation();
+    });
     this.#writeQueue = result.then(
       () => undefined,
       () => undefined,

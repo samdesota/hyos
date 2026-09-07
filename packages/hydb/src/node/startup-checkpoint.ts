@@ -69,26 +69,43 @@ export async function writeStartupCheckpoint(
   checkpoint: StartupCheckpoint,
 ): Promise<void> {
   const temporary = `${path}.checkpoint-${randomUUID()}`;
+  const trace = (event: string) => {
+    if (process.env.HYOS_BOOT_TRACE === "1")
+      console.log(`[DEBUG-boot-7f2c] checkpoint-file ${event}`);
+  };
   try {
+    trace("serialize:start");
     const payload = JSON.stringify(checkpoint);
+    trace(`serialize:done bytes=${Buffer.byteLength(payload)}`);
+    trace("identity:start");
+    const fileIdentity = await identity(path, checkpoint.offset);
+    trace("identity:done");
+    trace("write:start");
     await writeFile(
       temporary,
       JSON.stringify({
         version: 1,
         payload,
         checksum: digest(payload),
-        identity: await identity(path, checkpoint.offset),
+        identity: fileIdentity,
       }),
       { flag: "wx", mode: 0o600 },
     );
+    trace("write:done");
     const file = await open(temporary, "r+");
     try {
+      trace("sidecar-sync:start");
       await file.sync();
+      trace("sidecar-sync:done");
     } finally {
       await file.close();
     }
+    trace("rename:start");
     await rename(temporary, `${path}.checkpoint`);
+    trace("rename:done");
   } finally {
+    trace("cleanup:start");
     await rm(temporary, { force: true });
+    trace("cleanup:done");
   }
 }
