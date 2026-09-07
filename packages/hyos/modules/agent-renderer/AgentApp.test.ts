@@ -19,7 +19,7 @@ import {
   saveFolderOrder,
   timelineEntries,
   workPaneLabel,
-} from "./AgentApp.js";
+} from "./sessions-model.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
 import { hashForSession, sessionFromHash } from "./session-route.js";
 import { agentStyles } from "./styles.js";

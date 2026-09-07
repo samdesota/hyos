@@ -56,7 +56,7 @@ import {
   recentFolders,
   saveFolderOrder,
   timelineEntries,
-} from "./AgentApp.js";
+} from "./sessions-model.js";
 import { sessionFromHash, syncHashToSession } from "./session-route.js";
 
 export type AppStateProps = Readonly<{

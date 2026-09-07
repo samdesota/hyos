@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { AgentMessage } from "../../capabilities/agent.js";
-import { patchEntries } from "./AgentApp.js";
+import { patchEntries } from "./sessions-model.js";
 import { createAutoScrollController } from "./auto-scroll.js";
 
 test("content growth keeps following until the user scrolls over 100px away", () => {
