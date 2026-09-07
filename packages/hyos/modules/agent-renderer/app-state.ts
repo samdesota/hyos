@@ -18,6 +18,7 @@ import type {
 import type { BrowserClient } from "../browser-client/types.js";
 import type { AgentClient, AgentMessageFeed } from "./client.js";
 import { createAutoScrollController } from "./auto-scroll.js";
+import { perfLog, perfNow, timeAsync } from "./perf-time.js";
 import { emptyBrowserState } from "./browser-tab.js";
 import {
   activeSideTab,
@@ -604,7 +605,10 @@ export function createAppState({ client, browserClient }: AppStateProps) {
   ): Promise<void> => {
     let saved: AgentSessionTabs | null = null;
     try {
-      saved = await client.sessionTabs(sessionId);
+      saved = await timeAsync(
+        `session-open:tab-restore-fetch(${sessionId})`,
+        () => client.sessionTabs(sessionId),
+      );
     } catch {
       // Background pane state: a failed load just leaves the strip as-is.
       return;
@@ -679,6 +683,8 @@ export function createAppState({ client, browserClient }: AppStateProps) {
   onCleanup(() => unsubscribeSessionTabs());
 
   const selectSession = async (sessionId: string): Promise<void> => {
+    const selectStart = perfNow();
+    let feedOpenDone = 0;
     const generation = ++feedGeneration;
     closeFeed();
     // Only a session's first open restores its persisted tabs: an in-memory
@@ -698,9 +704,15 @@ export function createAppState({ client, browserClient }: AppStateProps) {
     setError(null);
     transcriptScroll.reset();
     patchScroll.reset();
-    if (firstOpen) void restoreSavedTabs(sessionId, generation);
+    if (firstOpen)
+      void timeAsync(`session-open:tab-restore(${sessionId})`, () =>
+        restoreSavedTabs(sessionId, generation),
+      );
     try {
-      const opened = await client.openFeed(sessionId, 200);
+      const opened = await timeAsync(
+        `session-open:openFeed(${sessionId})`,
+        () => client.openFeed(sessionId, 200),
+      );
       if (generation !== feedGeneration) {
         opened.close();
         return;
@@ -714,7 +726,11 @@ export function createAppState({ client, browserClient }: AppStateProps) {
     } catch (value) {
       showError(value);
     } finally {
-      if (generation === feedGeneration) setLoadingFeed(false);
+      if (generation === feedGeneration) {
+        setLoadingFeed(false);
+        feedOpenDone = perfNow();
+        perfLog(`session-open:total(${sessionId})`, feedOpenDone - selectStart);
+      }
     }
   };
 
