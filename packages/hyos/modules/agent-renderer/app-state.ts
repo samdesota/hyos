@@ -465,6 +465,11 @@ export function createAppState({ client, browserClient }: AppStateProps) {
     setSessions(state.sessions);
   };
 
+  // Live session-list updates: without this the sidebar only learns of
+  // status changes (e.g. a session starting to run) on a manual reload.
+  const unsubscribeSessions = client.subscribeSessions(acceptSessions);
+  onCleanup(() => unsubscribeSessions());
+
   const queueScrollToBottom = (
     controller: ReturnType<typeof createAutoScrollController>,
     container: () => HTMLDivElement | undefined,
