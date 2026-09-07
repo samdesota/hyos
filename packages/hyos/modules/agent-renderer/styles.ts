@@ -56,6 +56,32 @@ export const agentStyles = String.raw`
   .new-session:hover { background: #3b3d37; }
   .new-session.open { background: #30312d; }
   .new-session:hover, .folder-button:hover { background: #3b3d37; }
+  .global-tabs { border-bottom: 1px solid #30312d; }
+  .global-tabs-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-right: 10px;
+  }
+  .global-tabs-label { flex: 1; }
+  .global-tab-add { margin: 4px 0; }
+  .global-tab-list { display: flex; flex-direction: column; gap: 2px; padding: 0 8px 8px; }
+  .global-tab-row { display: flex; align-items: center; border-radius: 8px; }
+  .global-tab-row:hover { background: #292a27; }
+  .global-tab-row.active { background: #34362f; }
+  .global-tab {
+    flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border: 0; color: #aaaca2; background: transparent;
+    cursor: pointer; font-size: 12px; text-align: left;
+  }
+  .global-tab:hover, .global-tab-row.active .global-tab { color: #e3e2dc; }
+  .global-tab-close {
+    flex: none; display: grid; place-items: center; width: 22px; height: 22px;
+    margin: 0 5px 0 2px; border: 0; border-radius: 6px; color: #8e9087;
+    background: transparent; cursor: pointer; font-size: 14px; line-height: 1;
+    opacity: 0; transition: opacity .12s, background .12s, color .12s;
+  }
+  .global-tab-row:hover .global-tab-close,
+  .global-tab-row:focus-within .global-tab-close { opacity: 1; }
+  .global-tab-close:hover { color: #eceae5; background: #3b3d37; }
   .session-label {
     padding: 8px 18px; color: #85877e; font-size: 11px; font-weight: 700;
     letter-spacing: .09em; text-transform: uppercase;

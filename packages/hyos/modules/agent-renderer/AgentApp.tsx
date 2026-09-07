@@ -53,6 +53,14 @@ import {
   type SideTab,
   type SideTabScope,
 } from "./side-pane.js";
+import {
+  activeGlobalTab,
+  globalTabLabel,
+  neighborGlobalTabId,
+  reconcileGlobalTabs,
+  unadoptedGlobalHostTab,
+  type GlobalTab,
+} from "./global-tabs.js";
 import { createSessionTabsPersister } from "./session-tabs.js";
 import { agentStyles } from "./styles.js";
 import { selectedMode, supportsIncremental } from "./mode-selection.js";
@@ -537,6 +545,7 @@ function describeModel(
 }
 
 export const AgentApp: Component<AgentAppProps> = (props) => {
+  console.log("[DEBUG-boot-7f2c] agent-renderer component:construct");
   const [providers, setProviders] = createSignal<
     readonly AgentProviderSummary[]
   >([]);
@@ -620,6 +629,31 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   );
   const [browserState, setBrowserState] = createSignal(emptyBrowserState);
   const [browserError, setBrowserError] = createSignal<string | null>(null);
+
+  // The app-level global tab strip: presentation surfaces owned by the app
+  // rather than any session. Tabs the host no longer knows are dropped on
+  // every publish, so a closed page cannot linger in the strip.
+  const [globalTabs, setGlobalTabs] = createSignal<readonly GlobalTab[]>([]);
+  const [activeGlobalTabId, setActiveGlobalTabId] = createSignal<string | null>(
+    null,
+  );
+  const focusedGlobalTab = createMemo(() =>
+    activeGlobalTab(globalTabs(), activeGlobalTabId()),
+  );
+  const openGlobalTab = (): void => {
+    const adoptable = unadoptedGlobalHostTab(browserState(), globalTabs());
+    if (!adoptable) return;
+    setGlobalTabs((tabs) => [
+      ...tabs,
+      { id: `global-${adoptable.id}`, kind: "browser", tabId: adoptable.id },
+    ]);
+    setActiveGlobalTabId(`global-${adoptable.id}`);
+  };
+  const closeGlobalTab = (tab: GlobalTab): void => {
+    const neighborId = neighborGlobalTabId(globalTabs(), tab.id);
+    setGlobalTabs((tabs) => tabs.filter(({ id }) => id !== tab.id));
+    if (activeGlobalTabId() === tab.id) setActiveGlobalTabId(neighborId);
+  };
 
   // Persisted pane state: the active session's strip is snapshotted into
   // the agent sessions DB so a restart or a renderer reload brings its
@@ -764,10 +798,20 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   // disappear from the strip instead of presenting a dead view, and tabs
   // that appear while the pane watches — an agent's browser_open_tab tool,
   // say — are adopted and focused without a manual `+` click.
+  let browserPublishCount = 0;
   const acceptBrowserState = (next: BrowserState): void => {
+    browserPublishCount += 1;
+    if (
+      browserPublishCount <= 4 ||
+      (browserPublishCount & (browserPublishCount - 1)) === 0
+    )
+      console.log(
+        `[DEBUG-boot-7f2c] agent-renderer browser-state count=${browserPublishCount} tabs=${next.tabs.length}`,
+      );
     const previous = browserState();
     setBrowserState(next);
     setSideTabs((tabs) => reconcileSideTabs(tabs, next));
+    setGlobalTabs((tabs) => reconcileGlobalTabs(tabs, next));
     const adopted = autoAdoptHostTabs(sideTabs(), next, previous);
     if (adopted) {
       setSideTabs(adopted.tabs);
@@ -783,7 +827,10 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   onCleanup(() => unsubscribeBrowser());
   const bootBrowserSnapshot: Promise<void> = props.browserClient
     .execute({ type: "snapshot" })
-    .then(acceptBrowserState)
+    .then((state) => {
+      console.log("[DEBUG-boot-7f2c] agent-renderer browser-snapshot:resolved");
+      acceptBrowserState(state);
+    })
     // A boot-time failure (host unloading) shows up in the browser tab
     // content instead of leaving a silently dead strip.
     .catch((value: unknown) => {
@@ -1262,6 +1309,9 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   const unsubscribeSessions = props.client.subscribeSessions(acceptSessions);
   void Promise.all([props.client.providers(), props.client.sessions()])
     .then(([nextProviders, state]) => {
+      console.log(
+        `[DEBUG-boot-7f2c] agent-renderer sessions:resolved providers=${nextProviders.length} sessions=${state.sessions.length}`,
+      );
       setProviders(nextProviders);
       acceptSessions(state);
       const routedId = sessionFromHash();
@@ -1318,6 +1368,59 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
               </svg>
               New session
             </button>
+          </div>
+          <div class="global-tabs" aria-label="Global tabs">
+            <div class="global-tabs-head">
+              <span class="session-label global-tabs-label">Tabs</span>
+              <button
+                type="button"
+                class="side-tab-add global-tab-add"
+                aria-label="Open global browser tab"
+                title="Open global browser tab"
+                onClick={openGlobalTab}
+              >
+                +
+              </button>
+            </div>
+            <Show when={globalTabs().length > 0}>
+              <div class="global-tab-list" role="tablist">
+                <For each={globalTabs()}>
+                  {(tab) => (
+                    <div
+                      class="global-tab-row"
+                      classList={{
+                        active: focusedGlobalTab()?.id === tab.id,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        role="tab"
+                        class="global-tab"
+                        aria-selected={focusedGlobalTab()?.id === tab.id}
+                        title={globalTabLabel(tab, browserState())}
+                        onClick={() => setActiveGlobalTabId(tab.id)}
+                      >
+                        <span class="side-tab-icon" aria-hidden="true">
+                          ◉
+                        </span>
+                        <span class="side-tab-label">
+                          {globalTabLabel(tab, browserState())}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        class="global-tab-close"
+                        aria-label={`Close ${globalTabLabel(tab, browserState())}`}
+                        title="Close tab"
+                        onClick={() => closeGlobalTab(tab)}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
           </div>
           <div class="session-label">Sessions</div>
           <div class="session-list" id="agent-session-list">
