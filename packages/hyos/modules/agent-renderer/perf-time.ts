@@ -3,8 +3,8 @@
 export const perfNow = (): number =>
   globalThis.performance?.now?.() ?? Date.now();
 
-// Flip to true to re-enable the [perf] session-open timing logs.
-export const PERF_ENABLED = false;
+// Flip to false to silence the [perf] timing logs.
+export const PERF_ENABLED = true;
 
 export const perfLog = (label: string, ms: number): void => {
   if (!PERF_ENABLED) return;

@@ -495,10 +495,15 @@ export function createAppState({ client, browserClient }: AppStateProps) {
     queueScrollToBottom(patchScroll, () => patchList);
   };
 
+  // Timestamp of the in-flight send, for the send:user-visible perf trace.
+  let sendStartedAt = 0;
+
   const applyMessageChange = (change: AgentMessageChange): void => {
     setMessages((current) => {
       if (change.type === "message-created") {
         if (current.some(({ id }) => id === change.message.id)) return current;
+        if (change.message.role === "user")
+          perfLog("send:user-visible", perfNow() - sendStartedAt);
         return [...current, change.message];
       }
       if (change.type === "message-replaced") {
@@ -800,6 +805,8 @@ export function createAppState({ client, browserClient }: AppStateProps) {
     setSubmitting(true);
     setError(null);
     setPrompt("");
+    const sendStarted = performance.now();
+    sendStartedAt = sendStarted;
     try {
       await client.execute({
         type: "send-message",
@@ -812,6 +819,7 @@ export function createAppState({ client, browserClient }: AppStateProps) {
         reasoningEffort: followupEffort(),
         intent,
       });
+      perfLog("send:execute-returned", performance.now() - sendStarted);
     } catch (value) {
       setPrompt(content);
       showError(value);

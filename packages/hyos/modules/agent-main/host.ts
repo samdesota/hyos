@@ -689,10 +689,15 @@ export function createAgentHost(options: {
     if (session.archivedAt) {
       throw new Error("Unarchive this session before sending a message.");
     }
+    const sendStartedAt = perfNow();
     const provider = providers.get(session.providerId);
     if (!provider)
       throw new Error(`Unknown agent provider: ${session.providerId}`);
     await provider.prepare?.();
+    perfLog(
+      `send:prepare(${session.providerId})`,
+      perfNow() - sendStartedAt,
+    );
     const model = provider.summary.models.find(
       (candidate) => candidate.id === session.modelId,
     );
@@ -710,6 +715,10 @@ export function createAgentHost(options: {
       command.prompt,
       command.mode,
       command.reasoningEffort,
+    );
+    perfLog(
+      `send:startTurn(${session.providerId})`,
+      perfNow() - sendStartedAt,
     );
     runTurn(
       turn.sessionId,
