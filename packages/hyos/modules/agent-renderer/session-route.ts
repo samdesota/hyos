@@ -1,32 +1,81 @@
-const SESSION_ROUTE_PREFIX = "#/session/";
+/**
+ * Hash routes. The hash fragment is the app's URL: `/` is the new-session
+ * view, `/session/:id` opens a session, `/tabs/:id` focuses a global tab
+ * page. Anything unrecognized resolves to `/` so a stale or hand-edited
+ * hash can never blank the app.
+ */
+export type AppRoute =
+  | Readonly<{ kind: "new" }>
+  | Readonly<{ kind: "session"; sessionId: string }>
+  | Readonly<{ kind: "global-tabs"; tabId: string }>;
+
+const ROUTE_PREFIX = "#";
+const SESSION_ROUTE = "/session/";
+const TABS_ROUTE = "/tabs/";
+
+/** The route encoded in the URL hash; unrecognized hashes read as `/`. */
+export function routeFromHash(hash: string = window.location.hash): AppRoute {
+  if (!hash.startsWith(ROUTE_PREFIX)) return { kind: "new" };
+  const path = hash.slice(ROUTE_PREFIX.length);
+  if (path.startsWith(SESSION_ROUTE) && path.length > SESSION_ROUTE.length) {
+    return {
+      kind: "session",
+      sessionId: decodeURIComponent(path.slice(SESSION_ROUTE.length)),
+    };
+  }
+  if (path.startsWith(TABS_ROUTE) && path.length > TABS_ROUTE.length) {
+    return {
+      kind: "global-tabs",
+      tabId: decodeURIComponent(path.slice(TABS_ROUTE.length)),
+    };
+  }
+  return { kind: "new" };
+}
+
+/** Hash fragment that routes to the given route. */
+export function hashForRoute(route: AppRoute): string {
+  switch (route.kind) {
+    case "session":
+      return `${ROUTE_PREFIX}${SESSION_ROUTE}${encodeURIComponent(route.sessionId)}`;
+    case "global-tabs":
+      return `${ROUTE_PREFIX}${TABS_ROUTE}${encodeURIComponent(route.tabId)}`;
+    case "new":
+      return `${ROUTE_PREFIX}/`;
+  }
+}
+
+export function syncHashToRoute(route: AppRoute): void {
+  const next = hashForRoute(route);
+  if (window.location.hash === next) return;
+  history.replaceState(null, "", next);
+}
 
 /** Session id encoded in the URL hash, if any. */
 export function sessionFromHash(
   hash: string = window.location.hash,
 ): string | null {
-  return hash.startsWith(SESSION_ROUTE_PREFIX) &&
-    hash.length > SESSION_ROUTE_PREFIX.length
-    ? decodeURIComponent(hash.slice(SESSION_ROUTE_PREFIX.length))
-    : null;
+  const route = routeFromHash(hash);
+  return route.kind === "session" ? route.sessionId : null;
 }
 
 /** Hash fragment that routes to the given session, or "" for no session. */
 export function hashForSession(sessionId: string | null): string {
-  return sessionId
-    ? `${SESSION_ROUTE_PREFIX}${encodeURIComponent(sessionId)}`
-    : "";
+  return sessionId ? hashForRoute({ kind: "session", sessionId }) : "";
 }
 
 export function syncHashToSession(sessionId: string | null): void {
-  const next = hashForSession(sessionId);
-  if (window.location.hash === next) return;
-  if (!next) {
-    history.replaceState(
-      null,
-      "",
-      window.location.pathname + window.location.search,
-    );
+  if (!sessionId) {
+    // No session routes to `/`; unlike a tab route, that clears the hash
+    // entirely so a reload lands on the default view without a fragment.
+    const current = routeFromHash();
+    if (current.kind === "session") {
+      history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search,
+      );
+    }
     return;
   }
-  history.replaceState(null, "", next);
+  syncHashToRoute({ kind: "session", sessionId });
 }
