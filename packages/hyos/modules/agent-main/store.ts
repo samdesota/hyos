@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { hydb, type Database } from "@hyos/hydb";
+import { perfLog, perfNow } from "../agent-renderer/perf-time.js";
 import { z } from "zod";
 
 import type {
@@ -15,6 +16,7 @@ import type {
   AgentSessionStatus,
   AgentSessionSummary,
   AgentSessionTabs,
+  AgentSessionTabsChange,
 } from "../../capabilities/agent.js";
 import {
   agentMessageChunks,
@@ -652,6 +654,15 @@ export interface AgentStore {
   ): Promise<AgentMessagePage>;
   watchSessions(listener: () => void): () => void;
   watchMessages(sessionId: string, listener: () => void): () => void;
+  /**
+   * Fires with a session's decoded strip whenever its persisted tabs column
+   * changes — agent `browser_open_tab` writes or renderer saves. Null means
+   * the strip was cleared. One subscription covers every session so the host
+   * can forward changes without knowing which ones a renderer watches.
+   */
+  watchSessionTabs(
+    listener: (change: AgentSessionTabsChange) => void,
+  ): () => void;
   recoverInterruptedSessions(): Promise<void>;
 }
 
@@ -878,6 +889,8 @@ export function createAgentStore(database: Database): AgentStore {
       return rows.map(sessionSummary);
     },
     async pageMessages(sessionId, before, count) {
+      const startedAt = perfNow();
+      let t = startedAt;
       const rows = await database.fetch(
         hydb
           .query(agentMessages)
@@ -885,6 +898,8 @@ export function createAgentStore(database: Database): AgentStore {
           .orderBy((message) => [message.createdAt.desc(), message.id.desc()])
           .many(),
       );
+      const fetchMs = perfNow() - t;
+      t = perfNow();
       const start = before
         ? Math.max(
             0,
@@ -910,6 +925,10 @@ export function createAgentStore(database: Database): AgentStore {
       }
       const messages = assembled.slice(firstIncluded);
       const oldest = messages[0];
+      const assembleMs = perfNow() - t;
+      perfLog(`session-open:page-fetch(${sessionId}) [${rows.length} rows]`, fetchMs);
+      perfLog(`session-open:page-assemble(${sessionId})`, assembleMs);
+      perfLog(`session-open:pageMessages(${sessionId})`, perfNow() - startedAt);
       return {
         messages,
         before: oldest
@@ -950,6 +969,38 @@ export function createAgentStore(database: Database): AgentStore {
         unsubscribeChunks();
         unsubscribeMessages();
       };
+    },
+    watchSessionTabs(listener) {
+      // The tabs column rides on the session rows, so one subscription on
+      // the sessions table covers every session; a diff of the raw encoded
+      // strings decides which sessions actually changed, so unchanged
+      // writes (and writes this build decodes to nothing) never fire.
+      const lastTabs = new Map<string, string | null>();
+      const seed = async (): Promise<void> => {
+        for (const row of await database.fetch(
+          hydb.query(agentSessions).many(),
+        ))
+          lastTabs.set(row.id, row.tabs ?? null);
+      };
+      void seed();
+      return database.subscribe(
+        hydb.query(agentSessions).many(),
+        () => {
+          void (async () => {
+            for (const row of await database.fetch(
+              hydb.query(agentSessions).many(),
+            )) {
+              const encoded = row.tabs ?? null;
+              if (lastTabs.get(row.id) === encoded) continue;
+              lastTabs.set(row.id, encoded);
+              listener({
+                sessionId: row.id,
+                tabs: decodeSessionTabs(encoded),
+              });
+            }
+          })();
+        },
+      );
     },
     async recoverInterruptedSessions() {
       const rows = await database.fetch(

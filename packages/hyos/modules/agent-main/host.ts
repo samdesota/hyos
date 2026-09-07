@@ -23,6 +23,7 @@ import type {
 import type { AgentProvider } from "./providers/index.js";
 import type { AgentStore } from "./store.js";
 import { createCommentaryWriter } from "./commentary-writer.js";
+import { perfLog, perfNow } from "../agent-renderer/perf-time.js";
 import { parsePlanBlock } from "../../capabilities/plan.js";
 
 type ActiveRun = Readonly<{
@@ -343,6 +344,7 @@ export function createAgentHost(options: {
   let sessionSequence = 0;
   let sessionPublishing = Promise.resolve();
   let unsubscribeSessions: (() => void) | undefined;
+  let unsubscribeSessionTabs: (() => void) | undefined;
   let accepting = true;
 
   const sessionsState = async (): Promise<AgentSessionsState> => ({
@@ -445,7 +447,11 @@ export function createAgentHost(options: {
     newestCount: number,
   ): Promise<AgentFeedOpened> => {
     if (!accepting) throw new Error("Agent host is unloading");
+    const startedAt = perfNow();
+    let t = startedAt;
     await store.getSession(sessionId);
+    let getSessionMs = perfNow() - t;
+    t = perfNow();
     const id = `feed-${nextFeedId++}`;
     const feed: Feed = {
       id,
@@ -462,10 +468,26 @@ export function createAgentHost(options: {
     feed.unsubscribe = store.watchMessages(sessionId, () =>
       scheduleFeedRefresh(feed),
     );
+    const watchMs = perfNow() - t;
+    t = perfNow();
     const page = await store.pageMessages(sessionId, null, feed.count);
+    const pageMessagesMs = perfNow() - t;
     feed.known = new Map(page.messages.map((message) => [message.id, message]));
     feed.ready = true;
     if (feed.dirty) scheduleFeedRefresh(feed);
+    perfLog(`session-open:main-openFeed(${sessionId})`, perfNow() - startedAt);
+    perfLog(
+      `session-open:main-getSession(${sessionId})`,
+      getSessionMs,
+    );
+    perfLog(
+      `session-open:main-watch(${sessionId})`,
+      watchMs,
+    );
+    perfLog(
+      `session-open:main-pageMessages(${sessionId}) [${page.messages.length} msgs]`,
+      pageMessagesMs,
+    );
     return { feedId: id, sequence: feed.sequence, page };
   };
 
@@ -722,6 +744,13 @@ export function createAgentHost(options: {
       console.log("[DEBUG-boot-7f2c] agent-host recover:done");
       unsubscribeSessions = store.watchSessions(publishSessions);
       console.log("[DEBUG-boot-7f2c] agent-host subscription:installed");
+      // Forward persisted strip changes as capability events — the
+      // intent-carrying signal (an agent opened a tab) the renderer
+      // subscribes to instead of diffing browser publishes.
+      unsubscribeSessionTabs = store.watchSessionTabs((change) => {
+        if (!accepting) return;
+        remote.publish(agentCapability, "sessionTabs", change);
+      });
       publishSessions();
       console.log("[DEBUG-boot-7f2c] agent-host initial-publish:scheduled");
     },
@@ -729,6 +758,8 @@ export function createAgentHost(options: {
       accepting = false;
       unsubscribeSessions?.();
       unsubscribeSessions = undefined;
+      unsubscribeSessionTabs?.();
+      unsubscribeSessionTabs = undefined;
       for (const feedId of [...feeds.keys()]) closeFeed(feedId);
       for (const run of activeRuns.values()) run.controller.abort();
       await Promise.allSettled([...activeRuns.values()].map((run) => run.done));
