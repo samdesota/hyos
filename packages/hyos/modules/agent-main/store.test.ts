@@ -380,3 +380,79 @@ test("session tabs persist on the session row and decode defensively", async () 
     await database.close();
   }
 });
+
+test("watchSessionTabs fires with decoded strips as they are saved", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const first = await store.createSession({
+      prompt: "First",
+      folder: "/tmp/project",
+      providerId: "glm",
+      modelId: "zai/glm-5.3-flash",
+    });
+    const second = await store.createSession({
+      prompt: "Second",
+      folder: "/tmp/project",
+      providerId: "glm",
+      modelId: "zai/glm-5.3-flash",
+    });
+
+    const changes: import("../../capabilities/agent.js").AgentSessionTabsChange[] =
+      [];
+    let seenChange = false;
+    const pending: (() => void)[] = [];
+    const unsubscribe = store.watchSessionTabs((change) => {
+      changes.push(change);
+      if (seenChange) pending.shift()?.();
+    });
+    const nextChange = (): Promise<void> => {
+      seenChange = true;
+      return new Promise((resolve) => pending.push(resolve));
+    };
+
+    // The subscription seeds before the first save lands; an initial empty
+    // snapshot must never fire for a session with no tabs.
+    const saved = nextChange();
+    const tabs: AgentSessionTabs = {
+      tabs: [{ kind: "browser", url: "https://example.com/", title: "Ex" }],
+      activeIndex: 0,
+    };
+    await store.saveSessionTabs(first.sessionId, tabs);
+    await saved;
+    assert.deepEqual(changes, [{ sessionId: first.sessionId, tabs }]);
+
+    // An unchanged write (identical strip) must not fire — the renderer
+    // reconciles against these events and churn would defeat that.
+    await store.saveSessionTabs(first.sessionId, tabs);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(changes.length, 1);
+
+    // A different session's strip arrives tagged with its own id. Clearing
+    // only fires when a strip actually existed: null over null is no change.
+    const secondTabs: AgentSessionTabs = {
+      tabs: [
+        { kind: "browser", url: "https://news.ycombinator.com/", title: "HN" },
+      ],
+      activeIndex: 0,
+    };
+    const secondSaved = nextChange();
+    await store.saveSessionTabs(second.sessionId, secondTabs);
+    await secondSaved;
+    assert.deepEqual(changes[1], {
+      sessionId: second.sessionId,
+      tabs: secondTabs,
+    });
+
+    const cleared = nextChange();
+    await store.saveSessionTabs(second.sessionId, null);
+    await cleared;
+    assert.deepEqual(changes[2], { sessionId: second.sessionId, tabs: null });
+
+    unsubscribe();
+  } finally {
+    await database.close();
+  }
+});
