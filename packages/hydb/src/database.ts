@@ -113,6 +113,9 @@ class QueryDatabase implements Database {
       this.spill,
     );
     this.#subscriptions.add(subscription);
+    console.log(
+      `[hydb-bootstrap] subscriptions active: ${this.#subscriptions.size}`,
+    );
     void subscription.ready.catch(() => {
       this.disposeSubscription(subscription);
     });

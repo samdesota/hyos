@@ -47,6 +47,28 @@ type BufferedCommit = Readonly<{
   reject: (error: unknown) => void;
 }>;
 
+// Always-on bootstrap instrumentation: identifies which subscription is
+// bootstrapping, how long each scope load takes, and how many rows each
+// read — the composition behind a slow post-restart first write.
+let subscriptionCounter = 0;
+const bootstrapTraceNow = (): number =>
+  globalThis.performance?.now?.() ?? Date.now();
+const bootstrapTrace = (message: string): void => {
+  console.log(`[hydb-bootstrap] ${message}`);
+};
+
+function describeAccess(access: PhysicalAccess): string {
+  const table = getTableDefinition(access.table).name;
+  switch (access.kind) {
+    case "table-scan":
+      return `${table}:table-scan`;
+    case "primary-key":
+      return `${table}:primary-key`;
+    default:
+      return `${table}:${access.index}`;
+  }
+}
+
 function keyForRow(table: AnyTable, row: StoredRow): StorageKey {
   return Object.entries(getTableDefinition(table).columns)
     .filter(([, column]) => getColumnDefinition(column).primaryKey)
@@ -229,10 +251,19 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
   }
 
   private async bootstrap(): Promise<void> {
+    const bootstrapId = ++subscriptionCounter;
+    const description = this.#scopes
+      .map((scope) => `${describeAccess(scope.plan.access)}[${scope.mode}]`)
+      .join(" + ");
+    const bootstrapStartedAt = bootstrapTraceNow();
+    bootstrapTrace(
+      `sub#${bootstrapId} start (${description}) at ${new Date().toISOString()}`,
+    );
     const snapshot = await this.storage.snapshot();
     this.#snapshot = snapshot;
     try {
       const fallbackRows = new Map<string, Map<string, StoredRow>>();
+      const scopeTraces: string[] = [];
       for (const scope of this.#scopes) {
         if (this.#disposed) return;
         if (scope.mode === "demand") continue;
@@ -240,10 +271,19 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
         let rows =
           scope.mode === "fallback" ? fallbackRows.get(table) : undefined;
         if (rows === undefined) {
+          const scopeStartedAt = bootstrapTraceNow();
           rows = await loadRows(snapshot, scope.plan.access);
+          scopeTraces.push(
+            `${describeAccess(scope.plan.access)}: ${Math.round(
+              bootstrapTraceNow() - scopeStartedAt,
+            )}ms/${rows.size}rows`,
+          );
           if (scope.mode === "fallback") fallbackRows.set(table, rows);
         }
         this.mergeRows(scope, rows);
+      }
+      if (scopeTraces.length > 0) {
+        bootstrapTrace(`sub#${bootstrapId} scopes ${scopeTraces.join(", ")}`);
       }
 
       if (this.#disposed) return;
@@ -257,8 +297,23 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
       );
       this.#query = query;
       this.#lastSequence = snapshot.sequence;
+      let queryStartedAt = bootstrapTraceNow();
       await query.bootstrap();
+      bootstrapTrace(
+        `sub#${bootstrapId} query-bootstrap: ${Math.round(
+          bootstrapTraceNow() - queryStartedAt,
+        )}ms`,
+      );
+      queryStartedAt = bootstrapTraceNow();
       await this.settleDemands(snapshot);
+      const demandsMs = Math.round(bootstrapTraceNow() - queryStartedAt);
+      if (demandsMs > 0) {
+        bootstrapTrace(
+          `sub#${bootstrapId} settle-demands: ${demandsMs}ms [${
+            this.#pendingDemands.length
+          } pending demands]`,
+        );
+      }
       query.publishInitial();
 
       while (this.#buffer.length > 0 && !this.#disposed) {
@@ -272,6 +327,11 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
         }
       }
       this.#live = !this.#disposed;
+      bootstrapTrace(
+        `sub#${bootstrapId} done: ${Math.round(
+          bootstrapTraceNow() - bootstrapStartedAt,
+        )}ms total${this.#buffer.length > 0 ? "" : " (no buffered commits)"}`,
+      );
     } finally {
       await this.releaseSnapshot();
     }
