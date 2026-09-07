@@ -494,12 +494,10 @@ const TimelineEntryView: Component<{ entry: TimelineEntry }> = (props) => {
     </details>
   ) : entry.message.activity?.type === "commentary" ? (
     <article class="message commentary">
-      <pre class="message-body">
-        {entry.message.activity.text}
-        <Show when={entry.message.status === "streaming"}>
-          <span class="streaming-caret" />
-        </Show>
-      </pre>
+      <MarkdownBody content={entry.message.activity.text} />
+      <Show when={entry.message.status === "streaming"}>
+        <span class="streaming-caret" />
+      </Show>
     </article>
   ) : (
     <article class={`message ${entry.message.role}`}>
