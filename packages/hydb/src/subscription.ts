@@ -357,6 +357,7 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
 
   private async apply(commit: CommitBatch): Promise<void> {
     if (this.#disposed || commit.sequence <= this.#lastSequence) return;
+    const applyStartedAt = bootstrapTraceNow();
     const relevant = commit.changes.some((change) => {
       const table = getTableDefinition(change.table).name;
       return this.#scopes.some((scope) => scope.plan.source.table === table);
@@ -364,11 +365,21 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
     if (relevant) {
       const query = this.#query!;
       query.begin();
+      const scopeTimings: string[] = [];
       for (const scope of this.#scopes) {
+        const scopeStartedAt = bootstrapTraceNow();
         const changes = this.filterChanges(scope, commit);
         await query.apply(scope.plan.source, changes);
+        const scopeMs = bootstrapTraceNow() - scopeStartedAt;
+        if (scopeMs >= 20) {
+          scopeTimings.push(
+            `${describeAccess(scope.plan.access)}: ${Math.round(scopeMs)}ms`,
+          );
+        }
       }
+      let demandsMs = 0;
       if (this.#pendingDemands.length > 0) {
+        const demandsStartedAt = bootstrapTraceNow();
         const snapshot = await this.storage.snapshot({ commit: commit.commit });
         this.#snapshot = snapshot;
         try {
@@ -379,8 +390,21 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
         } finally {
           await this.releaseSnapshot();
         }
+        demandsMs = bootstrapTraceNow() - demandsStartedAt;
       }
       query.flush();
+      const applyMs = bootstrapTraceNow() - applyStartedAt;
+      if (applyMs >= 50) {
+        bootstrapTrace(
+          `sub#${this.#id} apply(${commit.sequence}): ${Math.round(applyMs)}ms` +
+            (scopeTimings.length > 0
+              ? ` [${scopeTimings.join(", ")}]`
+              : "") +
+            (demandsMs >= 20
+              ? ` settle-demands: ${Math.round(demandsMs)}ms`
+              : ""),
+        );
+      }
     }
     this.#lastSequence = commit.sequence;
   }

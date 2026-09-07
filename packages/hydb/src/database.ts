@@ -274,11 +274,30 @@ class QueryDatabase implements Database {
 
   private async applyCommit(commit: CommitBatch): Promise<void> {
     if (commit.sequence <= this.#sequence) return;
-    await Promise.all(
-      [...this.#subscriptions].map((subscription) =>
-        subscription.accept(commit),
-      ),
+    const applyStartedAt = traceNow();
+    const accepts = await Promise.all(
+      [...this.#subscriptions].map(async (subscription) => {
+        const acceptStartedAt = traceNow();
+        await subscription.accept(commit);
+        return { subscription, ms: traceNow() - acceptStartedAt };
+      }),
     );
+    const applyMs = traceNow() - applyStartedAt;
+    if (applyMs >= 100) {
+      traceExecute(`apply-commit(${commit.sequence})`, applyMs);
+      const slow = accepts
+        .filter((accept) => accept.ms >= 50)
+        .map(
+          (accept) =>
+            `${accept.subscription.label}: ${Math.round(accept.ms)}ms`,
+        )
+        .join(", ");
+      if (slow) {
+        console.log(
+          `[hydb-execute] apply-commit(${commit.sequence}) slow accepts — ${slow}`,
+        );
+      }
+    }
     this.#sequence = commit.sequence;
     for (const [sequence, waiters] of this.#sequenceWaiters) {
       if (sequence > this.#sequence) continue;
