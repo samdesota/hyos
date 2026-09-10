@@ -22,6 +22,12 @@ export const applicationManifest = defineApplicationManifest({
       reload: "restart",
     },
     {
+      id: "keybinding.main",
+      file: "./modules/keybinding-main/index.ts",
+      host: "main",
+      reload: "hot",
+    },
+    {
       id: "agent.main",
       file: "./modules/agent-main/index.ts",
       host: "main",
