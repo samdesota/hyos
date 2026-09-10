@@ -339,6 +339,8 @@ export function createAgentHost(options: {
     },
   };
   const activeRuns = new Map<string, ActiveRun>();
+  /** Per-session token for the latest status-detail request; stale results drop. */
+  const statusDetailTokens = new Map<string, object>();
   const feeds = new Map<AgentFeedId, Feed>();
   let nextFeedId = 1;
   let sessionSequence = 0;
@@ -612,6 +614,31 @@ export function createAgentHost(options: {
     activeRuns.set(sessionId, { controller, done });
   };
 
+  /**
+   * Best-effort status-detail generation, mirroring title generation: the
+   * store seeds a deterministic phrase at turn start, and a model-written
+   * description swaps in when it arrives. A result produced for a turn that
+   * has since been superseded by a newer turn is dropped, and failures keep
+   * the deterministic phrase.
+   */
+  const generateStatusDetail = (
+    sessionId: string,
+    provider: AgentProvider,
+    prompt: string,
+    previousResponse: string | null,
+  ) => {
+    const { generateStatusDetail: generate } = provider;
+    if (!generate) return;
+    const token = {};
+    statusDetailTokens.set(sessionId, token);
+    void generate(prompt, previousResponse)
+      .then((detail) => {
+        if (!detail || statusDetailTokens.get(sessionId) !== token) return;
+        return store.setStatusDetail(sessionId, detail);
+      })
+      .catch(() => undefined);
+  };
+
   const execute = async (
     command: AgentCommand,
   ): Promise<AgentCommandResult> => {
@@ -686,6 +713,7 @@ export function createAgentHost(options: {
           )
           .catch(() => undefined);
       }
+      generateStatusDetail(turn.sessionId, provider, command.prompt, null);
       runTurn(
         turn.sessionId,
         turn.assistantMessageId,
@@ -727,6 +755,12 @@ export function createAgentHost(options: {
       command.reasoningEffort,
     );
     perfLog(`send:startTurn(${session.providerId})`, perfNow() - sendStartedAt);
+    generateStatusDetail(
+      turn.sessionId,
+      provider,
+      command.prompt,
+      turn.previousResponse,
+    );
     runTurn(
       turn.sessionId,
       turn.assistantMessageId,

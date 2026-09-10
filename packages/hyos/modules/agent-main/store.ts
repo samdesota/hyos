@@ -530,6 +530,20 @@ const renameSessionCommand = hydb.command({
   },
 });
 
+const setStatusDetailCommand = hydb.command({
+  input: z.object({
+    sessionId: z.string(),
+    statusDetail: z.string(),
+    now: z.date(),
+  }),
+  async handler(transaction, input) {
+    await transaction.update(agentSessions, [input.sessionId], {
+      statusDetail: input.statusDetail,
+      updatedAt: input.now,
+    });
+  },
+});
+
 const recoverSessionCommand = hydb.command({
   input: z.object({ sessionId: z.string(), error: z.string(), now: z.date() }),
   async handler(transaction, input) {
@@ -593,6 +607,11 @@ export type NewAgentSession = Readonly<{
 export type StartedTurn = Readonly<{
   sessionId: string;
   assistantMessageId: string;
+  /**
+   * The previous assistant response the deterministic status detail was
+   * derived from, so the host can offer it to model-generated descriptions.
+   */
+  previousResponse: string | null;
 }>;
 
 export type AgentSessionRecord = AgentSessionSummary &
@@ -665,6 +684,7 @@ export interface AgentStore {
   getSession(id: string): Promise<AgentSessionRecord>;
   setSessionArchived(sessionId: string, archived: boolean): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
+  setStatusDetail(sessionId: string, statusDetail: string): Promise<void>;
   listSessions(): Promise<AgentSessionSummary[]>;
   pageMessages(
     sessionId: string,
@@ -806,7 +826,7 @@ export function createAgentStore(database: Database): AgentStore {
         ),
         now: now(),
       });
-      return { sessionId, assistantMessageId };
+      return { sessionId, assistantMessageId, previousResponse: null };
     },
     async startTurn(sessionId, prompt, mode, reasoningEffort) {
       const getSessionStartedAt = perfNow();
@@ -830,7 +850,7 @@ export function createAgentStore(database: Database): AgentStore {
         statusDetail: describeWork(prompt, previousResponse),
         now: now(),
       });
-      return { sessionId, assistantMessageId };
+      return { sessionId, assistantMessageId, previousResponse };
     },
     async appendAssistantChunk(sessionId, messageId, index, content) {
       if (content.length === 0) return;
@@ -957,6 +977,13 @@ export function createAgentStore(database: Database): AgentStore {
       await database.execute(renameSessionCommand, {
         sessionId,
         title: titleFromPrompt(title),
+        now: now(),
+      });
+    },
+    async setStatusDetail(sessionId, statusDetail) {
+      await database.execute(setStatusDetailCommand, {
+        sessionId,
+        statusDetail,
         now: now(),
       });
     },

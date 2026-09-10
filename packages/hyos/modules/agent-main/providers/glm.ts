@@ -151,6 +151,12 @@ const TITLE_SYSTEM_PROMPT =
   "with a 3-5 word title that captures the task. Reply with the title only: " +
   "no quotes, no trailing punctuation, no explanation.";
 
+const STATUS_DETAIL_SYSTEM_PROMPT =
+  "You write short status lines for a coding agent's sidebar. Given the task " +
+  "the agent is starting, reply with a 3-5 word phrase describing the work " +
+  "in the imperative, e.g. 'Fix login race condition'. Reply with the phrase " +
+  "only: no quotes, no trailing punctuation, no explanation.";
+
 /** Collapse a model reply to a single tidy title line, or "" when unusable. */
 function cleanGeneratedTitle(raw: string): string {
   const firstLine = raw.trim().split(/\r?\n/, 1)[0] ?? "";
@@ -237,6 +243,48 @@ export function createGlmProvider(
     );
   };
 
+  /** One cheap non-streaming low-reasoning completion, or null on any failure. */
+  const oneShot = async (
+    systemPrompt: string,
+    userContent: string,
+    signal?: AbortSignal,
+  ): Promise<string | null> => {
+    try {
+      const key = await apiKey();
+      const response = await request(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${key}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: TITLE_MODEL,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userContent },
+          ],
+          stream: false,
+          reasoning: { effort: "low" },
+          max_tokens: 64,
+        }),
+        signal: AbortSignal.any([
+          ...(signal ? [signal] : []),
+          AbortSignal.timeout(TITLE_TIMEOUT_MS),
+        ]),
+      });
+      if (!response.ok) return null;
+      const payload = (await response.json()) as {
+        choices?: readonly { message?: { content?: string } }[];
+      };
+      return (
+        cleanGeneratedTitle(payload.choices?.[0]?.message?.content ?? "") ||
+        null
+      );
+    } catch {
+      return null;
+    }
+  };
+
   return {
     summary: {
       id: "glm",
@@ -252,40 +300,13 @@ export function createGlmProvider(
       await apiKey();
     },
     async generateTitle(prompt, signal) {
-      try {
-        const key = await apiKey();
-        const response = await request(`${baseUrl}/chat/completions`, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${key}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            model: TITLE_MODEL,
-            messages: [
-              { role: "system", content: TITLE_SYSTEM_PROMPT },
-              { role: "user", content: prompt },
-            ],
-            stream: false,
-            reasoning: { effort: "low" },
-            max_tokens: 64,
-          }),
-          signal: AbortSignal.any([
-            ...(signal ? [signal] : []),
-            AbortSignal.timeout(TITLE_TIMEOUT_MS),
-          ]),
-        });
-        if (!response.ok) return null;
-        const payload = (await response.json()) as {
-          choices?: readonly { message?: { content?: string } }[];
-        };
-        return (
-          cleanGeneratedTitle(payload.choices?.[0]?.message?.content ?? "") ||
-          null
-        );
-      } catch {
-        return null;
-      }
+      return oneShot(TITLE_SYSTEM_PROMPT, prompt, signal);
+    },
+    async generateStatusDetail(prompt, previousResponse, signal) {
+      const input = previousResponse
+        ? `${prompt}\n\n(The agent is continuing from its previous reply, which ended with:)\n${previousResponse.slice(-600)}`
+        : prompt;
+      return oneShot(STATUS_DETAIL_SYSTEM_PROMPT, input, signal);
     },
     async run(input, sink: AgentRunSink, signal) {
       const key = await apiKey();

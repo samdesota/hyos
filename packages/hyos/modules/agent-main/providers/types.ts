@@ -72,6 +72,17 @@ export interface AgentProvider {
    * providers that cannot make cheap one-shot calls.
    */
   generateTitle?(prompt: string, signal?: AbortSignal): Promise<string | null>;
+  /**
+   * Generates a short 3-5 word description of what the starting turn will
+   * do, from the user's prompt and — for bare continuations like "continue"
+   * — the tail of the previous assistant response. Best-effort: resolves to
+   * null on any failure so the caller keeps the deterministic placeholder.
+   */
+  generateStatusDetail?(
+    prompt: string,
+    previousResponse: string | null,
+    signal?: AbortSignal,
+  ): Promise<string | null>;
   run(
     input: AgentRunInput,
     sink: AgentRunSink,
