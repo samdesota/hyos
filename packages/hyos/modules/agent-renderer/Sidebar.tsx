@@ -116,7 +116,7 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
                 class="new-session-item"
                 onClick={() => {
                   setNewMenuOpen(false);
-                  newSession();
+                  void openGlobalTab();
                 }}
               >
                 <span class="new-session-item-icon" aria-hidden="true">
@@ -124,6 +124,23 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
                 </span>
                 <span class="new-session-item-text">
                   <strong>Web</strong>
+                  <span class="new-session-item-hint">New browser tab</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                class="new-session-item"
+                onClick={() => {
+                  setNewMenuOpen(false);
+                  newSession();
+                }}
+              >
+                <span class="new-session-item-icon" aria-hidden="true">
+                  ✎
+                </span>
+                <span class="new-session-item-text">
+                  <strong>Session</strong>
                   <span class="new-session-item-hint">New agent session</span>
                 </span>
               </button>
