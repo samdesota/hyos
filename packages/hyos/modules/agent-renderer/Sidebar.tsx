@@ -63,6 +63,7 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
   } = props.app;
   const [createQuery, setCreateQuery] = createSignal("");
   const [createIndex, setCreateIndex] = createSignal(0);
+  let createInput: HTMLInputElement | undefined;
 
   // Reset the search/selection each time the modal opens, whether via the
   // "+" button or the app-level Cmd/Ctrl+T accelerator.
@@ -70,6 +71,9 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
     if (createOpen()) {
       setCreateQuery("");
       setCreateIndex(0);
+      // Focus on the next frame, after the portal content is in the DOM —
+      // covers both the "+" button and the CmdOrCtrl+T accelerator.
+      queueMicrotask(() => createInput?.focus());
     }
   });
 
@@ -181,7 +185,7 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
             type="text"
             placeholder="Create new…"
             aria-label="Search what to create"
-            autofocus
+            ref={createInput}
             value={createQuery()}
             onInput={(e) => {
               setCreateQuery(e.currentTarget.value);

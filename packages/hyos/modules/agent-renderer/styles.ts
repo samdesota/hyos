@@ -59,7 +59,7 @@ export const agentStyles = String.raw`
     position: fixed; inset: 0; z-index: 60;
     display: flex; align-items: flex-start; justify-content: center;
     padding: 14vh 16px 16px;
-    background: rgba(9, 10, 8, .55); backdrop-filter: blur(4px);
+    background: rgba(9, 10, 8, .55);
   }
   .modal-panel {
     display: flex; flex-direction: column; width: 380px; max-width: 100%;
