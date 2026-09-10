@@ -60,6 +60,7 @@ import {
   planPanelIndex,
   recentFolders,
   saveFolderOrder,
+  sessionsShallowEqual,
   timelineEntries,
 } from "./sessions-model.js";
 import { sessionFromHash, syncHashToSession } from "./session-route.js";
@@ -490,6 +491,10 @@ export function createAppState({
   }): void => {
     if (state.sequence < sessionSequence) return;
     sessionSequence = state.sequence;
+    // The host re-sends the full list on every tick; only touch the signal
+    // when something actually changed, so the sidebar DOM isn't torn down
+    // mid-interaction (hover/×  flashing, broken clicks while streaming).
+    if (sessionsShallowEqual(sessions(), state.sessions)) return;
     setSessions(state.sessions);
   };
 

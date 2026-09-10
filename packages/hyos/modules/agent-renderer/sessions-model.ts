@@ -1,5 +1,6 @@
 import type {
   AgentMessage,
+  AgentPlan,
   AgentPlanTask,
   AgentSessionSummary,
 } from "../../capabilities/agent.js";
@@ -290,4 +291,52 @@ export function folderName(folder: string): string {
   const trimmed = folder.replace(/\/+$/, "");
   const index = trimmed.lastIndexOf("/");
   return index === -1 ? trimmed : trimmed.slice(index + 1);
+}
+
+const sameDate = (a: Date | null, b: Date | null): boolean =>
+  a === b || (a !== null && b !== null && a.getTime() === b.getTime());
+
+const samePlan = (a: AgentPlan | null, b: AgentPlan | null): boolean => {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  return (
+    a.tasks.length === b.tasks.length &&
+    a.tasks.every(
+      (task, i) =>
+        task.done === b.tasks[i].done && task.text === b.tasks[i].text,
+    )
+  );
+};
+
+const sameSession = (
+  a: AgentSessionSummary,
+  b: AgentSessionSummary,
+): boolean =>
+  a.id === b.id &&
+  a.title === b.title &&
+  a.folder === b.folder &&
+  a.providerId === b.providerId &&
+  a.modelId === b.modelId &&
+  a.reasoningEffort === b.reasoningEffort &&
+  a.mode === b.mode &&
+  a.status === b.status &&
+  a.lastError === b.lastError &&
+  samePlan(a.plan, b.plan) &&
+  sameDate(a.archivedAt, b.archivedAt) &&
+  sameDate(a.createdAt, b.createdAt) &&
+  sameDate(a.updatedAt, b.updatedAt);
+
+/**
+ * Field-wise equality for session summary lists. The host pushes fresh
+ * objects on every tick, so reference equality always fails; this lets the
+ * renderer skip no-op updates that would otherwise tear the sidebar down
+ * mid-interaction.
+ */
+export function sessionsShallowEqual(
+  a: readonly AgentSessionSummary[],
+  b: readonly AgentSessionSummary[],
+): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((session, i) => sameSession(session, b[i]));
 }
