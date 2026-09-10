@@ -41,6 +41,74 @@ const SessionFolderList: Component<{
   );
 };
 
+/**
+ * Inline-renameable session title: double-click swaps the label for an
+ * identically sized input with the full text pre-selected. Enter or blur
+ * commits through the host's rename-session command; Escape discards.
+ */
+const SessionTitle: Component<{
+  session: AgentSessionSummary;
+  onRename: (title: string) => void;
+}> = (props) => {
+  const [editing, setEditing] = createSignal(false);
+  const [draft, setDraft] = createSignal("");
+  let input: HTMLInputElement | undefined;
+
+  const startEditing = (): void => {
+    setDraft(props.session.title);
+    setEditing(true);
+    // Focus once the input exists; select() highlights the full title.
+    queueMicrotask(() => {
+      input?.focus();
+      input?.select();
+    });
+  };
+  const stopEditing = (): void => {
+    setEditing(false);
+  };
+  const commit = (): void => {
+    const title = draft().trim();
+    stopEditing();
+    if (title && title !== props.session.title) props.onRename(title);
+  };
+
+  return (
+    <Show
+      when={editing()}
+      fallback={
+        <span class="session-title" onDblClick={startEditing}>
+          {props.session.title}
+        </span>
+      }
+    >
+      <input
+        ref={input}
+        class="session-title-input"
+        type="text"
+        aria-label="Session title"
+        value={draft()}
+        // Keep the wrapping button from re-selecting the session while
+        // the user clicks or presses keys inside the input.
+        onClick={(event) => {
+          event.stopPropagation();
+        }}
+        onInput={(event) => setDraft(event.currentTarget.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === "Enter") {
+            event.preventDefault();
+            commit();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            stopEditing();
+          }
+        }}
+      />
+    </Show>
+  );
+};
+
 /** App sidebar: brand, global tab strip, session list. */
 export const Sidebar: Component<{ app: AppState }> = (props) => {
   const {
@@ -58,6 +126,7 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
     selectSession,
     newSession,
     setSessionArchived,
+    renameSession,
     createOpen,
     setCreateOpen,
   } = props.app;
@@ -282,7 +351,10 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
                 class="session-open"
                 onClick={() => void selectSession(session.id)}
               >
-                <span class="session-title">{session.title}</span>
+                <SessionTitle
+                  session={session}
+                  onRename={(title) => void renameSession(session.id, title)}
+                />
                 <span class="session-meta">
                   <i class={`status-dot ${session.status}`} />
                   {session.modelId}
@@ -322,7 +394,12 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
                     class="session-open"
                     onClick={() => void selectSession(session.id)}
                   >
-                    <span class="session-title">{session.title}</span>
+                    <SessionTitle
+                      session={session}
+                      onRename={(title) =>
+                        void renameSession(session.id, title)
+                      }
+                    />
                     <span class="session-meta">
                       <i class={`status-dot ${session.status}`} />
                       {session.modelId}

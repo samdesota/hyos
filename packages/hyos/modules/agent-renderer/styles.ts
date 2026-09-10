@@ -141,7 +141,16 @@ export const agentStyles = String.raw`
   }
   .archived-toggle:hover { color: #b5b7ac; }
   .archived-chevron { font-style: normal; font-size: 16px; line-height: 1; }
-  .session-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .session-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 16px; }
+  /* Same box and type as .session-title so entering inline rename does not
+     shift the row; the underline comes from a shadow, keeping height fixed. */
+  .session-title-input {
+    display: block; width: 100%; min-width: 0; height: 16px; padding: 0; margin: 0;
+    border: 0; border-radius: 0; background: transparent; color: inherit;
+    font-size: 13px; line-height: 16px; white-space: nowrap;
+    caret-color: #d9ff62; outline: none; cursor: text;
+    box-shadow: 0 1px 0 #b2cb8c;
+  }
   .session-meta { display: flex; gap: 7px; margin-top: 5px; color: #8e9087; font-size: 11px; }
   .status-dot { width: 6px; height: 6px; margin-top: 4px; border-radius: 50%; background: #777; }
   .status-dot.running { background: #d9ff62; box-shadow: 0 0 8px #d9ff6270; }
