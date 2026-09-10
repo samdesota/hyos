@@ -768,6 +768,9 @@ export function createAppState({ client, browserClient }: AppStateProps) {
     }
   };
 
+  const INVESTIGATE_DIRECTIVE =
+    "[Investigate only. Do not modify any files; use read-only commands, unless a reversible test is genuinely needed.]";
+
   const startSession = async (): Promise<void> => {
     if (!prompt().trim() || !folder() || !providerId() || !modelId()) return;
     setSubmitting(true);
@@ -775,12 +778,13 @@ export function createAppState({ client, browserClient }: AppStateProps) {
     try {
       const result = await client.execute({
         type: "start-session",
-        prompt: prompt().trim(),
+        prompt: `${INVESTIGATE_DIRECTIVE}\n\n${prompt().trim()}`,
         folder: folder(),
         providerId: providerId(),
         modelId: modelId(),
         reasoningEffort: reasoningEffort(),
         mode: initialMode(),
+        intent: "investigate",
       });
       if (result.type === "session-started") {
         setPrompt("");
@@ -792,9 +796,6 @@ export function createAppState({ client, browserClient }: AppStateProps) {
       setSubmitting(false);
     }
   };
-
-  const INVESTIGATE_DIRECTIVE =
-    "[Investigate only. Do not modify any files; use read-only commands, unless a reversible test is genuinely needed.]";
 
   const sendMessage = async (
     intent: "implement" | "investigate",
