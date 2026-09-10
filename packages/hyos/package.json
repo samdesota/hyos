@@ -27,6 +27,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.3.258",
     "@hyos/hydb": "^0.0.0",
     "@hyos/hyedit": "0.0.0",
+    "@solidjs/router": "^0.15.4",
     "mermaid": "^11.17.2",
     "micromark": "^4.0.2",
     "micromark-extension-gfm-table": "^2.1.1",

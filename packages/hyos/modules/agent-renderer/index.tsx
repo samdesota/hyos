@@ -1,3 +1,4 @@
+import { Route, HashRouter } from "@solidjs/router";
 import { render } from "solid-js/web";
 
 import type { RendererRemoteCapabilities } from "../../remote-capabilities.js";
@@ -30,13 +31,22 @@ registerModule(
       const keybindingClient = createKeybindingClient(remote);
       const dispose = render(
         () => (
-          <AgentApp
-            root={root}
-            client={client}
-            keybindingClient={keybindingClient}
-            browserClient={browserClient}
-            BrowserView={BrowserView}
-          />
+          // Hash-mode router shell. Routing is not yet wired into the app;
+          // the catch-all route just renders AgentApp exactly as before.
+          <HashRouter>
+            <Route
+              path="*"
+              component={() => (
+                <AgentApp
+                  root={root}
+                  client={client}
+                  keybindingClient={keybindingClient}
+                  browserClient={browserClient}
+                  BrowserView={BrowserView}
+                />
+              )}
+            />
+          </HashRouter>
         ),
         mount,
       );
