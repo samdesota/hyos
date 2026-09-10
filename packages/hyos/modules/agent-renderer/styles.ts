@@ -158,8 +158,19 @@ export const agentStyles = String.raw`
   .status-dot.cancelled { background: #c5a46d; }
   .agent-main { min-width: 0; min-height: 0; background: #171816; }
   .global-browser { display: flex; width: 100%; height: 100%; min-height: 0; }
-  .whiteboard-page { width: 100%; height: 100%; min-height: 0; overflow: hidden; background: #1d1e1b; }
-  .whiteboard-canvas { width: 100%; height: 100%; }
+  .whiteboard-page { position: relative; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: #1d1e1b; }
+  .whiteboard-canvas { position: relative; width: 100%; height: 100%; overflow: hidden; cursor: grab; touch-action: none; }
+  .whiteboard-canvas.panning { cursor: grabbing; }
+  .whiteboard-world { position: absolute; top: 0; left: 0; width: 0; height: 0; transform-origin: 0 0; will-change: transform; }
+  .whiteboard-zoom {
+    position: absolute; right: 12px; bottom: 12px; padding: 3px 9px;
+    border: 1px solid #343630; border-radius: 999px; background: #20211ecc;
+    color: #8e9087; font-size: 11px; line-height: 16px; user-select: none;
+  }
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    border: 0; clip: rect(0 0 0 0); clip-path: inset(50%); overflow: hidden; white-space: nowrap;
+  }
   .welcome { display: grid; place-items: center; width: 100%; height: 100%; padding: 38px; overflow-y: auto; }
   .welcome-card { width: min(760px, 100%); }
   .starter { padding: 18px; border: 1px solid #343630; border-radius: 16px; background: #20211e; }
