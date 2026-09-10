@@ -55,13 +55,13 @@ export const agentStyles = String.raw`
   .brand-new:hover { background: #3b3d37; color: #e3e2dc; }
   .brand-new-wrap { position: relative; margin-left: auto; }
   .brand-new-wrap.open .brand-new { background: #30312d; color: #e3e2dc; }
-  .create-overlay {
+  .modal-overlay {
     position: fixed; inset: 0; z-index: 60;
     display: flex; align-items: flex-start; justify-content: center;
     padding: 14vh 16px 16px;
     background: rgba(9, 10, 8, .55); backdrop-filter: blur(4px);
   }
-  .create-modal {
+  .modal-panel {
     display: flex; flex-direction: column; width: 380px; max-width: 100%;
     overflow: hidden; border: 1px solid #3b3d37; border-radius: 12px;
     background: #262722; box-shadow: 0 16px 48px rgba(0, 0, 0, .5);

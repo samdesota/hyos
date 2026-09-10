@@ -3,6 +3,7 @@ import { For, Show, createSignal, type Component, type JSX } from "solid-js";
 import type { AgentSessionSummary } from "../../capabilities/agent.js";
 import type { AppState } from "./app-state.js";
 import { globalTabLabel } from "./global-tabs.js";
+import { Modal } from "./Modal.js";
 import { groupSessionsByFolder } from "./sessions-model.js";
 
 const SessionFolderList: Component<{
@@ -135,85 +136,76 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
           </div>
         </div>
       </div>
-      <Show when={createOpen()}>
+      <Modal
+        open={createOpen()}
+        onClose={() => setCreateOpen(false)}
+        label="Create new"
+      >
         <div
-          class="create-overlay"
-          role="presentation"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setCreateOpen(false);
+          onKeyDown={(e) => {
+            const items = filteredCreateItems();
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setCreateIndex((i) =>
+                items.length ? (i + 1) % items.length : 0,
+              );
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setCreateIndex((i) =>
+                items.length ? (i - 1 + items.length) % items.length : 0,
+              );
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              const item = items[createIndex()];
+              if (item) runCreateItem(item);
+            }
           }}
         >
-          <div
-            class="create-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Create new"
-            onKeyDown={(e) => {
-              const items = filteredCreateItems();
-              if (e.key === "Escape") setCreateOpen(false);
-              else if (e.key === "ArrowDown") {
-                e.preventDefault();
-                setCreateIndex((i) =>
-                  items.length ? (i + 1) % items.length : 0,
-                );
-              } else if (e.key === "ArrowUp") {
-                e.preventDefault();
-                setCreateIndex((i) =>
-                  items.length ? (i - 1 + items.length) % items.length : 0,
-                );
-              } else if (e.key === "Enter") {
-                e.preventDefault();
-                const item = items[createIndex()];
-                if (item) runCreateItem(item);
-              }
+          <input
+            class="create-input"
+            type="text"
+            placeholder="Create new…"
+            aria-label="Search what to create"
+            autofocus
+            value={createQuery()}
+            onInput={(e) => {
+              setCreateQuery(e.currentTarget.value);
+              setCreateIndex(0);
             }}
-          >
-            <input
-              class="create-input"
-              type="text"
-              placeholder="Create new…"
-              aria-label="Search what to create"
-              autofocus
-              value={createQuery()}
-              onInput={(e) => {
-                setCreateQuery(e.currentTarget.value);
-                setCreateIndex(0);
-              }}
-            />
-            <div class="create-list" role="listbox">
-              <For each={filteredCreateItems()}>
-                {(item, index) => (
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={index() === createIndex()}
-                    class="create-item"
-                    classList={{ selected: index() === createIndex() }}
-                    title={
-                      item.id === "whiteboard"
-                        ? "Whiteboard (coming soon)"
-                        : undefined
-                    }
-                    onClick={() => runCreateItem(item)}
-                    onMouseEnter={() => setCreateIndex(index())}
-                  >
-                    <span class="create-item-icon" aria-hidden="true">
-                      {item.icon}
-                    </span>
-                    <span class="create-item-text">
-                      <strong>{item.label}</strong>
-                      <span class="create-item-hint">{item.hint}</span>
-                    </span>
-                  </button>
-                )}
-              </For>
-              <Show when={filteredCreateItems().length === 0}>
-                <div class="create-empty">No matches</div>
-              </Show>
-            </div>
+          />
+          <div class="create-list" role="listbox">
+            <For each={filteredCreateItems()}>
+              {(item, index) => (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={index() === createIndex()}
+                  class="create-item"
+                  classList={{ selected: index() === createIndex() }}
+                  title={
+                    item.id === "whiteboard"
+                      ? "Whiteboard (coming soon)"
+                      : undefined
+                  }
+                  onClick={() => runCreateItem(item)}
+                  onMouseEnter={() => setCreateIndex(index())}
+                >
+                  <span class="create-item-icon" aria-hidden="true">
+                    {item.icon}
+                  </span>
+                  <span class="create-item-text">
+                    <strong>{item.label}</strong>
+                    <span class="create-item-hint">{item.hint}</span>
+                  </span>
+                </button>
+              )}
+            </For>
+            <Show when={filteredCreateItems().length === 0}>
+              <div class="create-empty">No matches</div>
+            </Show>
           </div>
         </div>
-      </Show>
+      </Modal>
       <Show when={globalTabs().length > 0}>
         <div class="global-tabs" aria-label="Global tabs">
           <div class="global-tabs-head">
