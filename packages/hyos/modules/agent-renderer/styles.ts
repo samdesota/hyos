@@ -53,9 +53,31 @@ export const agentStyles = String.raw`
     text-align: left; background: transparent;
   }
   .new-session-icon { flex: none; width: 15px; height: 15px; color: #b5b7ac; }
-  .new-session:hover { background: #3b3d37; }
-  .new-session.open { background: #30312d; }
-  .new-session:hover, .folder-button:hover { background: #3b3d37; }
+  .new-session-chevron {
+    flex: none; width: 13px; height: 13px; margin-left: auto; color: #85877e;
+    transition: transform .15s;
+  }
+  .new-session-wrap { position: relative; }
+  .new-session-wrap.open .new-session { background: #30312d; }
+  .new-session-wrap.open .new-session-chevron { transform: rotate(180deg); }
+  .new-session-backdrop { position: fixed; inset: 0; z-index: 40; }
+  .new-session-menu {
+    position: absolute; top: calc(100% + 6px); left: -8px; right: -8px; z-index: 50;
+    display: flex; flex-direction: column; gap: 2px; padding: 6px;
+    border: 1px solid #3b3d37; border-radius: 10px;
+    background: #262722; box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+  }
+  .new-session-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; border: 0; border-radius: 8px;
+    color: #e3e2dc; background: transparent; cursor: pointer; text-align: left;
+    transition: background .12s;
+  }
+  .new-session-item:hover { background: #34362f; }
+  .new-session-item-icon { flex: none; width: 16px; color: #b5b7ac; text-align: center; }
+  .new-session-item-text { display: flex; flex-direction: column; min-width: 0; }
+  .new-session-item-text strong { font-size: 13px; font-weight: 600; }
+  .new-session-item-hint { color: #85877e; font-size: 11px; }
   .global-tabs { border-bottom: 1px solid #30312d; }
   .global-tabs-head {
     display: flex; align-items: center; justify-content: space-between;

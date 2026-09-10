@@ -1,4 +1,4 @@
-import { For, Show, type Component, type JSX } from "solid-js";
+import { For, Show, createSignal, type Component, type JSX } from "solid-js";
 
 import type { AgentSessionSummary } from "../../capabilities/agent.js";
 import type { AppState } from "./app-state.js";
@@ -52,6 +52,7 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
     newSession,
     setSessionArchived,
   } = props.app;
+  const [newMenuOpen, setNewMenuOpen] = createSignal(false);
 
   return (
     <aside class="agent-sidebar">
@@ -60,28 +61,90 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
           <span class="brand-mark">H</span>
           <strong>hyos</strong>
         </div>
-        <button
-          class="new-session"
-          classList={{ open: !activeSession() }}
-          type="button"
-          onClick={newSession}
+        <div
+          class="new-session-wrap"
+          classList={{ open: newMenuOpen() || !activeSession() }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setNewMenuOpen(false);
+          }}
         >
-          <svg
-            class="new-session-icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
+          <button
+            class="new-session"
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={newMenuOpen()}
+            onClick={() => setNewMenuOpen(!newMenuOpen())}
           >
-            {/* lucide square-pen */}
-            <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-            <path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" />
-          </svg>
-          New session
-        </button>
+            <svg
+              class="new-session-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              {/* lucide plus */}
+              <path d="M5 12h14" />
+              <path d="M12 5v14" />
+            </svg>
+            New
+            <svg
+              class="new-session-chevron"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              {/* lucide chevron-down */}
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+          <Show when={newMenuOpen()}>
+            <div
+              class="new-session-backdrop"
+              onClick={() => setNewMenuOpen(false)}
+            />
+            <div class="new-session-menu" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                class="new-session-item"
+                onClick={() => {
+                  setNewMenuOpen(false);
+                  newSession();
+                }}
+              >
+                <span class="new-session-item-icon" aria-hidden="true">
+                  ◉
+                </span>
+                <span class="new-session-item-text">
+                  <strong>Web</strong>
+                  <span class="new-session-item-hint">New agent session</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                class="new-session-item"
+                title="Whiteboard (coming soon)"
+                onClick={() => setNewMenuOpen(false)}
+              >
+                <span class="new-session-item-icon" aria-hidden="true">
+                  ▦
+                </span>
+                <span class="new-session-item-text">
+                  <strong>Whiteboard</strong>
+                  <span class="new-session-item-hint">Coming soon</span>
+                </span>
+              </button>
+            </div>
+          </Show>
+        </div>
       </div>
       <div class="global-tabs" aria-label="Global tabs">
         <div class="global-tabs-head">
