@@ -898,6 +898,18 @@ export function createAppState({
     }
   };
 
+  const renameSession = async (
+    sessionId: string,
+    title: string,
+  ): Promise<void> => {
+    setError(null);
+    try {
+      await client.execute({ type: "rename-session", sessionId, title });
+    } catch (value) {
+      showError(value);
+    }
+  };
+
   const implementNext = async (
     index: number,
     task: AgentPlanTask,
@@ -1073,6 +1085,7 @@ export function createAppState({
     sendMessage,
     implementNext,
     setSessionArchived,
+    renameSession,
   };
 }
 

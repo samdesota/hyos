@@ -636,3 +636,68 @@ test("session tabs round-trip through the agent provider", async () => {
     await database.close();
   }
 });
+
+test("rename-session command persists the new title and publishes sessions", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+  let sessionsPublished = 0;
+  let renamedPublished!: () => void;
+  const renamed = new Promise<void>((resolve) => {
+    renamedPublished = resolve;
+  });
+  const host = createAgentHost({
+    window: {} as never,
+    remote: {
+      publish(_capability: unknown, event: string, payload: unknown) {
+        if (event !== "sessions") return;
+        sessionsPublished += 1;
+        if (
+          (payload as { sessions: { title: string }[] }).sessions.some(
+            (session) => session.title === "Renamed by the user",
+          )
+        ) {
+          renamedPublished();
+        }
+      },
+    } as never,
+    browser: {
+      id: "browser",
+      version: 2,
+      call: async () => ({
+        generation: 0,
+        sequence: 0,
+        activeTabId: null,
+        tabs: [],
+      }),
+      subscribe: () => () => {},
+    } as never,
+    store,
+    providers: new Map(),
+  });
+
+  try {
+    await host.start();
+    const turn = await store.createSession({
+      prompt: "Build the dataflow engine",
+      folder: "/tmp/project",
+      providerId: "test",
+      modelId: "test-model",
+    });
+    const result = await host.provider.execute({
+      type: "rename-session",
+      sessionId: turn.sessionId,
+      title: "Renamed by the user",
+    });
+    assert.equal(result.type, "accepted");
+    assert.equal(
+      (await store.getSession(turn.sessionId)).title,
+      "Renamed by the user",
+    );
+    await renamed;
+    assert.ok(sessionsPublished >= 2); // initial publish + the rename
+  } finally {
+    await host.dispose();
+    await database.close();
+  }
+});

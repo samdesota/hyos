@@ -642,6 +642,14 @@ export function createAgentHost(options: {
       await store.setSessionArchived(command.sessionId, false);
       return { type: "accepted" };
     }
+    if (command.type === "rename-session") {
+      if (activeRuns.has(command.sessionId)) {
+        throw new Error("Stop the running turn before renaming this session.");
+      }
+      await store.getSession(command.sessionId);
+      await store.renameSession(command.sessionId, command.title);
+      return { type: "accepted" };
+    }
     if (command.type === "start-session") {
       await assertFolder(command.folder);
       const provider = providers.get(command.providerId);

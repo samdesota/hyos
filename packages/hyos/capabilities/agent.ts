@@ -200,7 +200,12 @@ export type AgentCommand =
     }>
   | Readonly<{ type: "cancel"; sessionId: AgentSessionId }>
   | Readonly<{ type: "archive-session"; sessionId: AgentSessionId }>
-  | Readonly<{ type: "unarchive-session"; sessionId: AgentSessionId }>;
+  | Readonly<{ type: "unarchive-session"; sessionId: AgentSessionId }>
+  | Readonly<{
+      type: "rename-session";
+      sessionId: AgentSessionId;
+      title: string;
+    }>;
 
 export type AgentCommandResult =
   | Readonly<{ type: "folder-selected"; folder: string | null }>
@@ -209,7 +214,7 @@ export type AgentCommandResult =
 
 export const agentCapability = defineRemoteCapability({
   id: "agent",
-  version: 3,
+  version: 4,
   methods: {
     execute: remoteMethod<
       readonly [command: AgentCommand],
