@@ -476,14 +476,8 @@ export function createAgentHost(options: {
     feed.ready = true;
     if (feed.dirty) scheduleFeedRefresh(feed);
     perfLog(`session-open:main-openFeed(${sessionId})`, perfNow() - startedAt);
-    perfLog(
-      `session-open:main-getSession(${sessionId})`,
-      getSessionMs,
-    );
-    perfLog(
-      `session-open:main-watch(${sessionId})`,
-      watchMs,
-    );
+    perfLog(`session-open:main-getSession(${sessionId})`, getSessionMs);
+    perfLog(`session-open:main-watch(${sessionId})`, watchMs);
     perfLog(
       `session-open:main-pageMessages(${sessionId}) [${page.messages.length} msgs]`,
       pageMessagesMs,
@@ -673,6 +667,17 @@ export function createAgentHost(options: {
       }
       await provider.prepare?.();
       const turn = await store.createSession(command);
+      // Best-effort title generation: the session starts under the raw prompt
+      // line from titleFromPrompt, then swaps to a model-written title when
+      // one arrives. Failures keep the placeholder.
+      const { generateTitle } = provider;
+      if (generateTitle) {
+        void generateTitle(command.prompt)
+          .then((title) =>
+            title ? store.renameSession(turn.sessionId, title) : undefined,
+          )
+          .catch(() => undefined);
+      }
       runTurn(
         turn.sessionId,
         turn.assistantMessageId,
@@ -694,10 +699,7 @@ export function createAgentHost(options: {
     if (!provider)
       throw new Error(`Unknown agent provider: ${session.providerId}`);
     await provider.prepare?.();
-    perfLog(
-      `send:prepare(${session.providerId})`,
-      perfNow() - sendStartedAt,
-    );
+    perfLog(`send:prepare(${session.providerId})`, perfNow() - sendStartedAt);
     const model = provider.summary.models.find(
       (candidate) => candidate.id === session.modelId,
     );
@@ -716,10 +718,7 @@ export function createAgentHost(options: {
       command.mode,
       command.reasoningEffort,
     );
-    perfLog(
-      `send:startTurn(${session.providerId})`,
-      perfNow() - sendStartedAt,
-    );
+    perfLog(`send:startTurn(${session.providerId})`, perfNow() - sendStartedAt);
     runTurn(
       turn.sessionId,
       turn.assistantMessageId,
