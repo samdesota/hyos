@@ -2,7 +2,7 @@ import { Show, type Component } from "solid-js";
 
 import type { BrowserClient } from "../browser-client/types.js";
 import type { BrowserViewModule } from "../browser-view/types.js";
-import type { AgentClient } from "./client.js";
+import type { AgentClient, KeybindingClient } from "./client.js";
 import { agentStyles } from "./styles.js";
 import { createAppState } from "./app-state.js";
 import { GlobalTabPage } from "./GlobalTabPage.js";
@@ -13,6 +13,7 @@ import { Sidebar } from "./Sidebar.js";
 type AgentAppProps = Readonly<{
   root: Document;
   client: AgentClient;
+  keybindingClient: KeybindingClient;
   browserClient: BrowserClient;
   BrowserView: BrowserViewModule["BrowserView"];
 }>;
@@ -21,6 +22,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   console.log("[DEBUG-boot-7f2c] agent-renderer component:construct");
   const app = createAppState({
     client: props.client,
+    keybindingClient: props.keybindingClient,
     browserClient: props.browserClient,
   });
   const { activeSession, focusedGlobalTab } = app;

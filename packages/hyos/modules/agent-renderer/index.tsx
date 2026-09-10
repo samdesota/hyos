@@ -4,7 +4,7 @@ import type { RendererRemoteCapabilities } from "../../remote-capabilities.js";
 import type { BrowserClient } from "../browser-client/types.js";
 import type { BrowserViewModule } from "../browser-view/types.js";
 import { AgentApp } from "./AgentApp.js";
-import { createAgentClient } from "./client.js";
+import { createAgentClient, createKeybindingClient } from "./client.js";
 
 const { defineModule, registerModule } = globalThis.PrototypeModules;
 
@@ -27,11 +27,13 @@ registerModule(
       const mount = root.querySelector<HTMLElement>("#app");
       if (!mount) throw new Error("Missing Solid application mount");
       const client = createAgentClient(remote);
+      const keybindingClient = createKeybindingClient(remote);
       const dispose = render(
         () => (
           <AgentApp
             root={root}
             client={client}
+            keybindingClient={keybindingClient}
             browserClient={browserClient}
             BrowserView={BrowserView}
           />
@@ -41,6 +43,7 @@ registerModule(
 
       ctx.provide("agent.ui", { client });
       ctx.effect(() => () => client.dispose());
+      ctx.effect(() => () => keybindingClient.dispose());
       ctx.effect(() => dispose);
     },
   }),

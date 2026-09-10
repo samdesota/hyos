@@ -1,4 +1,11 @@
-import { For, Show, createSignal, type Component, type JSX } from "solid-js";
+import {
+  For,
+  Show,
+  createEffect,
+  createSignal,
+  type Component,
+  type JSX,
+} from "solid-js";
 
 import type { AgentSessionSummary } from "../../capabilities/agent.js";
 import type { AppState } from "./app-state.js";
@@ -51,10 +58,20 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
     selectSession,
     newSession,
     setSessionArchived,
+    createOpen,
+    setCreateOpen,
   } = props.app;
-  const [createOpen, setCreateOpen] = createSignal(false);
   const [createQuery, setCreateQuery] = createSignal("");
   const [createIndex, setCreateIndex] = createSignal(0);
+
+  // Reset the search/selection each time the modal opens, whether via the
+  // "+" button or the app-level Cmd/Ctrl+T accelerator.
+  createEffect(() => {
+    if (createOpen()) {
+      setCreateQuery("");
+      setCreateIndex(0);
+    }
+  });
 
   const createItems: readonly {
     id: string;
@@ -93,8 +110,6 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
     );
   };
   const openCreateModal = (): void => {
-    setCreateQuery("");
-    setCreateIndex(0);
     setCreateOpen(true);
   };
   const runCreateItem = (item: (typeof createItems)[number]): void => {

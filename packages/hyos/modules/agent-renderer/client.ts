@@ -12,6 +12,11 @@ import {
   type AgentSessionTabs,
   type AgentSessionTabsChange,
 } from "../../capabilities/agent.js";
+import {
+  keybindingCapability,
+  type KeybindingAccelerator,
+  type KeybindingAction,
+} from "../../capabilities/keybinding.js";
 import type {
   RemoteConsumer,
   RendererRemoteCapabilities,
@@ -22,6 +27,44 @@ export type AgentMessageFeed = Readonly<{
   subscribe(listener: (change: AgentMessageChange) => void): () => void;
   close(): void;
 }>;
+
+/** Renderer handle over the `keybinding` capability: app-level accelerators. */
+export interface KeybindingClient {
+  register(binding: {
+    action: KeybindingAction;
+    accelerator: KeybindingAccelerator;
+  }): Promise<void>;
+  unregister(action: KeybindingAction): Promise<void>;
+  onTriggered(
+    listener: (event: { action: KeybindingAction }) => void,
+  ): () => void;
+  dispose(): void;
+}
+
+export function createKeybindingClient(
+  remote: RendererRemoteCapabilities,
+): KeybindingClient {
+  const keybinding: RemoteConsumer<typeof keybindingCapability> =
+    remote.consume(keybindingCapability);
+  let listener: ((event: { action: KeybindingAction }) => void) | null = null;
+  const unsubscribe = keybinding.subscribe("triggered", (payload) =>
+    listener?.(payload),
+  );
+  return {
+    register: (binding) => keybinding.call("register", binding),
+    unregister: (action) => keybinding.call("unregister", action),
+    onTriggered(next) {
+      listener = next;
+      return () => {
+        if (listener === next) listener = null;
+      };
+    },
+    dispose() {
+      unsubscribe();
+      listener = null;
+    },
+  };
+}
 
 export interface AgentClient {
   execute(command: AgentCommand): Promise<AgentCommandResult>;

@@ -16,7 +16,11 @@ import type {
   TabId,
 } from "../../capabilities/browser.js";
 import type { BrowserClient } from "../browser-client/types.js";
-import type { AgentClient, AgentMessageFeed } from "./client.js";
+import type {
+  AgentClient,
+  AgentMessageFeed,
+  KeybindingClient,
+} from "./client.js";
 import { createAutoScrollController } from "./auto-scroll.js";
 import { perfLog, perfNow, timeAsync } from "./perf-time.js";
 import { emptyBrowserState } from "./browser-tab.js";
@@ -62,6 +66,7 @@ import { sessionFromHash, syncHashToSession } from "./session-route.js";
 
 export type AppStateProps = Readonly<{
   client: AgentClient;
+  keybindingClient: KeybindingClient;
   browserClient: BrowserClient;
 }>;
 
@@ -71,7 +76,11 @@ export type AppStateProps = Readonly<{
  * Created once inside the app root (its effects and cleanup register
  * against the owning component) and threaded down to route components.
  */
-export function createAppState({ client, browserClient }: AppStateProps) {
+export function createAppState({
+  client,
+  keybindingClient,
+  browserClient,
+}: AppStateProps) {
   const [providers, setProviders] = createSignal<
     readonly AgentProviderSummary[]
   >([]);
@@ -103,6 +112,25 @@ export function createAppState({ client, browserClient }: AppStateProps) {
   >({});
   const [followupMenuOpen, setFollowupMenuOpen] = createSignal(false);
   const [folderMenuOpen, setFolderMenuOpen] = createSignal(false);
+
+  // Create-modal open state lives app-wide so app-level accelerators can
+  // drive it, not just the sidebar button. Register Cmd/Ctrl+T once; the
+  // keybinding.main module intercepts the keystroke (even inside browser
+  // tabs) and reports it back as a `triggered` event.
+  const [createOpen, setCreateOpen] = createSignal(false);
+  const createOpenAction = "create.open";
+  void keybindingClient
+    .register({ action: createOpenAction, accelerator: "CmdOrCtrl+T" })
+    .catch((error) => console.error("[keybinding] register failed", error));
+  const unsubscribeCreateTriggered = keybindingClient.onTriggered(
+    ({ action }) => {
+      if (action === createOpenAction) setCreateOpen(true);
+    },
+  );
+  onCleanup(() => {
+    unsubscribeCreateTriggered();
+    void keybindingClient.unregister(createOpenAction).catch(() => undefined);
+  });
   const [folderOrder, setFolderOrder] = createSignal<readonly string[] | null>(
     loadFolderOrder(),
   );
@@ -994,6 +1022,8 @@ export function createAppState({ client, browserClient }: AppStateProps) {
     setFollowupMenuOpen,
     folderMenuOpen,
     setFolderMenuOpen,
+    createOpen,
+    setCreateOpen,
     archivedOpen,
     setArchivedOpen,
     selectedProvider,
