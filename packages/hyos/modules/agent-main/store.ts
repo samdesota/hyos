@@ -543,6 +543,17 @@ const setStatusDetailCommand = hydb.command({
   },
 });
 
+const reorderSessionsCommand = hydb.command({
+  input: z.object({ orderedIds: z.array(z.string()) }),
+  async handler(transaction, input) {
+    for (const [index, sessionId] of input.orderedIds.entries()) {
+      await transaction.update(agentSessions, [sessionId], {
+        order: index,
+      });
+    }
+  },
+});
+
 const recoverSessionCommand = hydb.command({
   input: z.object({ sessionId: z.string(), error: z.string(), now: z.date() }),
   async handler(transaction, input) {
@@ -683,6 +694,12 @@ export interface AgentStore {
   getSession(id: string): Promise<AgentSessionRecord>;
   setSessionArchived(sessionId: string, archived: boolean): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
+  /**
+   * Persist a manual sidebar order: each id gets its list index as rank.
+   * Sessions not listed keep their existing rank; never-ordered sessions
+   * (null rank) still sort above manually ordered ones, newest first.
+   */
+  reorderSessions(orderedIds: readonly string[]): Promise<void>;
   setStatusDetail(sessionId: string, statusDetail: string): Promise<void>;
   listSessions(): Promise<AgentSessionSummary[]>;
   pageMessages(
@@ -979,6 +996,12 @@ export function createAgentStore(database: Database): AgentStore {
         now: now(),
       });
     },
+    async reorderSessions(orderedIds) {
+      if (orderedIds.length === 0) return;
+      await database.execute(reorderSessionsCommand, {
+        orderedIds: [...orderedIds],
+      });
+    },
     async setStatusDetail(sessionId, statusDetail) {
       await database.execute(setStatusDetailCommand, {
         sessionId,
@@ -993,7 +1016,16 @@ export function createAgentStore(database: Database): AgentStore {
           .orderBy((session) => [session.createdAt.desc(), session.id.asc()])
           .many(),
       );
-      return rows.map(sessionSummary);
+      // Manual order wins: ranked sessions sort by rank; sessions never
+      // manually ordered (null rank) stay on top, newest first — matching
+      // the pre-order behavior for brand-new sessions.
+      const ordered = rows.toSorted((left, right) => {
+        if (left.order === null && right.order === null) return 0;
+        if (left.order === null) return -1;
+        if (right.order === null) return 1;
+        return left.order - right.order;
+      });
+      return ordered.map(sessionSummary);
     },
     async pageMessages(sessionId, before, count) {
       const startedAt = perfNow();

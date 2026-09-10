@@ -40,6 +40,8 @@ export const agentSessions = hydb.table(
     lastError: text(),
     plan: text(),
     tabs: text(),
+    // Manual sidebar rank (null = never manually ordered; those sort newest-first).
+    order: integer(),
     archivedAt: timestamp(),
     createdAt: timestamp().notNull(),
     updatedAt: timestamp().notNull(),

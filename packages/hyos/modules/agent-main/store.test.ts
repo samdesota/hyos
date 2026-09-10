@@ -525,3 +525,79 @@ test("watchSessionTabs fires with decoded strips as they are saved", async () =>
     await database.close();
   }
 });
+
+test("reorderSessions persists manual order; unordered sessions stay newest-first on top", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const first = await store.createSession({
+      prompt: "First session",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+    const second = await store.createSession({
+      prompt: "Second session",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+    const third = await store.createSession({
+      prompt: "Third session",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+
+    // Default: newest first.
+    const titles = (sessions: Awaited<ReturnType<typeof store.listSessions>>) =>
+      sessions.map(({ title }) => title);
+    assert.deepEqual(titles(await store.listSessions()), [
+      "Third session",
+      "Second session",
+      "First session",
+    ]);
+
+    // Manual order: move the oldest to the front; the never-ranked middle
+    // session stays on top, ahead of everything with a rank.
+    await store.reorderSessions([first.sessionId, third.sessionId]);
+    const ordered = await store.listSessions();
+    assert.deepEqual(titles(ordered), [
+      "Second session",
+      "First session",
+      "Third session",
+    ]);
+
+    // A session created after a reorder has no rank yet: it lands on top.
+    const fourth = await store.createSession({
+      prompt: "Fourth session",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+    assert.deepEqual(titles(await store.listSessions()), [
+      "Fourth session",
+      "Second session",
+      "First session",
+      "Third session",
+    ]);
+
+    // Re-ranking everything (the client always sends the full list) rewrites ranks.
+    await store.reorderSessions([
+      fourth.sessionId,
+      second.sessionId,
+      first.sessionId,
+      third.sessionId,
+    ]);
+    assert.deepEqual(titles(await store.listSessions()), [
+      "Fourth session",
+      "Second session",
+      "First session",
+      "Third session",
+    ]);
+  } finally {
+    await database.close();
+  }
+});
