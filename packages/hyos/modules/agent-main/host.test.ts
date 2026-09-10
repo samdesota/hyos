@@ -642,15 +642,21 @@ test("a finished run summarizes its outcome into the sidebar status line", async
       "the outcome summary",
     );
     assert.equal(detail, "Fixed renderer");
-    // Turn start got the prompt; run end got the agent's response.
+    // Turn start got the bare prompt; run end got the framed summary input:
+    // the triggering user prompt plus the agent's full response.
     assert.deepEqual(detailCalls[0], {
       prompt: "Fix the renderer",
       previousResponse: null,
     });
-    assert.deepEqual(detailCalls[1], {
-      prompt: "Implemented the requested change.",
-      previousResponse: null,
-    });
+    assert.match(detailCalls[1].prompt, /The user asked:\nFix the renderer/);
+    assert.match(
+      detailCalls[1].prompt,
+      /The agent's final response was:\nImplemented the requested change\./,
+    );
+    assert.match(
+      detailCalls[1].prompt,
+      /actually did in 3-5 words, past tense/,
+    );
   } finally {
     await host.dispose();
     await database.close();

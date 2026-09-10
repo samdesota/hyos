@@ -584,7 +584,7 @@ export function createAgentHost(options: {
           result.providerSessionId,
           result.usage ?? null,
         );
-        summarizeOutcome(sessionId, provider, responseText);
+        summarizeOutcome(sessionId, provider, prompt, responseText);
         if (session.mode === "incremental") {
           // The plan block in the final response is the plan of record;
           // without one, the persisted plan carries over unchanged.
@@ -608,7 +608,7 @@ export function createAgentHost(options: {
           "failed",
           cancelled ? "Cancelled" : errorMessage(error),
         );
-        summarizeOutcome(sessionId, provider, responseText);
+        summarizeOutcome(sessionId, provider, prompt, responseText);
       } finally {
         activeRuns.delete(sessionId);
       }
@@ -643,21 +643,34 @@ export function createAgentHost(options: {
 
   /**
    * Best-effort outcome summary once a run ends, reusing the same one-shot
-   * capability and staleness token as the turn-start description: the tail of
-   * the agent's response replaces the sidebar line with what was done. A
-   * result arriving after a newer turn has started is dropped, and failures
-   * keep the turn-start description.
+   * capability and staleness token as the turn-start description: the
+   * triggering user prompt plus the agent's full final response (prose only —
+   * reasoning and tool activity never reach responseText) replace the sidebar
+   * line with what was actually done. A result arriving after a newer turn
+   * has started is dropped, and failures keep the turn-start description.
    */
   const summarizeOutcome = (
     sessionId: string,
     provider: AgentProvider,
+    prompt: string,
     responseText: string,
   ) => {
     const { generateStatusDetail: generate } = provider;
     if (!generate || !responseText.trim()) return;
+    // Keep the full response, bounded generously so a huge reply can't blow
+    // up the one-shot call: head and tail survive, the middle is elided.
+    const framedResponse =
+      responseText.length <= 12_000
+        ? responseText
+        : `${responseText.slice(0, 6000)}\n[…]\n${responseText.slice(-6000)}`;
     const token = {};
     statusDetailTokens.set(sessionId, token);
-    void generate(responseText.slice(-1200), null)
+    void generate(
+      `The user asked:\n${prompt}\n\n` +
+        `The agent's final response was:\n${framedResponse}\n\n` +
+        `Describe what the agent actually did in 3-5 words, past tense.`,
+      null,
+    )
       .then((detail) => {
         if (!detail || statusDetailTokens.get(sessionId) !== token) return;
         return store.setStatusDetail(sessionId, detail);
