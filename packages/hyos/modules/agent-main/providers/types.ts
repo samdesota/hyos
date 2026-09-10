@@ -65,6 +65,13 @@ export type AgentRunSink = Readonly<{
 export interface AgentProvider {
   readonly summary: AgentProviderSummary;
   prepare?(): Promise<void>;
+  /**
+   * Generates a short 3-5 word session title from the user's first prompt.
+   * Best-effort: resolves to null on any failure (no key, request error,
+   * empty reply) so the caller keeps the placeholder title. Absent on
+   * providers that cannot make cheap one-shot calls.
+   */
+  generateTitle?(prompt: string, signal?: AbortSignal): Promise<string | null>;
   run(
     input: AgentRunInput,
     sink: AgentRunSink,

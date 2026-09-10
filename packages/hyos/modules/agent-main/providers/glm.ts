@@ -140,6 +140,26 @@ function gatewayModel(modelId: string): GatewayModel | null {
   return GATEWAY_MODELS.find((model) => model.id === modelId) ?? null;
 }
 
+/** Cheap fast model used for one-shot session title generation. */
+const TITLE_MODEL = "zai/glm-5.3-flash";
+
+/** Give up on title generation quickly; it must never delay the turn. */
+const TITLE_TIMEOUT_MS = 10_000;
+
+const TITLE_SYSTEM_PROMPT =
+  "You write short conversation titles. Given the user's first message, reply " +
+  "with a 3-5 word title that captures the task. Reply with the title only: " +
+  "no quotes, no trailing punctuation, no explanation.";
+
+/** Collapse a model reply to a single tidy title line, or "" when unusable. */
+function cleanGeneratedTitle(raw: string): string {
+  const firstLine = raw.trim().split(/\r?\n/, 1)[0] ?? "";
+  return firstLine
+    .replace(/^["'“”‘’`*#\s]+/, "")
+    .replace(/["'“”‘’`*#\s]+$/, "")
+    .trim();
+}
+
 function toolsPayload(
   tools: readonly OpenCodeTool[],
 ): readonly Record<string, unknown>[] {
@@ -230,6 +250,42 @@ export function createGlmProvider(
     },
     async prepare() {
       await apiKey();
+    },
+    async generateTitle(prompt, signal) {
+      try {
+        const key = await apiKey();
+        const response = await request(`${baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${key}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            model: TITLE_MODEL,
+            messages: [
+              { role: "system", content: TITLE_SYSTEM_PROMPT },
+              { role: "user", content: prompt },
+            ],
+            stream: false,
+            reasoning: { effort: "low" },
+            max_tokens: 64,
+          }),
+          signal: AbortSignal.any([
+            ...(signal ? [signal] : []),
+            AbortSignal.timeout(TITLE_TIMEOUT_MS),
+          ]),
+        });
+        if (!response.ok) return null;
+        const payload = (await response.json()) as {
+          choices?: readonly { message?: { content?: string } }[];
+        };
+        return (
+          cleanGeneratedTitle(payload.choices?.[0]?.message?.content ?? "") ||
+          null
+        );
+      } catch {
+        return null;
+      }
     },
     async run(input, sink: AgentRunSink, signal) {
       const key = await apiKey();
