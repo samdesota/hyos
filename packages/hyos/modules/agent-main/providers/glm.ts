@@ -153,9 +153,10 @@ const TITLE_SYSTEM_PROMPT =
 
 const STATUS_DETAIL_SYSTEM_PROMPT =
   "You write short status lines for a coding agent's sidebar. Given the task " +
-  "the agent is starting, reply with a 3-5 word phrase describing the work " +
-  "in the imperative, e.g. 'Fix login race condition'. Reply with the phrase " +
-  "only: no quotes, no trailing punctuation, no explanation.";
+  "the agent is working on — either about to start or just finished — reply " +
+  "with a 3-5 word phrase describing the work, e.g. 'Fix login race " +
+  "condition'. Reply with the phrase only: no quotes, no trailing " +
+  "punctuation, no explanation.";
 
 /** Collapse a model reply to a single tidy title line, or "" when unusable. */
 function cleanGeneratedTitle(raw: string): string {

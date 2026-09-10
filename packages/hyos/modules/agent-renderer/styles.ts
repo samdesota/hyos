@@ -159,8 +159,15 @@ export const agentStyles = String.raw`
   }
   @keyframes session-spin { to { transform: rotate(360deg); } }
   .session-status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .session-status-text.ready::before,
+  .session-status-text.failed::before,
+  .session-status-text.cancelled::before {
+    content: ""; display: inline-block; flex: none; width: 5px; height: 5px;
+    border-radius: 50%; background: currentColor; margin-right: 6px;
+    vertical-align: 1px;
+  }
   .session-status-text.running { color: #d9ff62; }
-  .session-status-text.ready { color: #b6d97f; }
+  .session-status-text.ready { color: #6ea8fe; }
   .session-status-text.failed { color: #ff6f61; }
   .session-status-text.cancelled { color: #c5a46d; }
   .agent-main { min-width: 0; min-height: 0; background: #171816; }

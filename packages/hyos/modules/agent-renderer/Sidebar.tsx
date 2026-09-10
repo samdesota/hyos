@@ -132,8 +132,9 @@ const SessionTitle: Component<{
 /**
  * Session status line: nothing by default, a spinner plus the work
  * description while the session runs — "Working..." until the model-written
- * description arrives — and the finished description tinted by the run's
- * outcome once it ends. It stays until the next turn starts.
+ * description arrives — and, once the run ends, a dot plus the outcome
+ * summary (replacing the turn-start description), tinted blue on success.
+ * It stays until the next turn starts.
  */
 const SessionMeta: Component<{ session: AgentSessionSummary }> = (props) => (
   <span class="session-meta">

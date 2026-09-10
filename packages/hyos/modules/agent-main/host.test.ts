@@ -582,6 +582,81 @@ test("a finished incremental turn persists its plan and replays it on the next t
   }
 });
 
+test("a finished run summarizes its outcome into the sidebar status line", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+  const detailCalls: { prompt: string; previousResponse: string | null }[] = [];
+  const provider: AgentProvider = {
+    summary: {
+      id: "test",
+      label: "Test",
+      models: [{ id: "test-model", label: "Test model" }],
+    },
+    async run(_input, sink) {
+      await sink.response("Implemented the requested change.");
+      return { providerSessionId: null };
+    },
+    async generateStatusDetail(prompt, previousResponse) {
+      detailCalls.push({ prompt, previousResponse });
+      return detailCalls.length === 1 ? "Starting the fix" : "Fixed renderer";
+    },
+  };
+  const host = createAgentHost({
+    window: {} as never,
+    remote: { publish() {} } as never,
+    browser: {
+      id: "browser",
+      version: 2,
+      call: async () => ({
+        generation: 0,
+        sequence: 0,
+        activeTabId: null,
+        tabs: [],
+      }),
+      subscribe: () => () => {},
+    } as never,
+    store,
+    providers: new Map([[provider.summary.id, provider]]),
+  });
+
+  try {
+    await host.start();
+    const created = await host.provider.execute({
+      type: "start-session",
+      prompt: "Fix the renderer",
+      folder: "/tmp",
+      providerId: "test",
+      modelId: "test-model",
+    });
+    assert.equal(created.type, "session-started");
+    if (created.type !== "session-started") return;
+
+    // The turn-start description is replaced by the run-end outcome summary.
+    const detail = await waitFor(
+      async () =>
+        (await store.getSession(created.sessionId)).statusDetail ===
+        "Fixed renderer"
+          ? "Fixed renderer"
+          : null,
+      "the outcome summary",
+    );
+    assert.equal(detail, "Fixed renderer");
+    // Turn start got the prompt; run end got the agent's response.
+    assert.deepEqual(detailCalls[0], {
+      prompt: "Fix the renderer",
+      previousResponse: null,
+    });
+    assert.deepEqual(detailCalls[1], {
+      prompt: "Implemented the requested change.",
+      previousResponse: null,
+    });
+  } finally {
+    await host.dispose();
+    await database.close();
+  }
+});
+
 test("session tabs round-trip through the agent provider", async () => {
   const storage = await memoryStorage({ schema: agentSchema });
   const database = await hydb.database({ schema: agentSchema, storage });
