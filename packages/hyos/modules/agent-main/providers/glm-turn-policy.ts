@@ -11,8 +11,15 @@ export const incrementalReminder =
 export const incrementalImplementRule =
   "Incremental mode: finish every implement turn with a git commit. Once this iteration's changes are verified, stage the files you touched and create a concise commit describing the change. Treat this as the user's standing authorization to run git add and git commit in this turn — but never push, and never commit when the turn was only read-only (investigate or conversation).";
 
-export const incrementalPlanRule =
-  'Incremental mode: maintain the session plan as a list of tasks. End every final response with the complete, updated plan in a fenced "hyos-plan" code block (info string hyos-plan), using task-list syntax "- [x] done task" and "- [ ] pending task". Rewrite the whole block each turn so it always reflects the true state of the plan, and mark a task done only after its change is verified.';
+export const incrementalPlanRule = `Incremental mode: maintain the session plan as a list of tasks. End every final response with the complete, updated plan in a fenced "hyos-plan" code block (info string hyos-plan), using task-list syntax "- [x] done task" and "- [ ] pending task". Rewrite the whole block each turn so it always reflects the true state of the plan, and mark a task done only after its change is verified.
+
+Example of the exact required format:
+
+\`\`\`hyos-plan
+- [x] Add plan parser
+- [ ] Add parser tests
+- [ ] Verify typecheck passes
+\`\``;
 
 export function glmTurnPolicy(
   input: AgentRunInput,
