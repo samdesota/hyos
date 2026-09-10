@@ -31,6 +31,18 @@ export function updateWhiteboardCard(
   return cards.map((card) => (card.id === id ? { ...card, markdown } : card));
 }
 
+/** Move one card to new world coordinates, leaving the rest untouched. */
+export function moveWhiteboardCard(
+  cards: readonly WhiteboardCard[],
+  id: string,
+  x: number,
+  y: number,
+): readonly WhiteboardCard[] {
+  const matching = cards.some((card) => card.id === id);
+  if (!matching) return cards;
+  return cards.map((card) => (card.id === id ? { ...card, x, y } : card));
+}
+
 /** Drop a card (used when an edit commits as empty). */
 export function removeWhiteboardCard(
   cards: readonly WhiteboardCard[],

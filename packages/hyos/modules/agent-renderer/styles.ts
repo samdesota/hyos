@@ -179,9 +179,10 @@ export const agentStyles = String.raw`
   .whiteboard-card {
     position: absolute; width: 240px; padding: 10px 12px;
     border: 1px solid #343630; border-radius: 12px; background: #20211e;
-    box-shadow: 0 2px 10px #00000055; cursor: text;
+    box-shadow: 0 2px 10px #00000055; cursor: grab;
   }
-  .whiteboard-card.editing { border-color: #b2cb8c; }
+  .whiteboard-card.dragging { cursor: grabbing; }
+  .whiteboard-card.editing { border-color: #b2cb8c; cursor: text; }
   .whiteboard-card-body { color: #f2f0ea; font-size: 13px; line-height: 1.5; word-wrap: break-word; }
   .whiteboard-card-body > :first-child { margin-top: 0; }
   .whiteboard-card-body > :last-child { margin-bottom: 0; }

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   addWhiteboardCard,
   isBlankCardMarkdown,
+  moveWhiteboardCard,
   removeWhiteboardCard,
   updateWhiteboardCard,
   type WhiteboardCard,
@@ -39,6 +40,15 @@ test("removing a card keeps the rest", () => {
   const cards = [card("a"), card("b")];
   assert.deepEqual(removeWhiteboardCard(cards, "a"), [cards[1]]);
   assert.deepEqual(removeWhiteboardCard(cards, "zzz"), cards);
+});
+
+test("moving a card rewrites only its position", () => {
+  const cards = [card("a"), card("b", { x: -5, y: 100 })];
+  const moved = moveWhiteboardCard(cards, "b", 40, -7);
+  assert.deepEqual(moved[1], { id: "b", x: 40, y: -7, markdown: "# b" });
+  assert.equal(moved[0], cards[0]);
+  // Unknown ids leave the list untouched.
+  assert.equal(moveWhiteboardCard(cards, "zzz", 0, 0), cards);
 });
 
 test("blank markdown is detected for delete-on-empty commits", () => {
