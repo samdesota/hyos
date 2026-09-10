@@ -515,6 +515,16 @@ const setSessionArchivedCommand = hydb.command({
   },
 });
 
+const renameSessionCommand = hydb.command({
+  input: z.object({ sessionId: z.string(), title: z.string(), now: z.date() }),
+  async handler(transaction, input) {
+    await transaction.update(agentSessions, [input.sessionId], {
+      title: input.title,
+      updatedAt: input.now,
+    });
+  },
+});
+
 const recoverSessionCommand = hydb.command({
   input: z.object({ sessionId: z.string(), error: z.string(), now: z.date() }),
   async handler(transaction, input) {
@@ -647,6 +657,7 @@ export interface AgentStore {
   ): Promise<void>;
   getSession(id: string): Promise<AgentSessionRecord>;
   setSessionArchived(sessionId: string, archived: boolean): Promise<void>;
+  renameSession(sessionId: string, title: string): Promise<void>;
   listSessions(): Promise<AgentSessionSummary[]>;
   pageMessages(
     sessionId: string,
@@ -897,6 +908,13 @@ export function createAgentStore(database: Database): AgentStore {
       await database.execute(setSessionArchivedCommand, {
         sessionId,
         archivedAt: archived ? now() : null,
+        now: now(),
+      });
+    },
+    async renameSession(sessionId, title) {
+      await database.execute(renameSessionCommand, {
+        sessionId,
+        title: titleFromPrompt(title),
         now: now(),
       });
     },

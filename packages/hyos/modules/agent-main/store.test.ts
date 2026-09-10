@@ -97,6 +97,75 @@ test("agent sessions persist chunked messages and publish HyDB changes", async (
   }
 });
 
+test("renameSession updates the title and publishes the change", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Investigate the failing test",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+    const session = await store.getSession(turn.sessionId);
+    assert.equal(session.title, "Investigate the failing test");
+
+    let observedChange = false;
+    const changed = new Promise<void>((resolve) => {
+      let unsubscribe: () => void = () => undefined;
+      unsubscribe = store.watchSessions(() => {
+        if (!observedChange) return;
+        unsubscribe();
+        resolve();
+      });
+    });
+
+    observedChange = true;
+    await store.renameSession(turn.sessionId, "Fix flaky gateway test");
+    await changed;
+
+    const renamed = await store.getSession(turn.sessionId);
+    assert.equal(renamed.title, "Fix flaky gateway test");
+    const sessions = await store.listSessions();
+    assert.equal(sessions[0].title, "Fix flaky gateway test");
+  } finally {
+    await database.close();
+  }
+});
+
+test("renameSession trims and clamps long or multi-line titles", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Prompt",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+    await store.renameSession(
+      turn.sessionId,
+      "  Generated title line\n  second line ignored  ",
+    );
+    const session = await store.getSession(turn.sessionId);
+    assert.equal(session.title, "Generated title line");
+
+    const long = "x".repeat(120);
+    await store.renameSession(turn.sessionId, long);
+    const clamped = await store.getSession(turn.sessionId);
+    // titleFromPrompt keeps 69 characters plus the ellipsis.
+    assert.equal(clamped.title.length, 70);
+    assert.ok(clamped.title.startsWith("x".repeat(69)));
+    assert.ok(clamped.title.endsWith("…"));
+  } finally {
+    await database.close();
+  }
+});
+
 test("provider session checkpoints survive an interrupted run", async () => {
   const storage = await memoryStorage({ schema: agentSchema });
   const database = await hydb.database({ schema: agentSchema, storage });
