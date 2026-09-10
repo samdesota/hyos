@@ -84,7 +84,6 @@ export const agentStyles = String.raw`
     padding-right: 10px;
   }
   .global-tabs-label { flex: 1; }
-  .global-tab-add { margin: 4px 0; }
   .global-tab-list { display: flex; flex-direction: column; gap: 2px; padding: 0 8px 8px; }
   .global-tab-row { display: flex; align-items: center; border-radius: 8px; }
   .global-tab-row:hover { background: #292a27; }

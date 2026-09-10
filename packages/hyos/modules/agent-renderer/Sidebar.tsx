@@ -163,20 +163,11 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
           </Show>
         </div>
       </div>
-      <div class="global-tabs" aria-label="Global tabs">
-        <div class="global-tabs-head">
-          <span class="session-label global-tabs-label">Tabs</span>
-          <button
-            type="button"
-            class="side-tab-add global-tab-add"
-            aria-label="Open global browser tab"
-            title="Open global browser tab"
-            onClick={openGlobalTab}
-          >
-            +
-          </button>
-        </div>
-        <Show when={globalTabs().length > 0}>
+      <Show when={globalTabs().length > 0}>
+        <div class="global-tabs" aria-label="Global tabs">
+          <div class="global-tabs-head">
+            <span class="session-label global-tabs-label">Tabs</span>
+          </div>
           <div class="global-tab-list" role="tablist">
             <For each={globalTabs()}>
               {(tab) => (
@@ -214,8 +205,8 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
               )}
             </For>
           </div>
-        </Show>
-      </div>
+        </div>
+      </Show>
       <div class="session-label">Sessions</div>
       <div class="session-list" id="agent-session-list">
         <SessionFolderList sessions={activeSessions()}>
