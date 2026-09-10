@@ -130,21 +130,29 @@ const SessionTitle: Component<{
 };
 
 /**
- * Session status line: nothing by default, a spinner plus the short work
- * description while the session runs, and the finished description tinted
- * by the run's outcome once it ends. It stays until the next turn starts.
+ * Session status line: nothing by default, a spinner plus the work
+ * description while the session runs — "Working..." until the model-written
+ * description arrives — and the finished description tinted by the run's
+ * outcome once it ends. It stays until the next turn starts.
  */
 const SessionMeta: Component<{ session: AgentSessionSummary }> = (props) => (
   <span class="session-meta">
-    <Show when={props.session.status === "running"}>
+    <Show
+      when={props.session.status === "running"}
+      fallback={
+        <Show when={props.session.statusDetail}>
+          {(detail) => (
+            <span class={`session-status-text ${props.session.status}`}>
+              {detail()}
+            </span>
+          )}
+        </Show>
+      }
+    >
       <i class="session-spinner" aria-label="Running" />
-    </Show>
-    <Show when={props.session.statusDetail}>
-      {(detail) => (
-        <span class={`session-status-text ${props.session.status}`}>
-          {detail()}
-        </span>
-      )}
+      <span class="session-status-text running">
+        {props.session.statusDetail ?? "Working..."}
+      </span>
     </Show>
   </span>
 );

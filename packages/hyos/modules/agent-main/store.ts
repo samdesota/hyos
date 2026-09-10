@@ -25,7 +25,6 @@ import {
   type StoredAgentMessage,
   type StoredAgentMessageChunk,
 } from "./model.js";
-import { describeWork } from "./work-description.js";
 
 const sessionStatusSchema = z.enum(["running", "ready", "failed", "cancelled"]);
 const messageStatusSchema = z.enum(["streaming", "complete", "failed"]);
@@ -817,7 +816,7 @@ export function createAgentStore(database: Database): AgentStore {
         userChunkId: randomUUID(),
         assistantMessageId,
         title: titleFromPrompt(input.prompt),
-        statusDetail: describeWork(input.prompt, null),
+        statusDetail: null,
         ...input,
         modelId: storedModelId(
           input.modelId,
@@ -847,7 +846,7 @@ export function createAgentStore(database: Database): AgentStore {
           mode ?? session.mode,
         ),
         prompt,
-        statusDetail: describeWork(prompt, previousResponse),
+        statusDetail: null,
         now: now(),
       });
       return { sessionId, assistantMessageId, previousResponse };
