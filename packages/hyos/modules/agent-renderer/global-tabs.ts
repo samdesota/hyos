@@ -11,15 +11,20 @@ export { createdHostTabId };
  * Model for the app-level global tab strip in the sidebar. A global tab is a
  * presentation surface owned by the app rather than any session; kinds form
  * an open union so new surfaces can join without reshaping the strip — the
- * browser kind reuses the host's already-global browser tabs.
+ * browser kind reuses the host's already-global browser tabs, while a
+ * whiteboard tab is only a view onto a persisted board (boardId), so closing
+ * the tab never destroys the board.
  */
-export type GlobalTab = Readonly<{ id: string; kind: "browser"; tabId: TabId }>;
+export type GlobalTab =
+  | Readonly<{ id: string; kind: "browser"; tabId: TabId }>
+  | Readonly<{ id: string; kind: "whiteboard"; boardId: string }>;
 
 /** Glyph and fallback label per tab kind, keyed exhaustively by kind. */
 export const globalTabDescriptors: Readonly<
   Record<GlobalTab["kind"], Readonly<{ label: string; icon: string }>>
 > = {
   browser: { label: "Browser", icon: "◉" },
+  whiteboard: { label: "Whiteboard", icon: "▦" },
 };
 
 /**

@@ -219,6 +219,27 @@ export function createAppState({
     );
     setActiveGlobalTabId(`global-${tabId}`);
   };
+  // A whiteboard tab is a view onto a persisted board, identified up front
+  // by uuid: the tab holds only the boardId, so closing it drops the view
+  // while the board itself outlives the strip (persistence lands with the
+  // boards schema). Reopening an open board's tab focuses it instead of
+  // forking the strip.
+  const openWhiteboardTab = (boardId: string): void => {
+    const existing = globalTabs().find(
+      (tab) => tab.kind === "whiteboard" && tab.boardId === boardId,
+    );
+    if (existing) {
+      setActiveGlobalTabId(existing.id);
+      return;
+    }
+    const id = `global-whiteboard-${boardId}`;
+    setGlobalTabs((tabs) =>
+      tabs.some((tab) => tab.id === id)
+        ? tabs
+        : [...tabs, { id, kind: "whiteboard", boardId }],
+    );
+    setActiveGlobalTabId(id);
+  };
   const closeGlobalTab = (tab: GlobalTab): void => {
     const neighborId = neighborGlobalTabId(globalTabs(), tab.id);
     setGlobalTabs((tabs) => tabs.filter(({ id }) => id !== tab.id));
@@ -1073,6 +1094,7 @@ export function createAppState({
     setActiveGlobalTabId,
     focusedGlobalTab,
     openGlobalTab,
+    openWhiteboardTab,
     closeGlobalTab,
     // feed plumbing
     transcriptScroll,

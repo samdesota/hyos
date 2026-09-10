@@ -179,3 +179,45 @@ test("createdHostTabId is re-exported and detects the tab a create added", () =>
   assert.equal(createdHostTabId(before, after), "tab-2");
   assert.equal(createdHostTabId(before, before), null);
 });
+
+const whiteboardTab = (boardId: string): GlobalTab => ({
+  id: `global-whiteboard-${boardId}`,
+  kind: "whiteboard",
+  boardId,
+});
+
+test("whiteboard tabs use their kind's fallback label and icon", () => {
+  assert.equal(globalTabDescriptors.whiteboard.label, "Whiteboard");
+  assert.equal(
+    globalTabLabel(whiteboardTab("board-1"), emptyBrowserState),
+    "Whiteboard",
+  );
+});
+
+test("reconciliation keeps whiteboard tabs regardless of the browser host", () => {
+  // The browser host's state only governs browser tabs; a whiteboard tab
+  // stays even when the host knows nothing (its board outlives host tabs).
+  const tabs = [whiteboardTab("board-1"), browserGlobalTab("tab-1")];
+  assert.deepEqual(reconcileGlobalTabs(tabs, hostState([])), [tabs[0]]);
+  assert.equal(reconcileGlobalTabs(tabs, hostState([{ id: "tab-1" }])), tabs);
+});
+
+test("whiteboard tabs survive strip snapshots unrepresented", () => {
+  // Board persistence lives in the boards schema, not the strip snapshot;
+  // browser-only snapshots simply skip whiteboard tabs.
+  const scope = {
+    tabs: [whiteboardTab("board-1")],
+    activeId: whiteboardTab("board-1").id,
+  };
+  assert.equal(snapshotGlobalTabs(scope, emptyBrowserState), null);
+  const mixed = {
+    tabs: [whiteboardTab("board-1"), browserGlobalTab("tab-1")],
+    activeId: whiteboardTab("board-1").id,
+  };
+  // A focused whiteboard tab means no browser entry carries the focus.
+  const snapshot = snapshotGlobalTabs(mixed, hostState([{ id: "tab-1" }]));
+  assert.deepEqual(snapshot, {
+    tabs: [{ kind: "browser", url: "https://tab-1.example/", title: "tab-1" }],
+    activeIndex: -1,
+  });
+});

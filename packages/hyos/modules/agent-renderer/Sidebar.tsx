@@ -10,7 +10,7 @@ import {
 
 import type { AgentSessionSummary } from "../../capabilities/agent.js";
 import type { AppState } from "./app-state.js";
-import { globalTabLabel } from "./global-tabs.js";
+import { globalTabDescriptors, globalTabLabel } from "./global-tabs.js";
 import { Modal } from "./Modal.js";
 import { groupSessionsByFolder } from "./sessions-model.js";
 
@@ -333,7 +333,7 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
                     onClick={() => setActiveGlobalTabId(tab.id)}
                   >
                     <span class="side-tab-icon" aria-hidden="true">
-                      ◉
+                      {globalTabDescriptors[tab.kind].icon}
                     </span>
                     <span class="side-tab-label">
                       {globalTabLabel(tab, browserState())}
