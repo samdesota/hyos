@@ -2,6 +2,7 @@ import {
   For,
   Show,
   createEffect,
+  createMemo,
   createSignal,
   type Component,
   type JSX,
@@ -15,27 +16,46 @@ import { groupSessionsByFolder } from "./sessions-model.js";
 
 const SessionFolderList: Component<{
   sessions: readonly AgentSessionSummary[];
-  children: (session: AgentSessionSummary) => JSX.Element;
+  children: (session: () => AgentSessionSummary) => JSX.Element;
 }> = (props) => {
-  const groups = () => groupSessionsByFolder(props.sessions);
+  // Key-stable rendering: folder sections are keyed by folder string and
+  // session rows by session id (plain strings, so <For> diffs by value), and
+  // all content reads the current summary through reactive lookups. The host
+  // republishes the whole list on every streamed chunk (sessions are ordered
+  // by updatedAt), so keying rows by object reference would tear the sidebar
+  // down mid-interaction — losing hover on the archive button and the
+  // mousedown/mouseup pairing clicks need. Field changes patch in place.
+  const byId = createMemo(
+    () =>
+      new Map(props.sessions.map((session) => [session.id, session] as const)),
+  );
+  const groups = createMemo(() => groupSessionsByFolder(props.sessions));
   return (
-    <For each={groups()}>
-      {(group) => (
-        <section
-          class="session-folder-group"
-          aria-label={group.folder || group.label}
-        >
-          <h3
-            class="session-folder-heading"
-            title={group.folder || group.label}
-          >
-            <span class="session-folder-name">{group.label}</span>
-            <Show when={group.parentPath}>
-              <span class="session-folder-parent">{group.parentPath}</span>
-            </Show>
-          </h3>
-          <For each={group.sessions}>{props.children}</For>
-        </section>
+    <For each={groups().map(({ folder }) => folder)}>
+      {(folder) => (
+        <Show when={groups().find((group) => group.folder === folder)}>
+          {(group) => (
+            <section
+              class="session-folder-group"
+              aria-label={group().folder || group().label}
+            >
+              <h3
+                class="session-folder-heading"
+                title={group().folder || group().label}
+              >
+                <span class="session-folder-name">{group().label}</span>
+                <Show when={group().parentPath}>
+                  <span class="session-folder-parent">
+                    {group().parentPath}
+                  </span>
+                </Show>
+              </h3>
+              <For each={group().sessions.map(({ id }) => id)}>
+                {(id) => props.children(() => byId().get(id)!)}
+              </For>
+            </section>
+          )}
+        </Show>
       )}
     </For>
   );
@@ -122,6 +142,7 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
     setActiveGlobalTabId,
     focusedGlobalTab,
     openGlobalTab,
+    openWhiteboardTab,
     closeGlobalTab,
     selectSession,
     newSession,
@@ -170,9 +191,9 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
     {
       id: "whiteboard",
       label: "Whiteboard",
-      hint: "Coming soon",
+      hint: "New whiteboard",
       icon: "▦",
-      run: () => {},
+      run: () => openWhiteboardTab(crypto.randomUUID()),
     },
   ];
   const filteredCreateItems = () => {
@@ -270,11 +291,6 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
                   aria-selected={index() === createIndex()}
                   class="create-item"
                   classList={{ selected: index() === createIndex() }}
-                  title={
-                    item.id === "whiteboard"
-                      ? "Whiteboard (coming soon)"
-                      : undefined
-                  }
                   onClick={() => runCreateItem(item)}
                   onMouseEnter={() => setCreateIndex(index())}
                 >
@@ -342,34 +358,38 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
       <div class="session-list" id="agent-session-list">
         <SessionFolderList sessions={activeSessions()}>
           {(session) => (
-            <div
-              class="session-row"
-              classList={{ active: activeId() === session.id }}
-            >
-              <button
-                type="button"
-                class="session-open"
-                onClick={() => void selectSession(session.id)}
-              >
-                <SessionTitle
-                  session={session}
-                  onRename={(title) => void renameSession(session.id, title)}
-                />
-                <span class="session-meta">
-                  <i class={`status-dot ${session.status}`} />
-                  {session.modelId}
-                </span>
-              </button>
-              <button
-                type="button"
-                class="session-archive"
-                aria-label={`Archive "${session.title}"`}
-                title="Archive session"
-                onClick={() => void setSessionArchived(session.id, true)}
-              >
-                ×
-              </button>
-            </div>
+            <Show when={session()}>
+              {(s) => (
+                <div
+                  class="session-row"
+                  classList={{ active: activeId() === s().id }}
+                >
+                  <button
+                    type="button"
+                    class="session-open"
+                    onClick={() => void selectSession(s().id)}
+                  >
+                    <SessionTitle
+                      session={s()}
+                      onRename={(title) => void renameSession(s().id, title)}
+                    />
+                    <span class="session-meta">
+                      <i class={`status-dot ${s().status}`} />
+                      {s().modelId}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    class="session-archive"
+                    aria-label={`Archive "${s().title}"`}
+                    title="Archive session"
+                    onClick={() => void setSessionArchived(s().id, true)}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+            </Show>
           )}
         </SessionFolderList>
         <Show when={archivedSessions().length > 0}>
@@ -385,36 +405,40 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
           <Show when={archivedOpen()}>
             <SessionFolderList sessions={archivedSessions()}>
               {(session) => (
-                <div
-                  class="session-row archived"
-                  classList={{ active: activeId() === session.id }}
-                >
-                  <button
-                    type="button"
-                    class="session-open"
-                    onClick={() => void selectSession(session.id)}
-                  >
-                    <SessionTitle
-                      session={session}
-                      onRename={(title) =>
-                        void renameSession(session.id, title)
-                      }
-                    />
-                    <span class="session-meta">
-                      <i class={`status-dot ${session.status}`} />
-                      {session.modelId}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    class="session-archive"
-                    aria-label={`Unarchive "${session.title}"`}
-                    title="Unarchive session"
-                    onClick={() => void setSessionArchived(session.id, false)}
-                  >
-                    ↩
-                  </button>
-                </div>
+                <Show when={session()}>
+                  {(s) => (
+                    <div
+                      class="session-row archived"
+                      classList={{ active: activeId() === s().id }}
+                    >
+                      <button
+                        type="button"
+                        class="session-open"
+                        onClick={() => void selectSession(s().id)}
+                      >
+                        <SessionTitle
+                          session={s()}
+                          onRename={(title) =>
+                            void renameSession(s().id, title)
+                          }
+                        />
+                        <span class="session-meta">
+                          <i class={`status-dot ${s().status}`} />
+                          {s().modelId}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        class="session-archive"
+                        aria-label={`Unarchive "${s().title}"`}
+                        title="Unarchive session"
+                        onClick={() => void setSessionArchived(s().id, false)}
+                      >
+                        ↩
+                      </button>
+                    </div>
+                  )}
+                </Show>
               )}
             </SessionFolderList>
           </Show>
