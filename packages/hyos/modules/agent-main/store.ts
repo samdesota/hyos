@@ -990,7 +990,7 @@ export function createAgentStore(database: Database): AgentStore {
       const rows = await database.fetch(
         hydb
           .query(agentSessions)
-          .orderBy((session) => [session.updatedAt.desc(), session.id.asc()])
+          .orderBy((session) => [session.createdAt.desc(), session.id.asc()])
           .many(),
       );
       return rows.map(sessionSummary);
@@ -1055,7 +1055,7 @@ export function createAgentStore(database: Database): AgentStore {
       return database.subscribe(
         hydb
           .query(agentSessions)
-          .orderBy((session) => [session.updatedAt.desc(), session.id.asc()])
+          .orderBy((session) => [session.createdAt.desc(), session.id.asc()])
           .many(),
         listener,
       );
