@@ -51,7 +51,55 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
     newSession,
     setSessionArchived,
   } = props.app;
-  const [newMenuOpen, setNewMenuOpen] = createSignal(false);
+  const [createOpen, setCreateOpen] = createSignal(false);
+  const [createQuery, setCreateQuery] = createSignal("");
+  const [createIndex, setCreateIndex] = createSignal(0);
+
+  const createItems: readonly {
+    id: string;
+    label: string;
+    hint: string;
+    icon: string;
+    run: () => void;
+  }[] = [
+    {
+      id: "session",
+      label: "Session",
+      hint: "New agent session",
+      icon: "✎",
+      run: () => newSession(),
+    },
+    {
+      id: "web",
+      label: "Web",
+      hint: "New browser tab",
+      icon: "◉",
+      run: () => void openGlobalTab(),
+    },
+    {
+      id: "whiteboard",
+      label: "Whiteboard",
+      hint: "Coming soon",
+      icon: "▦",
+      run: () => {},
+    },
+  ];
+  const filteredCreateItems = () => {
+    const query = createQuery().trim().toLowerCase();
+    if (!query) return createItems;
+    return createItems.filter((item) =>
+      item.label.toLowerCase().includes(query),
+    );
+  };
+  const openCreateModal = (): void => {
+    setCreateQuery("");
+    setCreateIndex(0);
+    setCreateOpen(true);
+  };
+  const runCreateItem = (item: (typeof createItems)[number]): void => {
+    setCreateOpen(false);
+    item.run();
+  };
 
   return (
     <aside class="agent-sidebar">
@@ -59,21 +107,15 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
         <div class="brand">
           <span class="brand-mark">H</span>
           <strong>hyos</strong>
-          <div
-            class="brand-new-wrap"
-            classList={{ open: newMenuOpen() }}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") setNewMenuOpen(false);
-            }}
-          >
+          <div class="brand-new-wrap">
             <button
               class="brand-new"
               type="button"
               aria-label="Create new"
               title="Create new"
-              aria-haspopup="menu"
-              aria-expanded={newMenuOpen()}
-              onClick={() => setNewMenuOpen(!newMenuOpen())}
+              aria-haspopup="dialog"
+              aria-expanded={createOpen()}
+              onClick={openCreateModal}
             >
               <svg
                 class="brand-new-icon"
@@ -90,66 +132,88 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
                 <path d="M12 5v14" />
               </svg>
             </button>
-            <Show when={newMenuOpen()}>
-              <div
-                class="new-session-backdrop"
-                onClick={() => setNewMenuOpen(false)}
-              />
-              <div class="new-session-menu" role="menu">
-                <button
-                  type="button"
-                  role="menuitem"
-                  class="new-session-item"
-                  onClick={() => {
-                    setNewMenuOpen(false);
-                    void openGlobalTab();
-                  }}
-                >
-                  <span class="new-session-item-icon" aria-hidden="true">
-                    ◉
-                  </span>
-                  <span class="new-session-item-text">
-                    <strong>Web</strong>
-                    <span class="new-session-item-hint">New browser tab</span>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  class="new-session-item"
-                  onClick={() => {
-                    setNewMenuOpen(false);
-                    newSession();
-                  }}
-                >
-                  <span class="new-session-item-icon" aria-hidden="true">
-                    ✎
-                  </span>
-                  <span class="new-session-item-text">
-                    <strong>Session</strong>
-                    <span class="new-session-item-hint">New agent session</span>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  class="new-session-item"
-                  title="Whiteboard (coming soon)"
-                  onClick={() => setNewMenuOpen(false)}
-                >
-                  <span class="new-session-item-icon" aria-hidden="true">
-                    ▦
-                  </span>
-                  <span class="new-session-item-text">
-                    <strong>Whiteboard</strong>
-                    <span class="new-session-item-hint">Coming soon</span>
-                  </span>
-                </button>
-              </div>
-            </Show>
           </div>
         </div>
       </div>
+      <Show when={createOpen()}>
+        <div
+          class="create-overlay"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setCreateOpen(false);
+          }}
+        >
+          <div
+            class="create-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Create new"
+            onKeyDown={(e) => {
+              const items = filteredCreateItems();
+              if (e.key === "Escape") setCreateOpen(false);
+              else if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setCreateIndex((i) =>
+                  items.length ? (i + 1) % items.length : 0,
+                );
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setCreateIndex((i) =>
+                  items.length ? (i - 1 + items.length) % items.length : 0,
+                );
+              } else if (e.key === "Enter") {
+                e.preventDefault();
+                const item = items[createIndex()];
+                if (item) runCreateItem(item);
+              }
+            }}
+          >
+            <input
+              class="create-input"
+              type="text"
+              placeholder="Create new…"
+              aria-label="Search what to create"
+              autofocus
+              value={createQuery()}
+              onInput={(e) => {
+                setCreateQuery(e.currentTarget.value);
+                setCreateIndex(0);
+              }}
+            />
+            <div class="create-list" role="listbox">
+              <For each={filteredCreateItems()}>
+                {(item, index) => (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={index() === createIndex()}
+                    class="create-item"
+                    classList={{ selected: index() === createIndex() }}
+                    title={
+                      item.id === "whiteboard"
+                        ? "Whiteboard (coming soon)"
+                        : undefined
+                    }
+                    onClick={() => runCreateItem(item)}
+                    onMouseEnter={() => setCreateIndex(index())}
+                  >
+                    <span class="create-item-icon" aria-hidden="true">
+                      {item.icon}
+                    </span>
+                    <span class="create-item-text">
+                      <strong>{item.label}</strong>
+                      <span class="create-item-hint">{item.hint}</span>
+                    </span>
+                  </button>
+                )}
+              </For>
+              <Show when={filteredCreateItems().length === 0}>
+                <div class="create-empty">No matches</div>
+              </Show>
+            </div>
+          </div>
+        </div>
+      </Show>
       <Show when={globalTabs().length > 0}>
         <div class="global-tabs" aria-label="Global tabs">
           <div class="global-tabs-head">

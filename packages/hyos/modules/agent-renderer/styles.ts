@@ -55,24 +55,35 @@ export const agentStyles = String.raw`
   .brand-new:hover { background: #3b3d37; color: #e3e2dc; }
   .brand-new-wrap { position: relative; margin-left: auto; }
   .brand-new-wrap.open .brand-new { background: #30312d; color: #e3e2dc; }
-  .new-session-backdrop { position: fixed; inset: 0; z-index: 40; }
-  .new-session-menu {
-    position: absolute; top: calc(100% + 8px); right: -8px; width: 216px; z-index: 50;
-    display: flex; flex-direction: column; gap: 2px; padding: 6px;
-    border: 1px solid #3b3d37; border-radius: 10px;
-    background: #262722; box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+  .create-overlay {
+    position: fixed; inset: 0; z-index: 60;
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 14vh 16px 16px;
+    background: rgba(9, 10, 8, .55); backdrop-filter: blur(4px);
   }
-  .new-session-item {
+  .create-modal {
+    display: flex; flex-direction: column; width: 380px; max-width: 100%;
+    overflow: hidden; border: 1px solid #3b3d37; border-radius: 12px;
+    background: #262722; box-shadow: 0 16px 48px rgba(0, 0, 0, .5);
+  }
+  .create-input {
+    flex: none; padding: 12px 14px; border: 0; border-bottom: 1px solid #3b3d37;
+    color: #eceae5; background: transparent; outline: none; font-size: 13px;
+  }
+  .create-input::placeholder { color: #85877e; }
+  .create-list { display: flex; flex-direction: column; gap: 2px; padding: 6px; }
+  .create-item {
     display: flex; align-items: center; gap: 10px;
     padding: 8px 10px; border: 0; border-radius: 8px;
     color: #e3e2dc; background: transparent; cursor: pointer; text-align: left;
     transition: background .12s;
   }
-  .new-session-item:hover { background: #34362f; }
-  .new-session-item-icon { flex: none; width: 16px; color: #b5b7ac; text-align: center; }
-  .new-session-item-text { display: flex; flex-direction: column; min-width: 0; }
-  .new-session-item-text strong { font-size: 13px; font-weight: 600; }
-  .new-session-item-hint { color: #85877e; font-size: 11px; }
+  .create-item:hover, .create-item.selected { background: #34362f; }
+  .create-item-icon { flex: none; width: 16px; color: #b5b7ac; text-align: center; }
+  .create-item-text { display: flex; flex-direction: column; min-width: 0; }
+  .create-item-text strong { font-size: 13px; font-weight: 600; }
+  .create-item-hint { color: #85877e; font-size: 11px; }
+  .create-empty { padding: 10px 12px 12px; color: #85877e; font-size: 12px; }
   .global-tabs { border-bottom: 1px solid #30312d; }
   .global-tabs-head {
     display: flex; align-items: center; justify-content: space-between;
