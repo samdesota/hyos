@@ -44,25 +44,20 @@ export const agentStyles = String.raw`
     color: #171816; background: #d9ff62; font-weight: 850; letter-spacing: -0.08em;
   }
   .brand strong { font-size: 14px; letter-spacing: .02em; }
-  .new-session, .primary, .folder-button, .send, .cancel {
+  .brand-new, .primary, .folder-button, .send, .cancel {
     border: 0; border-radius: 9px; cursor: pointer; transition: background .15s, opacity .15s;
   }
-  .new-session {
-    display: flex; align-items: center; gap: 8px;
-    width: calc(100% + 16px); margin: 0 -8px; padding: 10px;
-    text-align: left; background: transparent;
+  .brand-new {
+    display: grid; place-items: center; width: 24px; height: 24px; padding: 0;
+    color: #b5b7ac; background: transparent;
   }
-  .new-session-icon { flex: none; width: 15px; height: 15px; color: #b5b7ac; }
-  .new-session-chevron {
-    flex: none; width: 13px; height: 13px; margin-left: auto; color: #85877e;
-    transition: transform .15s;
-  }
-  .new-session-wrap { position: relative; }
-  .new-session-wrap.open .new-session { background: #30312d; }
-  .new-session-wrap.open .new-session-chevron { transform: rotate(180deg); }
+  .brand-new-icon { width: 15px; height: 15px; }
+  .brand-new:hover { background: #3b3d37; color: #e3e2dc; }
+  .brand-new-wrap { position: relative; margin-left: auto; }
+  .brand-new-wrap.open .brand-new { background: #30312d; color: #e3e2dc; }
   .new-session-backdrop { position: fixed; inset: 0; z-index: 40; }
   .new-session-menu {
-    position: absolute; top: calc(100% + 6px); left: -8px; right: -8px; z-index: 50;
+    position: absolute; top: calc(100% + 8px); right: -8px; width: 216px; z-index: 50;
     display: flex; flex-direction: column; gap: 2px; padding: 6px;
     border: 1px solid #3b3d37; border-radius: 10px;
     background: #262722; box-shadow: 0 8px 24px rgba(0, 0, 0, .4);

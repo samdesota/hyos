@@ -33,11 +33,10 @@ const SessionFolderList: Component<{
   );
 };
 
-/** App sidebar: brand, new-session button, global tab strip, session list. */
+/** App sidebar: brand, global tab strip, session list. */
 export const Sidebar: Component<{ app: AppState }> = (props) => {
   const {
     activeId,
-    activeSession,
     activeSessions,
     archivedOpen,
     setArchivedOpen,
@@ -60,107 +59,95 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
         <div class="brand">
           <span class="brand-mark">H</span>
           <strong>hyos</strong>
-        </div>
-        <div
-          class="new-session-wrap"
-          classList={{ open: newMenuOpen() || !activeSession() }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") setNewMenuOpen(false);
-          }}
-        >
-          <button
-            class="new-session"
-            type="button"
-            aria-haspopup="menu"
-            aria-expanded={newMenuOpen()}
-            onClick={() => setNewMenuOpen(!newMenuOpen())}
+          <div
+            class="brand-new-wrap"
+            classList={{ open: newMenuOpen() }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setNewMenuOpen(false);
+            }}
           >
-            <svg
-              class="new-session-icon"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
+            <button
+              class="brand-new"
+              type="button"
+              aria-label="Create new"
+              title="Create new"
+              aria-haspopup="menu"
+              aria-expanded={newMenuOpen()}
+              onClick={() => setNewMenuOpen(!newMenuOpen())}
             >
-              {/* lucide plus */}
-              <path d="M5 12h14" />
-              <path d="M12 5v14" />
-            </svg>
-            New
-            <svg
-              class="new-session-chevron"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              {/* lucide chevron-down */}
-              <path d="m6 9 6 6 6-6" />
-            </svg>
-          </button>
-          <Show when={newMenuOpen()}>
-            <div
-              class="new-session-backdrop"
-              onClick={() => setNewMenuOpen(false)}
-            />
-            <div class="new-session-menu" role="menu">
-              <button
-                type="button"
-                role="menuitem"
-                class="new-session-item"
-                onClick={() => {
-                  setNewMenuOpen(false);
-                  void openGlobalTab();
-                }}
+              <svg
+                class="brand-new-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
               >
-                <span class="new-session-item-icon" aria-hidden="true">
-                  ◉
-                </span>
-                <span class="new-session-item-text">
-                  <strong>Web</strong>
-                  <span class="new-session-item-hint">New browser tab</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                class="new-session-item"
-                onClick={() => {
-                  setNewMenuOpen(false);
-                  newSession();
-                }}
-              >
-                <span class="new-session-item-icon" aria-hidden="true">
-                  ✎
-                </span>
-                <span class="new-session-item-text">
-                  <strong>Session</strong>
-                  <span class="new-session-item-hint">New agent session</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                class="new-session-item"
-                title="Whiteboard (coming soon)"
+                {/* lucide plus */}
+                <path d="M5 12h14" />
+                <path d="M12 5v14" />
+              </svg>
+            </button>
+            <Show when={newMenuOpen()}>
+              <div
+                class="new-session-backdrop"
                 onClick={() => setNewMenuOpen(false)}
-              >
-                <span class="new-session-item-icon" aria-hidden="true">
-                  ▦
-                </span>
-                <span class="new-session-item-text">
-                  <strong>Whiteboard</strong>
-                  <span class="new-session-item-hint">Coming soon</span>
-                </span>
-              </button>
-            </div>
-          </Show>
+              />
+              <div class="new-session-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="new-session-item"
+                  onClick={() => {
+                    setNewMenuOpen(false);
+                    void openGlobalTab();
+                  }}
+                >
+                  <span class="new-session-item-icon" aria-hidden="true">
+                    ◉
+                  </span>
+                  <span class="new-session-item-text">
+                    <strong>Web</strong>
+                    <span class="new-session-item-hint">New browser tab</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="new-session-item"
+                  onClick={() => {
+                    setNewMenuOpen(false);
+                    newSession();
+                  }}
+                >
+                  <span class="new-session-item-icon" aria-hidden="true">
+                    ✎
+                  </span>
+                  <span class="new-session-item-text">
+                    <strong>Session</strong>
+                    <span class="new-session-item-hint">New agent session</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="new-session-item"
+                  title="Whiteboard (coming soon)"
+                  onClick={() => setNewMenuOpen(false)}
+                >
+                  <span class="new-session-item-icon" aria-hidden="true">
+                    ▦
+                  </span>
+                  <span class="new-session-item-text">
+                    <strong>Whiteboard</strong>
+                    <span class="new-session-item-hint">Coming soon</span>
+                  </span>
+                </button>
+              </div>
+            </Show>
+          </div>
         </div>
       </div>
       <Show when={globalTabs().length > 0}>
