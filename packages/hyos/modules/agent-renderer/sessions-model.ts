@@ -308,10 +308,7 @@ const samePlan = (a: AgentPlan | null, b: AgentPlan | null): boolean => {
   );
 };
 
-const sameSession = (
-  a: AgentSessionSummary,
-  b: AgentSessionSummary,
-): boolean =>
+const sameSession = (a: AgentSessionSummary, b: AgentSessionSummary): boolean =>
   a.id === b.id &&
   a.title === b.title &&
   a.folder === b.folder &&
@@ -320,6 +317,7 @@ const sameSession = (
   a.reasoningEffort === b.reasoningEffort &&
   a.mode === b.mode &&
   a.status === b.status &&
+  a.statusDetail === b.statusDetail &&
   a.lastError === b.lastError &&
   samePlan(a.plan, b.plan) &&
   sameDate(a.archivedAt, b.archivedAt) &&

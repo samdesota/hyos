@@ -15,6 +15,7 @@ const summary = (
   mode: "incremental",
   plan: null,
   status: "ready",
+  statusDetail: null,
   lastError: null,
   archivedAt: null,
   createdAt: new Date(0),
@@ -34,6 +35,7 @@ test("any meaningful field change is detected", () => {
   const base = [summary()];
   const changes: Partial<AgentSessionSummary>[] = [
     { status: "running" },
+    { statusDetail: "Fixing spinner" },
     { title: "Renamed" },
     { folder: "/tmp/other" },
     { lastError: "boom" },

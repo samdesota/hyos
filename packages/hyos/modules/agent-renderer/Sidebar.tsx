@@ -129,6 +129,26 @@ const SessionTitle: Component<{
   );
 };
 
+/**
+ * Session status line: nothing by default, a spinner plus the short work
+ * description while the session runs, and the finished description tinted
+ * by the run's outcome once it ends. It stays until the next turn starts.
+ */
+const SessionMeta: Component<{ session: AgentSessionSummary }> = (props) => (
+  <span class="session-meta">
+    <Show when={props.session.status === "running"}>
+      <i class="session-spinner" aria-label="Running" />
+    </Show>
+    <Show when={props.session.statusDetail}>
+      {(detail) => (
+        <span class={`session-status-text ${props.session.status}`}>
+          {detail()}
+        </span>
+      )}
+    </Show>
+  </span>
+);
+
 /** App sidebar: brand, global tab strip, session list. */
 export const Sidebar: Component<{ app: AppState }> = (props) => {
   const {
@@ -373,10 +393,7 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
                       session={s()}
                       onRename={(title) => void renameSession(s().id, title)}
                     />
-                    <span class="session-meta">
-                      <i class={`status-dot ${s().status}`} />
-                      {s().modelId}
-                    </span>
+                    <SessionMeta session={s()} />
                   </button>
                   <button
                     type="button"
@@ -422,10 +439,7 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
                             void renameSession(s().id, title)
                           }
                         />
-                        <span class="session-meta">
-                          <i class={`status-dot ${s().status}`} />
-                          {s().modelId}
-                        </span>
+                        <SessionMeta session={s()} />
                       </button>
                       <button
                         type="button"

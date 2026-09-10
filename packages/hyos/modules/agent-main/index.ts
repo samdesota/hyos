@@ -42,7 +42,9 @@ export = defineModule<AgentMainConfig>({
   async apply(ctx, config) {
     const bootStartedAt = performance.now();
     const bootTrace = (event: string) =>
-      console.log(`[DEBUG-boot-7f2c] +${Math.round(performance.now() - bootStartedAt)}ms agent-main ${event}`);
+      console.log(
+        `[DEBUG-boot-7f2c] +${Math.round(performance.now() - bootStartedAt)}ms agent-main ${event}`,
+      );
     const root = ctx.get<string>("application.root");
     const window = ctx.get<BrowserWindow>("electron.overlay-window");
     const remote = ctx.get<MainRemoteCapabilities>("remote.capabilities");
@@ -62,6 +64,7 @@ export = defineModule<AgentMainConfig>({
         },
         { hyos_agent_sessions: ["plan"] },
         { hyos_agent_sessions: ["tabs"] },
+        { hyos_agent_sessions: ["statusDetail"] },
       ],
     });
     bootTrace("storage:open:done");

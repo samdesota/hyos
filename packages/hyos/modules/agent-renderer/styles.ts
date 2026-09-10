@@ -151,11 +151,18 @@ export const agentStyles = String.raw`
     caret-color: #d9ff62; outline: none; cursor: text;
     box-shadow: 0 1px 0 #b2cb8c;
   }
-  .session-meta { display: flex; gap: 7px; margin-top: 5px; color: #8e9087; font-size: 11px; }
-  .status-dot { width: 6px; height: 6px; margin-top: 4px; border-radius: 50%; background: #777; }
-  .status-dot.running { background: #d9ff62; box-shadow: 0 0 8px #d9ff6270; }
-  .status-dot.failed { background: #ff6f61; }
-  .status-dot.cancelled { background: #c5a46d; }
+  .session-meta { display: flex; gap: 7px; margin-top: 5px; color: #8e9087; font-size: 11px; align-items: center; }
+  .session-spinner {
+    flex: none; width: 9px; height: 9px; border-radius: 50%;
+    border: 1.5px solid #d9ff6230; border-top-color: #d9ff62;
+    animation: session-spin 0.8s linear infinite;
+  }
+  @keyframes session-spin { to { transform: rotate(360deg); } }
+  .session-status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .session-status-text.running { color: #d9ff62; }
+  .session-status-text.ready { color: #b6d97f; }
+  .session-status-text.failed { color: #ff6f61; }
+  .session-status-text.cancelled { color: #c5a46d; }
   .agent-main { min-width: 0; min-height: 0; background: #171816; }
   .global-browser { display: flex; width: 100%; height: 100%; min-height: 0; }
   .whiteboard-page { position: relative; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: #1d1e1b; }

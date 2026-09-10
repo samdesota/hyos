@@ -36,6 +36,7 @@ export const agentSessions = hydb.table(
     modelId: text().notNull(),
     providerSessionId: text(),
     status: sessionStatus().notNull(),
+    statusDetail: text(),
     lastError: text(),
     plan: text(),
     tabs: text(),

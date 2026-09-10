@@ -96,6 +96,8 @@ export type AgentSessionSummary = Readonly<{
   mode: AgentMode;
   plan: AgentPlan | null;
   status: AgentSessionStatus;
+  /** Short (3–5 word) description of the current/last run's work. */
+  statusDetail: string | null;
   lastError: string | null;
   archivedAt: Date | null;
   createdAt: Date;

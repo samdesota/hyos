@@ -25,6 +25,7 @@ import {
   type StoredAgentMessage,
   type StoredAgentMessageChunk,
 } from "./model.js";
+import { describeWork } from "./work-description.js";
 
 const sessionStatusSchema = z.enum(["running", "ready", "failed", "cancelled"]);
 const messageStatusSchema = z.enum(["streaming", "complete", "failed"]);
@@ -177,6 +178,7 @@ const createSessionCommand = hydb.command({
     providerId: z.string(),
     modelId: z.string(),
     prompt: z.string(),
+    statusDetail: z.string().nullable(),
     now: z.date(),
   }),
   async handler(transaction, input) {
@@ -188,6 +190,7 @@ const createSessionCommand = hydb.command({
       modelId: input.modelId,
       providerSessionId: null,
       status: "running",
+      statusDetail: input.statusDetail,
       lastError: null,
       createdAt: input.now,
       updatedAt: input.now,
@@ -229,6 +232,7 @@ const startTurnCommand = hydb.command({
     assistantMessageId: z.string(),
     modelId: z.string(),
     prompt: z.string(),
+    statusDetail: z.string().nullable(),
     now: z.date(),
   }),
   async handler(transaction, input) {
@@ -262,6 +266,7 @@ const startTurnCommand = hydb.command({
     await transaction.update(agentSessions, [input.sessionId], {
       modelId: input.modelId,
       status: "running",
+      statusDetail: input.statusDetail,
       lastError: null,
       updatedAt: assistantTime,
     });
@@ -549,6 +554,7 @@ function sessionSummary(
     providerId: string;
     modelId: string;
     status: AgentSessionStatus;
+    statusDetail: string | null;
     lastError: string | null;
     plan: string | null;
     archivedAt: Date | null;
@@ -567,6 +573,7 @@ function sessionSummary(
     mode: model.mode,
     plan: decodePlan(row.plan),
     status: row.status,
+    statusDetail: row.statusDetail,
     lastError: row.lastError,
     archivedAt: row.archivedAt,
     createdAt: row.createdAt,
@@ -695,6 +702,38 @@ export function createAgentStore(database: Database): AgentStore {
     return { ...sessionSummary(row), providerSessionId: row.providerSessionId };
   }
 
+  /**
+   * Plain text of the session's most recent assistant response — the raw
+   * streamed reply, without reasoning or tool activity — used to describe
+   * the next turn's work when the prompt is a bare continuation.
+   */
+  async function latestAssistantText(
+    sessionId: string,
+  ): Promise<string | null> {
+    const rows = await database.fetch(
+      hydb
+        .query(agentMessages)
+        .where((message) => message.sessionId.eq(sessionId))
+        .orderBy((message) => [message.createdAt.desc(), message.id.desc()])
+        .limit(20)
+        .many(),
+    );
+    const latest = rows.find((row) => row.role === "assistant");
+    if (!latest) return null;
+    const chunks = await database.fetch(
+      hydb
+        .query(agentMessageChunks)
+        .where((chunk) => chunk.messageId.eq(latest.id))
+        .orderBy((chunk) => [chunk.index.asc(), chunk.id.asc()])
+        .many(),
+    );
+    const content = chunks.map((chunk) => chunk.content).join("");
+    return content.startsWith(activityPrefix) ||
+      content.startsWith(commentaryPrefix)
+      ? null
+      : content;
+  }
+
   async function fetchSessionChunks(
     sessionId: string,
   ): Promise<Map<string, StoredAgentMessageChunk[]>> {
@@ -758,6 +797,7 @@ export function createAgentStore(database: Database): AgentStore {
         userChunkId: randomUUID(),
         assistantMessageId,
         title: titleFromPrompt(input.prompt),
+        statusDetail: describeWork(input.prompt, null),
         ...input,
         modelId: storedModelId(
           input.modelId,
@@ -772,6 +812,7 @@ export function createAgentStore(database: Database): AgentStore {
       const getSessionStartedAt = perfNow();
       const session = await getSession(sessionId);
       perfLog(`send:getSession(${sessionId})`, perfNow() - getSessionStartedAt);
+      const previousResponse = await latestAssistantText(sessionId);
       const assistantMessageId = randomUUID();
       await database.execute(startTurnCommand, {
         sessionId,
@@ -786,6 +827,7 @@ export function createAgentStore(database: Database): AgentStore {
           mode ?? session.mode,
         ),
         prompt,
+        statusDetail: describeWork(prompt, previousResponse),
         now: now(),
       });
       return { sessionId, assistantMessageId };
