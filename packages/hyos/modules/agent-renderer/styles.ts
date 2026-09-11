@@ -125,6 +125,8 @@ export const agentStyles = String.raw`
   }
   .session-row:hover { background: #292a27; }
   .session-row.active { background: #34362f; }
+  .session-row.dragging { opacity: .45; }
+  .session-row.drag-over { outline: 1px dashed #8f947f; outline-offset: -1px; }
   .session-archive {
     flex: none; align-self: center; width: 26px; height: 26px; margin: 0 5px 0 2px;
     border: 0; border-radius: 7px; color: #8e9087; background: transparent; cursor: pointer;

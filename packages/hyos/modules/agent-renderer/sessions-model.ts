@@ -216,6 +216,42 @@ export function groupSessionsByFolder(
   });
 }
 
+/**
+ * Move a dragged session within its folder group without breaking folder
+ * contiguity: returns the full new active-session id order (ready for the
+ * host's reorder-sessions command), or null when the drop is a no-op — same
+ * row, unknown id, or a cross-folder drag.
+ */
+export function reorderWithinFolder(
+  active: readonly AgentSessionSummary[],
+  draggedId: string,
+  targetId: string,
+): readonly string[] | null {
+  if (draggedId === targetId) return null;
+  const dragged = active.find((session) => session.id === draggedId);
+  const target = active.find((session) => session.id === targetId);
+  if (!dragged || !target || dragged.folder !== target.folder) return null;
+  const folderSessions = active.filter(
+    (session) => session.folder === target.folder,
+  );
+  const from = folderSessions.findIndex((session) => session.id === draggedId);
+  const to = folderSessions.findIndex((session) => session.id === targetId);
+  if (from === -1 || to === -1) return null;
+  const reordered = [...folderSessions];
+  reordered.splice(from, 1);
+  // After removal, index `to` lands the dragged row before the target when
+  // dragging up and after it when dragging down — the usual drop semantics.
+  reordered.splice(to, 0, dragged);
+  const queue = [...reordered];
+  const result: string[] = [];
+  for (const session of active) {
+    result.push(
+      session.folder === target.folder ? queue.shift()!.id : session.id,
+    );
+  }
+  return result;
+}
+
 /** Distinct folders from sessions, in first-seen session order. */
 export function recentFolders(
   sessions: readonly AgentSessionSummary[],

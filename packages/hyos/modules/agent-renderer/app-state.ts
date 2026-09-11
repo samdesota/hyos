@@ -949,6 +949,20 @@ export function createAppState({
     }
   };
 
+  // The sidebar sends the full ordered active-session id list (folder
+  // groups stay contiguous by construction), so the host's ranks always
+  // mirror what the user sees.
+  const reorderSessions = async (
+    orderedIds: readonly string[],
+  ): Promise<void> => {
+    setError(null);
+    try {
+      await client.execute({ type: "reorder-sessions", orderedIds });
+    } catch (value) {
+      showError(value);
+    }
+  };
+
   const implementNext = async (
     index: number,
     task: AgentPlanTask,
@@ -1123,6 +1137,7 @@ export function createAppState({
     implementNext,
     setSessionArchived,
     renameSession,
+    reorderSessions,
   };
 }
 

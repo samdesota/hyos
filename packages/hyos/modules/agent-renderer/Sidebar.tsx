@@ -12,7 +12,10 @@ import type { AgentSessionSummary } from "../../capabilities/agent.js";
 import type { AppState } from "./app-state.js";
 import { globalTabDescriptors, globalTabLabel } from "./global-tabs.js";
 import { Modal } from "./Modal.js";
-import { groupSessionsByFolder } from "./sessions-model.js";
+import {
+  groupSessionsByFolder,
+  reorderWithinFolder,
+} from "./sessions-model.js";
 
 const SessionFolderList: Component<{
   sessions: readonly AgentSessionSummary[];
@@ -177,12 +180,27 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
     newSession,
     setSessionArchived,
     renameSession,
+    reorderSessions,
     createOpen,
     setCreateOpen,
   } = props.app;
   const [createQuery, setCreateQuery] = createSignal("");
   const [createIndex, setCreateIndex] = createSignal(0);
   let createInput: HTMLInputElement | undefined;
+
+  // Session drag-and-drop: rows carry the dragged id; a drop inside the same
+  // folder group reorders the active list through the host's reorder-sessions
+  // command (the helper keeps folder groups contiguous).
+  const [dragSessionId, setDragSessionId] = createSignal<string | null>(null);
+  const [dragOverId, setDragOverId] = createSignal<string | null>(null);
+  const dropSession = (targetId: string): void => {
+    const dragged = dragSessionId();
+    setDragSessionId(null);
+    setDragOverId(null);
+    if (!dragged) return;
+    const ordered = reorderWithinFolder(activeSessions(), dragged, targetId);
+    if (ordered) void reorderSessions(ordered);
+  };
 
   // Reset the search/selection each time the modal opens, whether via the
   // "+" button or the app-level Cmd/Ctrl+T accelerator.
@@ -391,7 +409,37 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
               {(s) => (
                 <div
                   class="session-row"
-                  classList={{ active: activeId() === s().id }}
+                  classList={{
+                    active: activeId() === s().id,
+                    dragging: dragSessionId() === s().id,
+                    "drag-over": dragOverId() === s().id,
+                  }}
+                  draggable
+                  onDragStart={() => setDragSessionId(s().id)}
+                  onDragEnd={() => {
+                    setDragSessionId(null);
+                    setDragOverId(null);
+                  }}
+                  onDragOver={(event) => {
+                    // Only same-folder drops are meaningful; the helper
+                    // would reject anything else anyway.
+                    if (!dragSessionId() || dragSessionId() === s().id) return;
+                    const dragged = activeSessions().find(
+                      (session) => session.id === dragSessionId(),
+                    );
+                    if (dragged?.folder !== s().folder) return;
+                    event.preventDefault();
+                    if (event.dataTransfer)
+                      event.dataTransfer.dropEffect = "move";
+                    setDragOverId(s().id);
+                  }}
+                  onDragLeave={() => {
+                    if (dragOverId() === s().id) setDragOverId(null);
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    dropSession(s().id);
+                  }}
                 >
                   <button
                     type="button"

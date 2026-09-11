@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentSessionSummary } from "../../capabilities/agent.js";
-import { sessionsShallowEqual } from "./sessions-model.js";
+import { reorderWithinFolder, sessionsShallowEqual } from "./sessions-model.js";
 
 const summary = (
   overrides: Partial<AgentSessionSummary> = {},
@@ -59,4 +59,39 @@ test("equal plans with fresh task objects compare equal", () => {
   const a = [summary({ plan: { tasks: [{ text: "t", done: true }] } })];
   const b = [summary({ plan: { tasks: [{ text: "t", done: true }] } })];
   assert.equal(sessionsShallowEqual(a, b), true);
+});
+
+test("reorderWithinFolder moves a session inside its folder group", () => {
+  const sessions = [
+    summary({ id: "a" }),
+    summary({ id: "b" }),
+    summary({ id: "d" }),
+    summary({ id: "c", folder: "/tmp/other" }),
+  ];
+  // The sidebar list is folder-grouped, so /tmp/project sessions are
+  // contiguous: a, b, d. Drag "a" onto "d": "a" moves after "d", the other
+  // folder keeps its slot.
+  assert.deepEqual(reorderWithinFolder(sessions, "a", "d"), [
+    "b",
+    "d",
+    "a",
+    "c",
+  ]);
+  // Drag "d" onto "a": "d" moves before "a".
+  assert.deepEqual(reorderWithinFolder(sessions, "d", "a"), [
+    "d",
+    "a",
+    "b",
+    "c",
+  ]);
+});
+
+test("reorderWithinFolder rejects no-op and cross-folder drops", () => {
+  const sessions = [
+    summary({ id: "a" }),
+    summary({ id: "b", folder: "/tmp/x" }),
+  ];
+  assert.equal(reorderWithinFolder(sessions, "a", "a"), null);
+  assert.equal(reorderWithinFolder(sessions, "a", "b"), null);
+  assert.equal(reorderWithinFolder(sessions, "a", "missing"), null);
 });
