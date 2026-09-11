@@ -188,18 +188,76 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
   const [createIndex, setCreateIndex] = createSignal(0);
   let createInput: HTMLInputElement | undefined;
 
-  // Session drag-and-drop: rows carry the dragged id; a drop inside the same
-  // folder group reorders the active list through the host's reorder-sessions
-  // command (the helper keeps folder groups contiguous).
+  // Session drag-and-drop via pointer events (not the HTML5 drag API,
+  // which Chromium refuses to start from rows of buttons): pointerdown
+  // arms the row, a move past a small threshold starts the drag, and the
+  // row under the pointer is found with elementFromPoint. A drop inside
+  // the same folder group reorders the active list through the host's
+  // reorder-sessions command (the helper keeps folder groups contiguous).
   const [dragSessionId, setDragSessionId] = createSignal<string | null>(null);
   const [dragOverId, setDragOverId] = createSignal<string | null>(null);
-  const dropSession = (targetId: string): void => {
-    const dragged = dragSessionId();
+  // Set once a drag actually engaged, so the trailing click on pointerup
+  // doesn't select the session that was just dragged.
+  let suppressNextClick = false;
+  const dropSession = (dragged: string, targetId: string | null): void => {
     setDragSessionId(null);
     setDragOverId(null);
-    if (!dragged) return;
+    if (!targetId) return;
     const ordered = reorderWithinFolder(activeSessions(), dragged, targetId);
     if (ordered) void reorderSessions(ordered);
+  };
+
+  /** Id of the active session row under the pointer, if any. */
+  const sessionRowIdAt = (x: number, y: number): string | null => {
+    const row = document
+      .elementFromPoint(x, y)
+      ?.closest<HTMLElement>(".session-row[data-session-id]");
+    return row?.dataset.sessionId ?? null;
+  };
+
+  const startSessionDrag = (id: string, event: PointerEvent): void => {
+    const startY = event.clientY;
+    let dragging = false;
+    const move = (moveEvent: PointerEvent): void => {
+      if (!dragging) {
+        if (Math.abs(moveEvent.clientY - startY) < 5) return;
+        dragging = true;
+        suppressNextClick = true;
+        setDragSessionId(id);
+      }
+      moveEvent.preventDefault();
+      const targetId = sessionRowIdAt(moveEvent.clientX, moveEvent.clientY);
+      // Only same-folder drops are meaningful; the helper would reject
+      // anything else anyway.
+      const dragged = activeSessions().find((session) => session.id === id);
+      const target = activeSessions().find(
+        (session) => session.id === targetId,
+      );
+      setDragOverId(
+        targetId && target && dragged && target.folder === dragged.folder
+          ? targetId
+          : null,
+      );
+    };
+    const finish = (upEvent: PointerEvent): void => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", cancel);
+      if (dragging)
+        dropSession(id, sessionRowIdAt(upEvent.clientX, upEvent.clientY));
+    };
+    const cancel = (): void => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", cancel);
+      if (dragging) {
+        setDragSessionId(null);
+        setDragOverId(null);
+      }
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", cancel);
   };
 
   // Reset the search/selection each time the modal opens, whether via the
@@ -414,37 +472,22 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
                     dragging: dragSessionId() === s().id,
                     "drag-over": dragOverId() === s().id,
                   }}
-                  draggable
-                  onDragStart={() => setDragSessionId(s().id)}
-                  onDragEnd={() => {
-                    setDragSessionId(null);
-                    setDragOverId(null);
-                  }}
-                  onDragOver={(event) => {
-                    // Only same-folder drops are meaningful; the helper
-                    // would reject anything else anyway.
-                    if (!dragSessionId() || dragSessionId() === s().id) return;
-                    const dragged = activeSessions().find(
-                      (session) => session.id === dragSessionId(),
-                    );
-                    if (dragged?.folder !== s().folder) return;
-                    event.preventDefault();
-                    if (event.dataTransfer)
-                      event.dataTransfer.dropEffect = "move";
-                    setDragOverId(s().id);
-                  }}
-                  onDragLeave={() => {
-                    if (dragOverId() === s().id) setDragOverId(null);
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    dropSession(s().id);
+                  data-session-id={s().id}
+                  onPointerDown={(event) => {
+                    if (event.button !== 0) return;
+                    startSessionDrag(s().id, event);
                   }}
                 >
                   <button
                     type="button"
                     class="session-open"
-                    onClick={() => void selectSession(s().id)}
+                    onClick={() => {
+                      if (suppressNextClick) {
+                        suppressNextClick = false;
+                        return;
+                      }
+                      void selectSession(s().id);
+                    }}
                   >
                     <SessionTitle
                       session={s()}
