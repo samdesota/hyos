@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
 import type {
+  AgentGlobalTabRow,
   AgentMessage,
   AgentMode,
   AgentPlanTask,
@@ -45,9 +46,15 @@ import {
   activeGlobalTab,
   neighborGlobalTabId,
   reconcileGlobalTabs,
+  restoreGlobalTabs,
+  snapshotGlobalTabs,
   unadoptedGlobalHostTab,
   type GlobalTab,
 } from "./global-tabs.js";
+import {
+  createGlobalTabsPersister,
+  snapshotFromRows,
+} from "./global-tabs-persist.js";
 import { createSessionTabsPersister } from "./session-tabs.js";
 import { selectedMode } from "./mode-selection.js";
 import {
@@ -263,6 +270,36 @@ export function createAppState({
       void runBrowser({ type: "close-tab", tabId: tab.tabId });
     }
   };
+
+  // Persisted global strip: the app-level tabs survive restarts through the
+  // agent global-tabs table. Host publishes churn titles on every loading
+  // tick, so writes are debounced and the snapshot is taken when the write
+  // fires — never when scheduled. `lastSavedGlobalJson` remembers exactly
+  // what this renderer last persisted, so the change event our own write
+  // triggers (an echo) is recognized and ignored on its way back.
+  let lastSavedGlobalJson: string | null = null;
+  const globalTabsPersister = createGlobalTabsPersister({
+    delay: 500,
+    snapshot: () =>
+      snapshotGlobalTabs(
+        { tabs: globalTabs(), activeId: activeGlobalTabId() },
+        browserState(),
+      ),
+    save: (rows) => {
+      const json = JSON.stringify(snapshotFromRows(rows));
+      return client.replaceGlobalTabs(rows).then(() => {
+        lastSavedGlobalJson = json;
+      });
+    },
+  });
+  // Every strip mutation — open/close, focus changes, reconciliation-driven
+  // title drift — coalesces into one debounced write.
+  createEffect(() => {
+    void globalTabs();
+    void activeGlobalTabId();
+    void browserState();
+    globalTabsPersister.request();
+  });
 
   // Persisted pane state: the active session's strip is snapshotted into
   // the agent sessions DB so a restart or a renderer reload brings its
@@ -759,6 +796,73 @@ export function createAppState({
   );
   onCleanup(() => unsubscribeSessionTabs());
 
+  // The persisted global strip, applied: browser placements resolve against
+  // the live host (reuse-by-url, else open fresh — mirroring the session
+  // restore), whiteboard placements rehydrate from their stable boardId.
+  // An event whose snapshot is exactly what this renderer last wrote is our
+  // own write echoing back and is skipped, so the apply cannot fight the
+  // strip the user is editing.
+  const applyGlobalTabsRows = async (
+    rows: readonly AgentGlobalTabRow[],
+  ): Promise<void> => {
+    const snapshot = snapshotFromRows(rows);
+    if (JSON.stringify(snapshot) === lastSavedGlobalJson) return;
+    // The boot snapshot may still be in flight; restoring against it keeps
+    // a reload from opening duplicates for tabs that never went away.
+    await bootBrowserSnapshot;
+    const { placements, activeIndex } = restoreGlobalTabs(
+      snapshot,
+      browserState(),
+    );
+    const tabs: GlobalTab[] = [];
+    for (const placement of placements) {
+      if (placement.kind === "whiteboard") {
+        tabs.push({
+          id: `global-whiteboard-${placement.boardId}`,
+          kind: "whiteboard",
+          boardId: placement.boardId,
+        });
+        continue;
+      }
+      if (placement.kind === "reuse") {
+        tabs.push({
+          id: `global-${placement.tabId}`,
+          kind: "browser",
+          tabId: placement.tabId,
+        });
+        continue;
+      }
+      const before = browserState();
+      const next = await runBrowser({
+        type: "create-tab",
+        url: placement.url,
+      });
+      const tabId = next ? createdHostTabId(before, next) : null;
+      if (tabId) {
+        tabs.push({ id: `global-${tabId}`, kind: "browser", tabId });
+      }
+    }
+    setGlobalTabs(tabs);
+    setActiveGlobalTabId(tabs[activeIndex]?.id ?? null);
+  };
+
+  const refreshGlobalTabs = (): void => {
+    void client
+      .globalTabs()
+      .then(applyGlobalTabsRows)
+      .catch(() => undefined); // background pane state; leave the strip as-is
+  };
+
+  // Boot restore: the first load of the persisted strip brings the tabs
+  // back after a restart (the debounced persister then keeps the DB fresh).
+  void bootBrowserSnapshot.then(refreshGlobalTabs);
+
+  // Live apply: another renderer (or a future writer) changing the strip
+  // lands here; the store suppresses no-op writes, so only real changes
+  // fire, and the echo of our own debounced write is swallowed above.
+  const unsubscribeGlobalTabs = client.subscribeGlobalTabs(refreshGlobalTabs);
+  onCleanup(() => unsubscribeGlobalTabs());
+
   const selectSession = async (sessionId: string): Promise<void> => {
     const selectStart = perfNow();
     let feedOpenDone = 0;
@@ -1038,6 +1142,10 @@ export function createAppState({
     // A teardown (window close, hot reload) gets one last best-effort write
     // of the active session's pane before the pending timer dies with it.
     tabsPersister.flush();
+    // One last best-effort write of the global strip before the pending
+    // timer dies with the renderer.
+    globalTabsPersister.flush();
+    globalTabsPersister.dispose();
     narrowSide.removeEventListener("change", collapseSideWhenNarrow);
   });
 
