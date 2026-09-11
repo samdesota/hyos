@@ -782,3 +782,72 @@ test("rename-session command persists the new title and publishes sessions", asy
     await database.close();
   }
 });
+
+test("reorder-sessions command persists manual order and publishes sessions", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+  let reorderedPublished!: () => void;
+  const reordered = new Promise<void>((resolve) => {
+    reorderedPublished = resolve;
+  });
+  let expectSecondFirst = false;
+  let second: Awaited<ReturnType<typeof store.createSession>> | undefined;
+  const host = createAgentHost({
+    window: {} as never,
+    remote: {
+      publish(_capability: unknown, event: string, payload: unknown) {
+        if (event !== "sessions") return;
+        if (!expectSecondFirst) return;
+        const sessions = (payload as { sessions: { id: string }[] }).sessions;
+        if (sessions.length >= 2 && sessions[0].id === second?.sessionId) {
+          reorderedPublished();
+        }
+      },
+    } as never,
+    browser: {
+      id: "browser",
+      version: 2,
+      call: async () => ({
+        generation: 0,
+        sequence: 0,
+        activeTabId: null,
+        tabs: [],
+      }),
+      subscribe: () => () => {},
+    } as never,
+    store,
+    providers: new Map(),
+  });
+
+  try {
+    await host.start();
+    const first = await store.createSession({
+      prompt: "First session",
+      folder: "/tmp/project",
+      providerId: "test",
+      modelId: "test-model",
+    });
+    second = await store.createSession({
+      prompt: "Second session",
+      folder: "/tmp/project",
+      providerId: "test",
+      modelId: "test-model",
+    });
+
+    const result = await host.provider.execute({
+      type: "reorder-sessions",
+      orderedIds: [second.sessionId, first.sessionId],
+    });
+    assert.equal(result.type, "accepted");
+    assert.deepEqual(
+      (await store.listSessions()).map((session) => session.id),
+      [second.sessionId, first.sessionId],
+    );
+    expectSecondFirst = true;
+    await reordered;
+  } finally {
+    await host.dispose();
+    await database.close();
+  }
+});
