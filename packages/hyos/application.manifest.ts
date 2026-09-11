@@ -67,6 +67,12 @@ export const applicationManifest = defineApplicationManifest({
       reload: "hot",
     },
     {
+      id: "whiteboard.renderer",
+      file: "./modules/whiteboard/renderer/index.tsx",
+      host: "renderer",
+      reload: "hot",
+    },
+    {
       id: "agent.renderer",
       file: "./modules/agent-renderer/index.tsx",
       host: "renderer",
