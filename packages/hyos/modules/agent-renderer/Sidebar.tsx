@@ -168,7 +168,7 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
     archivedSessions,
     browserState,
     globalTabs,
-    setActiveGlobalTabId,
+    focusGlobalTab,
     focusedGlobalTab,
     openGlobalTab,
     openWhiteboardTab,
@@ -359,7 +359,7 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
                     class="global-tab"
                     aria-selected={focusedGlobalTab()?.id === tab.id}
                     title={globalTabLabel(tab, browserState())}
-                    onClick={() => setActiveGlobalTabId(tab.id)}
+                    onClick={() => focusGlobalTab(tab.id)}
                   >
                     <span class="side-tab-icon" aria-hidden="true">
                       {globalTabDescriptors[tab.kind].icon}

@@ -76,39 +76,3 @@ export function hashForRoute(route: AppRoute): string {
       return `${ROUTE_PREFIX}/`;
   }
 }
-
-export function syncHashToRoute(route: AppRoute): void {
-  const next = hashForRoute(route);
-  if (window.location.hash === next) return;
-  history.replaceState(null, "", next);
-}
-
-/** Session id encoded in the URL hash, if any. */
-export function sessionFromHash(
-  hash: string = window.location.hash,
-): string | null {
-  const route = routeFromHash(hash);
-  return route.kind === "session" ? route.sessionId : null;
-}
-
-/** Hash fragment that routes to the given session, or "" for no session. */
-export function hashForSession(sessionId: string | null): string {
-  return sessionId ? hashForRoute({ kind: "session", sessionId }) : "";
-}
-
-export function syncHashToSession(sessionId: string | null): void {
-  if (!sessionId) {
-    // No session routes to `/`; unlike a tab route, that clears the hash
-    // entirely so a reload lands on the default view without a fragment.
-    const current = routeFromHash();
-    if (current.kind === "session") {
-      history.replaceState(
-        null,
-        "",
-        window.location.pathname + window.location.search,
-      );
-    }
-    return;
-  }
-  syncHashToRoute({ kind: "session", sessionId });
-}

@@ -4,10 +4,8 @@ import test from "node:test";
 import {
   ROUTE_PATHS,
   hashForRoute,
-  hashForSession,
   routeFromHash,
   routeFromParams,
-  sessionFromHash,
 } from "./session-route.js";
 
 test("hash routes resolve to the three route kinds", () => {
@@ -85,13 +83,4 @@ test("hash routes round-trip", () => {
   ] as const) {
     assert.deepEqual(routeFromHash(hashForRoute(route)), route);
   }
-});
-
-test("session helpers keep working against the route union", () => {
-  assert.equal(hashForSession(null), "");
-  assert.equal(hashForSession("session-1"), "#/session/session-1");
-  assert.equal(sessionFromHash("#/session/session-1"), "session-1");
-  assert.equal(sessionFromHash("#/tabs/global-tab-1"), null);
-  assert.equal(sessionFromHash("#/other"), null);
-  assert.equal(sessionFromHash(""), null);
 });

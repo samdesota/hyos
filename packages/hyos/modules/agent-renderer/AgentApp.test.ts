@@ -21,7 +21,6 @@ import {
   workPaneLabel,
 } from "./sessions-model.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
-import { hashForSession, sessionFromHash } from "./session-route.js";
 import { agentStyles } from "./styles.js";
 
 function sessionSummary(
@@ -352,15 +351,6 @@ test("streaming thinking stays inline until the run completes", () => {
     { type: "message", message: thinking },
     { type: "message", message: finalResponse },
   ]);
-});
-
-test("session routes round-trip through the URL hash", () => {
-  assert.equal(hashForSession(null), "");
-  assert.equal(hashForSession("session-1"), "#/session/session-1");
-  assert.equal(sessionFromHash("#/session/session-1"), "session-1");
-  assert.equal(sessionFromHash("#/session/ses%2Fsion"), "ses/sion");
-  assert.equal(sessionFromHash("#/other"), null);
-  assert.equal(sessionFromHash(""), null);
 });
 
 test("the plan panel sits below the final response, even with later turns", () => {

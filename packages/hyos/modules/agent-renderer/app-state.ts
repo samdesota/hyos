@@ -74,6 +74,12 @@ export type AppStateProps = Readonly<{
    * instead of writing the hash directly.
    */
   navigateToSession: (sessionId: string | null) => void;
+  /**
+   * Route change request for the global tab strip: the URL is the source of
+   * truth for which global tab (if any) is focused, so focus actions
+   * navigate instead of writing the hash directly. Null drops tab focus.
+   */
+  navigateToGlobalTab: (tabId: string | null) => void;
 }>;
 
 /**
@@ -87,6 +93,7 @@ export function createAppState({
   keybindingClient,
   browserClient,
   navigateToSession,
+  navigateToGlobalTab,
 }: AppStateProps) {
   const [providers, setProviders] = createSignal<
     readonly AgentProviderSummary[]
@@ -211,7 +218,7 @@ export function createAppState({
         ...tabs,
         { id: `global-${adoptable.id}`, kind: "browser", tabId: adoptable.id },
       ]);
-      setActiveGlobalTabId(`global-${adoptable.id}`);
+      navigateToGlobalTab(`global-${adoptable.id}`);
       return;
     }
     const before = browserState();
@@ -223,7 +230,7 @@ export function createAppState({
         ? tabs
         : [...tabs, { id: `global-${tabId}`, kind: "browser", tabId }],
     );
-    setActiveGlobalTabId(`global-${tabId}`);
+    navigateToGlobalTab(`global-${tabId}`);
   };
   // A whiteboard tab is a view onto a persisted board, identified up front
   // by uuid: the tab holds only the boardId, so closing it drops the view
@@ -235,7 +242,7 @@ export function createAppState({
       (tab) => tab.kind === "whiteboard" && tab.boardId === boardId,
     );
     if (existing) {
-      setActiveGlobalTabId(existing.id);
+      navigateToGlobalTab(existing.id);
       return;
     }
     const id = `global-whiteboard-${boardId}`;
@@ -244,12 +251,12 @@ export function createAppState({
         ? tabs
         : [...tabs, { id, kind: "whiteboard", boardId }],
     );
-    setActiveGlobalTabId(id);
+    navigateToGlobalTab(id);
   };
   const closeGlobalTab = (tab: GlobalTab): void => {
     const neighborId = neighborGlobalTabId(globalTabs(), tab.id);
     setGlobalTabs((tabs) => tabs.filter(({ id }) => id !== tab.id));
-    if (activeGlobalTabId() === tab.id) setActiveGlobalTabId(neighborId);
+    if (activeGlobalTabId() === tab.id) navigateToGlobalTab(neighborId);
     // Closing retires the page for real: the host tab goes with it, so the
     // strip (and any session pane showing it) reconciles it away.
     if (tab.kind === "browser") {
@@ -1095,6 +1102,7 @@ export function createAppState({
     activeGlobalTabId,
     setActiveGlobalTabId,
     focusedGlobalTab,
+    focusGlobalTab: navigateToGlobalTab,
     openGlobalTab,
     openWhiteboardTab,
     closeGlobalTab,

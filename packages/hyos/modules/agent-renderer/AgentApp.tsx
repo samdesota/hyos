@@ -24,7 +24,8 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   console.log("[DEBUG-boot-7f2c] agent-renderer component:construct");
   const navigate = useNavigate();
   const location = useLocation();
-  const app = createAppState({
+  let app!: ReturnType<typeof createAppState>;
+  app = createAppState({
     client: props.client,
     keybindingClient: props.keybindingClient,
     browserClient: props.browserClient,
@@ -34,6 +35,17 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
         : "/";
       // Navigating to the current path would push a redundant history
       // entry, and re-selecting the active session must stay a no-op.
+      if (location.pathname === next) return;
+      navigate(next, { replace: true });
+    },
+    navigateToGlobalTab: (tabId) => {
+      // Dropping tab focus falls back to the still-open session, else the
+      // new-session view — mirroring what the strip's fallback showed.
+      const next = tabId
+        ? `/tabs/${encodeURIComponent(tabId)}`
+        : app.activeId()
+          ? `/session/${encodeURIComponent(app.activeId()!)}`
+          : "/";
       if (location.pathname === next) return;
       navigate(next, { replace: true });
     },
@@ -57,6 +69,25 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
       return;
     }
     if (location.pathname === "/" && app.activeId() !== null) app.newSession();
+  });
+
+  // Global tab focus follows the same rule: `/tabs/:id` focuses that tab,
+  // and any other route holds no tab focus. Only a tab present in the strip
+  // can be focused — a stale or unknown id (a reload, a just-closed tab)
+  // focuses nothing rather than inventing a selection.
+  const tabsMatch = useMatch(() => ROUTE_PATHS.globalTabs);
+  createEffect(() => {
+    const route = routeFromParams("global-tabs", tabsMatch()?.params.id);
+    if (route.kind === "global-tabs") {
+      const tabId = route.tabId;
+      if (
+        app.activeGlobalTabId() !== tabId &&
+        app.globalTabs().some(({ id }) => id === tabId)
+      )
+        app.setActiveGlobalTabId(tabId);
+      return;
+    }
+    if (app.activeGlobalTabId() !== null) app.setActiveGlobalTabId(null);
   });
 
   return (
