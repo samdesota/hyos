@@ -18,13 +18,17 @@ const card = (
   x: 10,
   y: 20,
   markdown: `# ${id}`,
+  mediaId: null,
   ...overrides,
 });
 
 test("cards are added at world coordinates without disturbing others", () => {
   const first = card("a");
   const cards = addWhiteboardCard([first], card("b", { x: -5, y: 100 }));
-  assert.deepEqual(cards, [first, { id: "b", x: -5, y: 100, markdown: "# b" }]);
+  assert.deepEqual(cards, [
+    first,
+    { id: "b", x: -5, y: 100, markdown: "# b", mediaId: null },
+  ]);
 });
 
 test("updating a card rewrites only its markdown", () => {
@@ -45,7 +49,13 @@ test("removing a card keeps the rest", () => {
 test("moving a card rewrites only its position", () => {
   const cards = [card("a"), card("b", { x: -5, y: 100 })];
   const moved = moveWhiteboardCard(cards, "b", 40, -7);
-  assert.deepEqual(moved[1], { id: "b", x: 40, y: -7, markdown: "# b" });
+  assert.deepEqual(moved[1], {
+    id: "b",
+    x: 40,
+    y: -7,
+    markdown: "# b",
+    mediaId: null,
+  });
   assert.equal(moved[0], cards[0]);
   // Unknown ids leave the list untouched.
   assert.equal(moveWhiteboardCard(cards, "zzz", 0, 0), cards);

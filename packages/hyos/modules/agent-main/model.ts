@@ -155,6 +155,28 @@ export const agentBoardCards = hydb.table(
   ],
 );
 
+// The agent's global tab strip: one row per tab, so the strip survives app
+// restarts. `kind` is the queryable discriminator; everything kind-specific
+// (a browser tab's url/title, a whiteboard tab's boardId) rides in the
+// versioned JSON `data` field, so new tab kinds join without a schema
+// change. `active` (1 = focused tab) and `position` are strip-level state,
+// not tab data.
+export const agentGlobalTabs = hydb.table(
+  "hyos_agent_global_tabs",
+  {
+    id: id().primaryKey(),
+    kind: text().notNull(),
+    data: text(),
+    active: integer().notNull(),
+    position: integer().notNull(),
+    createdAt: timestamp().notNull(),
+    updatedAt: timestamp().notNull(),
+  },
+  (columns) => [
+    uniqueIndex("hyos_agent_global_tabs_position_idx").on(columns.position),
+  ],
+);
+
 export const agentSchema = hydb.schema({
   agentSessions,
   agentMessages,
@@ -162,6 +184,7 @@ export const agentSchema = hydb.schema({
   agentBoards,
   agentBoardCards,
   agentBoardMedia,
+  agentGlobalTabs,
 });
 
 export type StoredAgentSession = InferRow<typeof agentSessions>;

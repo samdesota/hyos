@@ -23,6 +23,8 @@ import type {
 import {
   agentBoardCards,
   agentBoards,
+  agentBoardMedia,
+  agentGlobalTabs,
   agentMessageChunks,
   agentMessages,
   agentSessions,
@@ -115,6 +117,55 @@ function decodePlan(value: string | null | undefined): AgentPlan | null {
 }
 
 const sessionTabsVersion = 1;
+
+/** One persisted global tab's kind-specific payload, decoded from `data`. */
+export type AgentGlobalTabData =
+  | Readonly<{ kind: "browser"; url: string; title: string }>
+  | Readonly<{ kind: "whiteboard"; boardId: string }>;
+
+/** One global tab strip entry as the store API hands it around. */
+export type AgentGlobalTabRow = Readonly<{
+  id: string;
+  data: AgentGlobalTabData;
+  active: boolean;
+  position: number;
+}>;
+
+const globalTabDataVersion = 1;
+
+function encodeGlobalTabData(data: AgentGlobalTabData): string {
+  return JSON.stringify({ version: globalTabDataVersion, ...data });
+}
+
+// One row's payload, decoded defensively: torn or hand-edited JSON — or a
+// shape this build doesn't understand — reads as "no data", dropping just
+// that tab instead of failing the whole strip.
+function decodeGlobalTabData(
+  kind: string,
+  value: string | null | undefined,
+): AgentGlobalTabData | null {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const container = parsed as { version?: unknown };
+    if (container.version !== globalTabDataVersion) return null;
+    if (kind === "browser") {
+      const { url, title } = container as { url?: unknown; title?: unknown };
+      if (typeof url !== "string" || url.length === 0) return null;
+      if (typeof title !== "string") return null;
+      return { kind: "browser", url, title };
+    }
+    if (kind === "whiteboard") {
+      const { boardId } = container as { boardId?: unknown };
+      if (typeof boardId !== "string" || boardId.length === 0) return null;
+      return { kind: "whiteboard", boardId };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 function encodeSessionTabs(tabs: AgentSessionTabs | null): string | null {
   if (!tabs) return null;
@@ -485,6 +536,54 @@ const updateSessionTabsCommand = hydb.command({
   },
 });
 
+// A global-tabs save is a whole-strip replacement: rows the renderer dropped
+// are deleted and the rest upserted. Doing it in one transaction keeps the
+// unique position index from transiently colliding mid-write.
+const replaceGlobalTabsCommand = hydb.command({
+  input: z.object({
+    now: z.date(),
+    tabs: z.array(
+      z.object({
+        id: z.string(),
+        kind: z.string(),
+        data: z.string(),
+        active: z.number(),
+        position: z.number(),
+      }),
+    ),
+    removedIds: z.array(z.string()),
+  }),
+  async handler(transaction, input) {
+    for (const removedId of input.removedIds) {
+      if ((await transaction.get(agentGlobalTabs, [removedId])) !== undefined) {
+        await transaction.delete(agentGlobalTabs, [removedId]);
+      }
+    }
+    for (const tab of input.tabs) {
+      const existing = await transaction.get(agentGlobalTabs, [tab.id]);
+      if (existing === undefined) {
+        await transaction.insert(agentGlobalTabs, {
+          id: tab.id,
+          kind: tab.kind,
+          data: tab.data,
+          active: tab.active,
+          position: tab.position,
+          createdAt: input.now,
+          updatedAt: input.now,
+        });
+      } else {
+        await transaction.update(agentGlobalTabs, [tab.id], {
+          kind: tab.kind,
+          data: tab.data,
+          active: tab.active,
+          position: tab.position,
+          updatedAt: input.now,
+        });
+      }
+    }
+  },
+});
+
 // A board save is a whole-list replacement: the board row is created
 // lazily, every surviving card is upserted, and cards the renderer
 // dropped are deleted. The renderer owns the full card list, so nothing
@@ -503,6 +602,7 @@ const saveBoardCommand = hydb.command({
       }),
     ),
     removedIds: z.array(z.string()),
+    removedMediaIds: z.array(z.string()),
   }),
   async handler(transaction, input) {
     if ((await transaction.get(agentBoards, [input.boardId])) === undefined) {
@@ -543,6 +643,44 @@ const saveBoardCommand = hydb.command({
           updatedAt: input.now,
         });
       }
+    }
+    // Drop media no surviving card references, so deleted image cards do
+    // not leave their bytes behind.
+    const referenced = new Set(
+      input.cards.flatMap((card) => (card.mediaId ? [card.mediaId] : [])),
+    );
+    for (const mediaId of input.removedMediaIds) {
+      if (!referenced.has(mediaId)) {
+        if ((await transaction.get(agentBoardMedia, [mediaId])) !== undefined) {
+          await transaction.delete(agentBoardMedia, [mediaId]);
+        }
+      }
+    }
+  },
+});
+
+// One image per media row, written as soon as the renderer pastes it —
+// before the card that references it is saved.
+const saveBoardMediaCommand = hydb.command({
+  input: z.object({
+    boardId: z.string(),
+    mediaId: z.string(),
+    data: z.string(),
+    now: z.date(),
+  }),
+  async handler(transaction, input) {
+    const existing = await transaction.get(agentBoardMedia, [input.mediaId]);
+    if (existing === undefined) {
+      await transaction.insert(agentBoardMedia, {
+        id: input.mediaId,
+        boardId: input.boardId,
+        data: input.data,
+        createdAt: input.now,
+      });
+    } else {
+      await transaction.update(agentBoardMedia, [input.mediaId], {
+        data: input.data,
+      });
     }
   },
 });
@@ -731,10 +869,18 @@ export interface AgentStore {
     sessionId: string,
     tabs: AgentSessionTabs | null,
   ): Promise<void>;
-  /** A board's cards; a board that was never saved reads as empty. */
+  /** The persisted global tab strip, ordered by position. */
+  loadGlobalTabs(): Promise<AgentGlobalTabRow[]>;
+  /** Replace the whole global tab strip with the given one. */
+  replaceGlobalTabs(tabs: readonly AgentGlobalTabRow[]): Promise<void>;
+  /** Fires whenever the global tabs table changes; the caller re-reads. */
+  watchGlobalTabs(listener: () => void): () => void;
+  /** A board's cards and media; a board that was never saved reads as empty. */
   loadBoard(boardId: string): Promise<AgentBoard>;
   /** Replace a board's whole card list with the given one. */
   saveBoard(boardId: string, cards: readonly AgentBoardCard[]): Promise<void>;
+  /** Store one image (a data URL) referenced by a card's mediaId. */
+  saveBoardMedia(boardId: string, mediaId: string, data: string): Promise<void>;
   updateUsage(
     sessionId: string,
     messageId: string,
@@ -1024,12 +1170,69 @@ export function createAgentStore(database: Database): AgentStore {
         tabs: encodeSessionTabs(tabs),
       });
     },
+    async loadGlobalTabs() {
+      const rows = await database.fetch(
+        hydb
+          .query(agentGlobalTabs)
+          .orderBy((tab) => [tab.position.asc(), tab.id.asc()])
+          .many(),
+      );
+      return rows.flatMap((row) => {
+        const data = decodeGlobalTabData(row.kind, row.data);
+        return data
+          ? [
+              {
+                id: row.id,
+                data,
+                active: row.active !== 0,
+                position: row.position,
+              },
+            ]
+          : [];
+      });
+    },
+    async replaceGlobalTabs(tabs) {
+      const stored = await database.fetch(hydb.query(agentGlobalTabs).many());
+      const kept = new Set(tabs.map((tab) => tab.id));
+      const removedIds = stored
+        .filter((row) => !kept.has(row.id))
+        .map((row) => row.id);
+      await database.execute(replaceGlobalTabsCommand, {
+        now: now(),
+        tabs: tabs.map((tab) => ({
+          id: tab.id,
+          kind: tab.data.kind,
+          data: encodeGlobalTabData(tab.data),
+          active: tab.active ? 1 : 0,
+          position: tab.position,
+        })),
+        removedIds,
+      });
+    },
+    watchGlobalTabs(listener) {
+      // One row per tab means any commit touching the table is a strip
+      // change; the caller re-fetches via loadGlobalTabs, so a bare ping
+      // carries all the information there is.
+      return database.subscribe(
+        hydb
+          .query(agentGlobalTabs)
+          .orderBy((tab) => [tab.position.asc(), tab.id.asc()])
+          .many(),
+        listener,
+      );
+    },
     async loadBoard(boardId) {
       const rows = await database.fetch(
         hydb
           .query(agentBoardCards)
           .where((card) => card.boardId.eq(boardId))
           .orderBy((card) => [card.id.asc()])
+          .many(),
+      );
+      const mediaRows = await database.fetch(
+        hydb
+          .query(agentBoardMedia)
+          .where((media) => media.boardId.eq(boardId))
           .many(),
       );
       return {
@@ -1041,6 +1244,7 @@ export function createAgentStore(database: Database): AgentStore {
           markdown: row.markdown,
           mediaId: row.mediaId,
         })),
+        media: Object.fromEntries(mediaRows.map((row) => [row.id, row.data])),
       };
     },
     async saveBoard(boardId, cards) {
@@ -1054,11 +1258,34 @@ export function createAgentStore(database: Database): AgentStore {
       const removedIds = stored
         .filter((row) => !kept.has(row.id))
         .map((row) => row.id);
+      // Media orphans: referenced nowhere after this save, so their image
+      // bytes are deleted alongside the cards that pointed at them.
+      const referenced = new Set(
+        cards.flatMap((card) => (card.mediaId ? [card.mediaId] : [])),
+      );
+      const storedMedia = await database.fetch(
+        hydb
+          .query(agentBoardMedia)
+          .where((media) => media.boardId.eq(boardId))
+          .many(),
+      );
+      const removedMediaIds = storedMedia
+        .filter((row) => !referenced.has(row.id))
+        .map((row) => row.id);
       await database.execute(saveBoardCommand, {
         boardId,
         now: now(),
         cards: cards.map((card) => ({ ...card })),
         removedIds,
+        removedMediaIds,
+      });
+    },
+    async saveBoardMedia(boardId, mediaId, data) {
+      await database.execute(saveBoardMediaCommand, {
+        boardId,
+        mediaId,
+        data,
+        now: now(),
       });
     },
     async updateUsage(sessionId, messageId, usage) {

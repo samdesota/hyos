@@ -10,6 +10,8 @@ export type WhiteboardCard = Readonly<{
   x: number;
   y: number;
   markdown: string;
+  /** Set for image cards: a reference into the board's media map. */
+  mediaId: string | null;
 }>;
 
 /** Add a card at a world point; the caller supplies the fresh id. */

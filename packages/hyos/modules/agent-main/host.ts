@@ -873,6 +873,8 @@ export function createAgentHost(options: {
       store.saveSessionTabs(sessionId, tabs),
     board: (boardId) => store.loadBoard(boardId),
     saveBoard: (boardId, cards) => store.saveBoard(boardId, cards),
+    saveBoardMedia: (boardId, mediaId, data) =>
+      store.saveBoardMedia(boardId, mediaId, data),
   };
 
   return {

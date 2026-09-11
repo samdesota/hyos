@@ -194,6 +194,7 @@ export const agentStyles = String.raw`
   .whiteboard-card-body > :last-child { margin-bottom: 0; }
   .whiteboard-card-body code { padding: 1px 4px; border-radius: 4px; background: #171816; font-size: 12px; }
   .whiteboard-card-body pre { padding: 8px; border-radius: 8px; background: #171816; overflow-x: auto; }
+  .whiteboard-card-image { display: block; max-width: 100%; border-radius: 6px; user-select: none; }
   .whiteboard-card-editor {
     display: block; width: 100%; min-height: 64px; resize: none; border: 0; outline: 0;
     color: #f2f0ea; background: transparent; font: inherit; line-height: 1.5;

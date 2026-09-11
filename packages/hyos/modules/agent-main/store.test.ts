@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { AgentSessionTabs } from "../../capabilities/agent.js";
 import { hydb, memoryStorage } from "@hyos/hydb";
 
-import { agentSchema, agentSessions } from "./model.js";
+import { agentGlobalTabs, agentSchema, agentSessions } from "./model.js";
 import { createAgentStore } from "./store.js";
 
 test("agent sessions persist chunked messages and publish HyDB changes", async () => {
@@ -526,6 +526,115 @@ test("watchSessionTabs fires with decoded strips as they are saved", async () =>
   }
 });
 
+test("global tabs persist as rows and decode defensively", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    // An empty strip reads as empty.
+    assert.deepEqual(await store.loadGlobalTabs(), []);
+
+    const tabs: import("./store.js").AgentGlobalTabRow[] = [
+      {
+        id: "global-tab-1",
+        data: { kind: "browser", url: "https://example.com/", title: "Ex" },
+        active: true,
+        position: 0,
+      },
+      {
+        id: "whiteboard-board-1",
+        data: { kind: "whiteboard", boardId: "board-1" },
+        active: false,
+        position: 1,
+      },
+    ];
+    await store.replaceGlobalTabs(tabs);
+    assert.deepEqual(await store.loadGlobalTabs(), tabs);
+
+    // Replacing with a shorter strip drops the removed rows.
+    await store.replaceGlobalTabs([tabs[0]]);
+    assert.deepEqual(await store.loadGlobalTabs(), [tabs[0]]);
+
+    // Garbage in the data column — torn or hand-edited — drops just that
+    // row instead of failing the whole strip, as does an unknown kind.
+    await store.replaceGlobalTabs([
+      tabs[0],
+      {
+        id: "whiteboard-x",
+        data: { kind: "whiteboard", boardId: "x" },
+        active: false,
+        position: 1,
+      },
+    ]);
+    await database.execute(
+      hydb.command({
+        input: z.object({
+          updates: z.array(
+            z.object({ id: z.string(), kind: z.string(), data: z.string() }),
+          ),
+        }),
+        async handler(transaction, input) {
+          for (const update of input.updates) {
+            await transaction.update(agentGlobalTabs, [update.id], {
+              kind: update.kind,
+              data: update.data,
+            });
+          }
+        },
+      }),
+      {
+        updates: [
+          { id: "global-tab-1", kind: "browser", data: "{not json" },
+          {
+            id: "whiteboard-x",
+            kind: "unknown",
+            data: JSON.stringify({ version: 1, boardId: "x" }),
+          },
+        ],
+      },
+    );
+    assert.deepEqual(await store.loadGlobalTabs(), []);
+  } finally {
+    await database.close();
+  }
+});
+
+test("watchGlobalTabs fires when the strip is replaced", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    let seenChange = false;
+    const changed = new Promise<void>((resolve) => {
+      let unsubscribe: () => void = () => undefined;
+      unsubscribe = store.watchGlobalTabs(() => {
+        if (!seenChange) return;
+        unsubscribe();
+        resolve();
+      });
+    });
+
+    seenChange = true;
+    await store.replaceGlobalTabs([
+      {
+        id: "global-tab-1",
+        data: { kind: "browser", url: "https://example.com/", title: "Ex" },
+        active: true,
+        position: 0,
+      },
+    ]);
+    await changed;
+
+    const tabs = await store.loadGlobalTabs();
+    assert.equal(tabs.length, 1);
+    assert.equal(tabs[0].active, true);
+  } finally {
+    await database.close();
+  }
+});
+
 test("reorderSessions persists manual order; unordered sessions stay newest-first on top", async () => {
   const storage = await memoryStorage({ schema: agentSchema });
   const database = await hydb.database({ schema: agentSchema, storage });
@@ -602,6 +711,38 @@ test("reorderSessions persists manual order; unordered sessions stay newest-firs
   }
 });
 
+test("board media round-trips and orphaned images are dropped on save", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    await store.saveBoardMedia(
+      "board-1",
+      "media-1",
+      "data:image/png;base64,QUJD",
+    );
+    await store.saveBoard("board-1", [
+      { id: "card-a", x: 0, y: 0, markdown: "", mediaId: "media-1" },
+    ]);
+    const board = await store.loadBoard("board-1");
+    assert.deepEqual(board.cards, [
+      { id: "card-a", x: 0, y: 0, markdown: "", mediaId: "media-1" },
+    ]);
+    assert.deepEqual(board.media, {
+      "media-1": "data:image/png;base64,QUJD",
+    });
+
+    // Dropping the image card removes its media with it.
+    await store.saveBoard("board-1", []);
+    const emptied = await store.loadBoard("board-1");
+    assert.deepEqual(emptied.cards, []);
+    assert.deepEqual(emptied.media, {});
+  } finally {
+    await database.close();
+  }
+});
+
 test("boards persist whole card lists and replace removed cards", async () => {
   const storage = await memoryStorage({ schema: agentSchema });
   const database = await hydb.database({ schema: agentSchema, storage });
@@ -610,7 +751,7 @@ test("boards persist whole card lists and replace removed cards", async () => {
   try {
     // A board that was never saved reads as empty.
     const fresh = await store.loadBoard("board-1");
-    assert.deepEqual(fresh, { boardId: "board-1", cards: [] });
+    assert.deepEqual(fresh, { boardId: "board-1", cards: [], media: {} });
 
     await store.saveBoard("board-1", [
       { id: "card-a", x: 10, y: -4.5, markdown: "# a", mediaId: null },

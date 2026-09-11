@@ -40,17 +40,20 @@ const saveDebounceMs = 400;
 
 /**
  * The whiteboard surface for one board: an infinite pan/zoom canvas of
- * markdown cards. Dragging pans, the wheel scrolls, ctrl/cmd+wheel (a
- * trackpad pinch) zooms toward the cursor, a double-click on empty canvas
- * plants a new card, dragging a card moves it, and clicking a card edits
- * its markdown inline. Cards live at world coordinates, so they pan and
- * zoom with the board; the card list is loaded from and debounced-saved to
- * the agent capability's boards schema, keyed by the tab's boardId.
+ * markdown and image cards. Dragging pans, the wheel scrolls, ctrl/cmd+wheel
+ * (a trackpad pinch) zooms toward the cursor, a double-click on empty canvas
+ * plants a new card, dragging a card moves it, clicking a card edits its
+ * markdown inline, and pasting an image plants it as an image card. Cards
+ * live at world coordinates, so they pan and zoom with the board; the card
+ * list is loaded from and debounced-saved to the agent capability's boards
+ * schema, keyed by the tab's boardId (image bytes go to the media table at
+ * paste time).
  */
 export const WhiteboardPage: Component<WhiteboardPageProps> = (props) => {
   const [viewport, setViewport] = createSignal<Viewport>(initialViewport);
   const [panning, setPanning] = createSignal(false);
   const [cards, setCards] = createSignal<readonly WhiteboardCard[]>([]);
+  const [media, setMedia] = createSignal<Readonly<Record<string, string>>>({});
   const [editingId, setEditingId] = createSignal<string | null>(null);
   const [draggingId, setDraggingId] = createSignal<string | null>(null);
 
@@ -76,7 +79,7 @@ export const WhiteboardPage: Component<WhiteboardPageProps> = (props) => {
           x: card.x,
           y: card.y,
           markdown: card.markdown,
-          mediaId: null,
+          mediaId: card.mediaId,
         })),
       );
       savedSnapshot = current;
@@ -96,14 +99,16 @@ export const WhiteboardPage: Component<WhiteboardPageProps> = (props) => {
       .board(props.boardId)
       .then((board) => {
         if (disposed) return;
-        const restored = board.cards.map(({ id, x, y, markdown }) => ({
+        const restored = board.cards.map(({ id, x, y, markdown, mediaId }) => ({
           id,
           x,
           y,
           markdown,
+          mediaId,
         }));
         savedSnapshot = restored;
         setCards(restored);
+        setMedia({ ...board.media });
         setLoaded(true);
       })
       .catch((error) => console.error("Whiteboard load failed", error));
@@ -130,7 +135,7 @@ export const WhiteboardPage: Component<WhiteboardPageProps> = (props) => {
               x: card.x,
               y: card.y,
               markdown: card.markdown,
-              mediaId: null,
+              mediaId: card.mediaId,
             })),
           )
           .catch(() => undefined);
@@ -241,7 +246,13 @@ export const WhiteboardPage: Component<WhiteboardPageProps> = (props) => {
     );
     const id = crypto.randomUUID();
     setCards((list) =>
-      addWhiteboardCard(list, { id, x: world.x, y: world.y, markdown: "" }),
+      addWhiteboardCard(list, {
+        id,
+        x: world.x,
+        y: world.y,
+        markdown: "",
+        mediaId: null,
+      }),
     );
     setEditingId(id);
   };
@@ -256,6 +267,59 @@ export const WhiteboardPage: Component<WhiteboardPageProps> = (props) => {
       setCards((list) => updateWhiteboardCard(list, id, markdown));
     }
   };
+
+  // Pasting an image plants it as an image card at the center of the
+  // viewport. The bytes are written to the media table first (as a data
+  // URL) so the card save that follows always has its image; deleting the
+  // card later cleans the media up on the next save. Text pastes are left
+  // to the active editor — only image payloads are captured here.
+  const onDocumentPaste = (event: ClipboardEvent): void => {
+    if (editingId() !== null || !canvas) return;
+    const item = Array.from(event.clipboardData?.items ?? []).find((entry) =>
+      entry.type.startsWith("image/"),
+    );
+    const file = item?.getAsFile();
+    if (!file) return;
+    event.preventDefault();
+    const mime = item!.type;
+    const bounds = canvas.getBoundingClientRect();
+    const world = screenToWorld(
+      viewport(),
+      bounds.width / 2,
+      bounds.height / 2,
+    );
+    void file.arrayBuffer().then((buffer: ArrayBuffer) => {
+      // btoa in 32k chunks: spread limits keep the argument list bounded.
+      let binary = "";
+      const bytes = new Uint8Array(buffer);
+      for (let start = 0; start < bytes.length; start += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(start, start + 0x8000));
+      }
+      const dataUrl = `data:${mime};base64,${btoa(binary)}`;
+      const cardId = crypto.randomUUID();
+      const mediaId = crypto.randomUUID();
+      void props.client
+        .saveBoardMedia(props.boardId, mediaId, dataUrl)
+        .then(() => {
+          if (disposed) return;
+          setMedia((current) => ({ ...current, [mediaId]: dataUrl }));
+          setCards((list) =>
+            addWhiteboardCard(list, {
+              id: cardId,
+              x: world.x,
+              y: world.y,
+              markdown: "",
+              mediaId,
+            }),
+          );
+        })
+        .catch((error) =>
+          console.error("Whiteboard image paste failed", error),
+        );
+    });
+  };
+  onMount(() => document.addEventListener("paste", onDocumentPaste));
+  onCleanup(() => document.removeEventListener("paste", onDocumentPaste));
 
   const onCardPointerDown = (card: WhiteboardCard) => (event: PointerEvent) => {
     if (event.button !== 0) return;
@@ -320,8 +384,11 @@ export const WhiteboardPage: Component<WhiteboardPageProps> = (props) => {
     }
     cardDrag = null;
     setDraggingId(null);
-    // A still press is a click: open this card's editor.
-    if (!current.moved && editingId() === null) setEditingId(card.id);
+    // A still press is a click: open this card's editor. Image cards have
+    // no markdown editor — a blank commit would delete the image.
+    if (!current.moved && editingId() === null && card.mediaId === null) {
+      setEditingId(card.id);
+    }
   };
   const onCardPointerCancel = (event: PointerEvent) => {
     if (cardDrag?.pointerId !== event.pointerId) return;
@@ -365,33 +432,47 @@ export const WhiteboardPage: Component<WhiteboardPageProps> = (props) => {
                 onPointerCancel={onCardPointerCancel}
               >
                 <Show
-                  when={editingId() === card.id}
+                  when={card.mediaId === null ? false : media()[card.mediaId]}
                   fallback={
-                    <div
-                      class="whiteboard-card-body"
-                      innerHTML={renderAgentMarkdown(card.markdown)}
-                    />
+                    <Show
+                      when={editingId() === card.id}
+                      fallback={
+                        <div
+                          class="whiteboard-card-body"
+                          innerHTML={renderAgentMarkdown(card.markdown)}
+                        />
+                      }
+                    >
+                      <textarea
+                        ref={(el) => {
+                          editor = el;
+                          queueMicrotask(() => el.focus());
+                        }}
+                        class="whiteboard-card-editor"
+                        value={card.markdown}
+                        placeholder="Write markdown…"
+                        aria-label="Card markdown"
+                        onBlur={(event) =>
+                          commitEdit(card.id, event.currentTarget.value)
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            commitEdit(card.id, event.currentTarget.value);
+                          }
+                        }}
+                      />
+                    </Show>
                   }
                 >
-                  <textarea
-                    ref={(el) => {
-                      editor = el;
-                      queueMicrotask(() => el.focus());
-                    }}
-                    class="whiteboard-card-editor"
-                    value={card.markdown}
-                    placeholder="Write markdown…"
-                    aria-label="Card markdown"
-                    onBlur={(event) =>
-                      commitEdit(card.id, event.currentTarget.value)
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Escape") {
-                        event.preventDefault();
-                        commitEdit(card.id, event.currentTarget.value);
-                      }
-                    }}
-                  />
+                  {(dataUrl) => (
+                    <img
+                      class="whiteboard-card-image"
+                      src={dataUrl()}
+                      alt="Pasted image"
+                      draggable={false}
+                    />
+                  )}
                 </Show>
               </div>
             )}
@@ -400,7 +481,9 @@ export const WhiteboardPage: Component<WhiteboardPageProps> = (props) => {
       </div>
       <output class="whiteboard-zoom">{percent()}</output>
       <Show when={cards().length === 0}>
-        <p class="whiteboard-hint">Double-click to add a card</p>
+        <p class="whiteboard-hint">
+          Double-click to add a card, or paste an image
+        </p>
       </Show>
       <Show when={panning()}>
         <span class="visually-hidden" role="status">

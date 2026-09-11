@@ -91,6 +91,7 @@ export interface AgentClient {
   ): Promise<void>;
   board(boardId: string): Promise<AgentBoard>;
   saveBoard(boardId: string, cards: readonly AgentBoardCard[]): Promise<void>;
+  saveBoardMedia(boardId: string, mediaId: string, data: string): Promise<void>;
   dispose(): void;
 }
 
@@ -172,6 +173,8 @@ export function createAgentClient(
       agent.call("saveSessionTabs", sessionId, tabs),
     board: (boardId) => agent.call("board", boardId),
     saveBoard: (boardId, cards) => agent.call("saveBoard", boardId, cards),
+    saveBoardMedia: (boardId, mediaId, data) =>
+      agent.call("saveBoardMedia", boardId, mediaId, data),
     dispose() {
       unsubscribeFeedEvents();
       feeds.clear();
