@@ -57,6 +57,33 @@ function stringArg(
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/**
+ * Kill a spawned child and its whole process tree. The child is spawned as a
+ * process-group leader (`detached: true`), so a negative pid signals every
+ * descendant; escalating to SIGKILL guarantees cleanup even if SIGTERM is
+ * ignored. Without this, grandchildren keep the stdio pipes open, the `close`
+ * event never fires, and an aborted command hangs the agent run forever.
+ */
+function killTree(child: import("node:child_process").ChildProcess): void {
+  const pid = child.pid;
+  if (pid === undefined) return;
+  const signalGroup = (name: NodeJS.Signals): void => {
+    try {
+      process.kill(-pid, name);
+    } catch {
+      // Process group already gone.
+    }
+    try {
+      child.kill(name);
+    } catch {
+      // Child already gone.
+    }
+  };
+  signalGroup("SIGTERM");
+  const escalate = setTimeout(() => signalGroup("SIGKILL"), 2_000);
+  child.once("close", () => clearTimeout(escalate));
+}
+
 function run(
   command: string,
   args: readonly string[],
@@ -68,6 +95,7 @@ function run(
     const child = spawn(command, [...args], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
     });
     let output = "";
     const append = (chunk: Buffer): void => {
@@ -75,8 +103,15 @@ function run(
     };
     child.stdout.on("data", append);
     child.stderr.on("data", append);
-    const timer = setTimeout(() => child.kill("SIGTERM"), timeout);
-    const abort = () => child.kill("SIGTERM");
+    const timer = setTimeout(() => killTree(child), timeout);
+    const abort = () => {
+      killTree(child);
+      // Settle immediately so a stray descendant holding the stdio pipes
+      // open can never block the run after the caller cancelled.
+      if (!signal.aborted) return;
+      clearTimeout(timer);
+      reject(new Error("Cancelled"));
+    };
     signal.addEventListener("abort", abort, { once: true });
     child.once("error", reject);
     child.once("close", (code) => {
