@@ -359,6 +359,7 @@ export function createAgentHost(options: {
   let sessionPublishing = Promise.resolve();
   let unsubscribeSessions: (() => void) | undefined;
   let unsubscribeSessionTabs: (() => void) | undefined;
+  let unsubscribeGlobalTabs: (() => void) | undefined;
   let accepting = true;
 
   const sessionsState = async (): Promise<AgentSessionsState> => ({
@@ -875,6 +876,8 @@ export function createAgentHost(options: {
     saveBoard: (boardId, cards) => store.saveBoard(boardId, cards),
     saveBoardMedia: (boardId, mediaId, data) =>
       store.saveBoardMedia(boardId, mediaId, data),
+    globalTabs: () => store.loadGlobalTabs(),
+    replaceGlobalTabs: (tabs) => store.replaceGlobalTabs(tabs),
   };
 
   return {
@@ -892,6 +895,12 @@ export function createAgentHost(options: {
         if (!accepting) return;
         remote.publish(agentCapability, "sessionTabs", change);
       });
+      // A bare change ping: the strip has no per-change payload, so the
+      // renderer re-reads via globalTabs() when it fires.
+      unsubscribeGlobalTabs = store.watchGlobalTabs(() => {
+        if (!accepting) return;
+        remote.publish(agentCapability, "globalTabs", undefined);
+      });
       publishSessions();
       console.log("[DEBUG-boot-7f2c] agent-host initial-publish:scheduled");
     },
@@ -901,6 +910,8 @@ export function createAgentHost(options: {
       unsubscribeSessions = undefined;
       unsubscribeSessionTabs?.();
       unsubscribeSessionTabs = undefined;
+      unsubscribeGlobalTabs?.();
+      unsubscribeGlobalTabs = undefined;
       for (const feedId of [...feeds.keys()]) closeFeed(feedId);
       for (const run of activeRuns.values()) run.controller.abort();
       await Promise.allSettled([...activeRuns.values()].map((run) => run.done));

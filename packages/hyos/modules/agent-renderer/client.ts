@@ -6,6 +6,7 @@ import {
   type AgentCommandResult,
   type AgentFeedChange,
   type AgentFileContent,
+  type AgentGlobalTabRow,
   type AgentMessageChange,
   type AgentMessageCursor,
   type AgentMessagePage,
@@ -77,6 +78,8 @@ export interface AgentClient {
   subscribeSessionTabs(
     listener: (change: AgentSessionTabsChange) => void,
   ): () => void;
+  /** Fires whenever the persisted global tab strip changes in the database. */
+  subscribeGlobalTabs(listener: () => void): () => void;
   openFeed(sessionId: string, newestCount?: number): Promise<AgentMessageFeed>;
   loadOlder(
     sessionId: string,
@@ -92,6 +95,8 @@ export interface AgentClient {
   board(boardId: string): Promise<AgentBoard>;
   saveBoard(boardId: string, cards: readonly AgentBoardCard[]): Promise<void>;
   saveBoardMedia(boardId: string, mediaId: string, data: string): Promise<void>;
+  globalTabs(): Promise<readonly AgentGlobalTabRow[]>;
+  replaceGlobalTabs(tabs: readonly AgentGlobalTabRow[]): Promise<void>;
   dispose(): void;
 }
 
@@ -135,6 +140,7 @@ export function createAgentClient(
     subscribeSessions: (listener) => agent.subscribe("sessions", listener),
     subscribeSessionTabs: (listener) =>
       agent.subscribe("sessionTabs", listener),
+    subscribeGlobalTabs: (listener) => agent.subscribe("globalTabs", listener),
     async openFeed(sessionId, newestCount = 200) {
       const opened = await agent.call("openFeed", sessionId, newestCount);
       const feed: LocalFeed = {
@@ -175,6 +181,8 @@ export function createAgentClient(
     saveBoard: (boardId, cards) => agent.call("saveBoard", boardId, cards),
     saveBoardMedia: (boardId, mediaId, data) =>
       agent.call("saveBoardMedia", boardId, mediaId, data),
+    globalTabs: () => agent.call("globalTabs"),
+    replaceGlobalTabs: (tabs) => agent.call("replaceGlobalTabs", tabs),
     dispose() {
       unsubscribeFeedEvents();
       feeds.clear();

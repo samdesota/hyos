@@ -19,7 +19,13 @@ import type {
   AgentSessionSummary,
   AgentSessionTabs,
   AgentSessionTabsChange,
+  AgentGlobalTabData,
+  AgentGlobalTabRow,
 } from "../../capabilities/agent.js";
+
+// The strip row types live in the capability contract (the renderer reads the
+// same shapes over the wire); re-exported here for the store's callers.
+export type { AgentGlobalTabData, AgentGlobalTabRow };
 import {
   agentBoardCards,
   agentBoards,
@@ -117,19 +123,6 @@ function decodePlan(value: string | null | undefined): AgentPlan | null {
 }
 
 const sessionTabsVersion = 1;
-
-/** One persisted global tab's kind-specific payload, decoded from `data`. */
-export type AgentGlobalTabData =
-  | Readonly<{ kind: "browser"; url: string; title: string }>
-  | Readonly<{ kind: "whiteboard"; boardId: string }>;
-
-/** One global tab strip entry as the store API hands it around. */
-export type AgentGlobalTabRow = Readonly<{
-  id: string;
-  data: AgentGlobalTabData;
-  active: boolean;
-  position: number;
-}>;
 
 const globalTabDataVersion = 1;
 

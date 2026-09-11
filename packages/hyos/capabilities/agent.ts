@@ -55,6 +55,23 @@ export type AgentSessionTabsChange = Readonly<{
   tabs: AgentSessionTabs | null;
 }>;
 
+/**
+ * One persisted global tab's kind-specific payload, decoded from the row's
+ * versioned JSON `data` field. Kinds form an open union so new surfaces join
+ * without a schema change.
+ */
+export type AgentGlobalTabData =
+  | Readonly<{ kind: "browser"; url: string; title: string }>
+  | Readonly<{ kind: "whiteboard"; boardId: string }>;
+
+/** One global tab strip entry as the store API hands it around. */
+export type AgentGlobalTabRow = Readonly<{
+  id: string;
+  data: AgentGlobalTabData;
+  active: boolean;
+  position: number;
+}>;
+
 export type AgentActivity =
   | Readonly<{
       type: "commentary";
@@ -242,7 +259,7 @@ export type AgentCommandResult =
 
 export const agentCapability = defineRemoteCapability({
   id: "agent",
-  version: 7,
+  version: 8,
   methods: {
     execute: remoteMethod<
       readonly [command: AgentCommand],
@@ -287,10 +304,19 @@ export const agentCapability = defineRemoteCapability({
       readonly [boardId: string, mediaId: string, data: string],
       void
     >(),
+    /** The persisted global tab strip, ordered by position. */
+    globalTabs: remoteMethod<readonly [], readonly AgentGlobalTabRow[]>(),
+    /** Replace the whole global tab strip with the given one. */
+    replaceGlobalTabs: remoteMethod<
+      readonly [tabs: readonly AgentGlobalTabRow[]],
+      void
+    >(),
   },
   events: {
     sessions: remoteEvent<AgentSessionsState>(),
     messageChange: remoteEvent<AgentFeedChange>(),
     sessionTabs: remoteEvent<AgentSessionTabsChange>(),
+    /** Pings whenever the global tab strip changed; the caller re-reads. */
+    globalTabs: remoteEvent<void>(),
   },
 });
