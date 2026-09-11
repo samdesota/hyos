@@ -104,6 +104,10 @@ export const agentMessageChunks = hydb.table(
   ],
 );
 
+// LEGACY board tables, kept only so existing storages keep opening: hydb
+// has no table-removal migration, and the storage manifest's schema
+// fingerprint still covers them. Whiteboard persistence moved to the
+// whiteboard.main module's own schema; nothing writes these tables anymore.
 // Boards are identified up front by the tab's uuid, so the row is created
 // lazily on first save; a board with no row simply has no cards yet.
 export const agentBoards = hydb.table(
@@ -116,8 +120,9 @@ export const agentBoards = hydb.table(
   (columns) => [index("hyos_agent_boards_updated_idx").on(columns.updatedAt)],
 );
 
-// hydb has no blob type (Uint8Array silently corrupts), so image bytes
-// live as base64 text in this dedicated table, referenced by card mediaId.
+// hydb has no blob type (Uint8Array silently corrupts), so images live as
+// data-URL text in this dedicated table, referenced by card mediaId; the
+// data URL carries the mime type with the bytes.
 // Declared before the cards table so their forward reference is safe.
 export const agentBoardMedia = hydb.table(
   "hyos_agent_board_media",

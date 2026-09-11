@@ -3,6 +3,7 @@ import { createEffect, Show, type Component } from "solid-js";
 
 import type { BrowserClient } from "../browser-client/types.js";
 import type { BrowserViewModule } from "../browser-view/types.js";
+import type { WhiteboardViewModule } from "../whiteboard/renderer/types.js";
 import type { AgentClient, KeybindingClient } from "./client.js";
 import { agentStyles } from "./styles.js";
 import { createAppState } from "./app-state.js";
@@ -18,6 +19,7 @@ type AgentAppProps = Readonly<{
   keybindingClient: KeybindingClient;
   browserClient: BrowserClient;
   BrowserView: BrowserViewModule["BrowserView"];
+  WhiteboardPage: WhiteboardViewModule["WhiteboardPage"];
 }>;
 
 export const AgentApp: Component<AgentAppProps> = (props) => {
@@ -102,9 +104,9 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
         <main class="agent-main">
           <GlobalTabPage
             app={app}
-            client={props.client}
             root={props.root}
             BrowserView={props.BrowserView}
+            WhiteboardPage={props.WhiteboardPage}
           />
           <Show
             when={!focusedGlobalTab() && activeSession()}

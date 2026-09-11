@@ -4,6 +4,7 @@ import { render } from "solid-js/web";
 import type { RendererRemoteCapabilities } from "../../remote-capabilities.js";
 import type { BrowserClient } from "../browser-client/types.js";
 import type { BrowserViewModule } from "../browser-view/types.js";
+import type { WhiteboardViewModule } from "../whiteboard/renderer/types.js";
 import { AgentApp } from "./AgentApp.js";
 import { createAgentClient, createKeybindingClient } from "./client.js";
 import { ROUTE_PATHS } from "./session-route.js";
@@ -18,6 +19,7 @@ registerModule(
       "remote.capabilities",
       "browser.client",
       "browser.view",
+      "whiteboard.view",
     ],
     provide: ["agent.ui"],
 
@@ -26,6 +28,8 @@ registerModule(
       const remote = ctx.get<RendererRemoteCapabilities>("remote.capabilities");
       const browserClient = ctx.get<BrowserClient>("browser.client");
       const { BrowserView } = ctx.get<BrowserViewModule>("browser.view");
+      const { WhiteboardPage } =
+        ctx.get<WhiteboardViewModule>("whiteboard.view");
       const mount = root.querySelector<HTMLElement>("#app");
       if (!mount) throw new Error("Missing Solid application mount");
       const client = createAgentClient(remote);
@@ -43,6 +47,7 @@ registerModule(
                 keybindingClient={keybindingClient}
                 browserClient={browserClient}
                 BrowserView={BrowserView}
+                WhiteboardPage={WhiteboardPage}
               />
             )}
           >

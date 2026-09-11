@@ -6,8 +6,6 @@ import { z } from "zod";
 
 import type {
   AgentActivity,
-  AgentBoard,
-  AgentBoardCard,
   AgentMode,
   AgentMessage,
   AgentMessageCursor,
@@ -27,9 +25,6 @@ import type {
 // same shapes over the wire); re-exported here for the store's callers.
 export type { AgentGlobalTabData, AgentGlobalTabRow };
 import {
-  agentBoardCards,
-  agentBoards,
-  agentBoardMedia,
   agentGlobalTabs,
   agentMessageChunks,
   agentMessages,
@@ -577,107 +572,6 @@ const replaceGlobalTabsCommand = hydb.command({
   },
 });
 
-// A board save is a whole-list replacement: the board row is created
-// lazily, every surviving card is upserted, and cards the renderer
-// dropped are deleted. The renderer owns the full card list, so nothing
-// is merged.
-const saveBoardCommand = hydb.command({
-  input: z.object({
-    boardId: z.string(),
-    now: z.date(),
-    cards: z.array(
-      z.object({
-        id: z.string(),
-        x: z.number(),
-        y: z.number(),
-        markdown: z.string(),
-        mediaId: z.string().nullable(),
-      }),
-    ),
-    removedIds: z.array(z.string()),
-    removedMediaIds: z.array(z.string()),
-  }),
-  async handler(transaction, input) {
-    if ((await transaction.get(agentBoards, [input.boardId])) === undefined) {
-      await transaction.insert(agentBoards, {
-        id: input.boardId,
-        createdAt: input.now,
-        updatedAt: input.now,
-      });
-    } else {
-      await transaction.update(agentBoards, [input.boardId], {
-        updatedAt: input.now,
-      });
-    }
-    for (const removedId of input.removedIds) {
-      if ((await transaction.get(agentBoardCards, [removedId])) !== undefined) {
-        await transaction.delete(agentBoardCards, [removedId]);
-      }
-    }
-    for (const card of input.cards) {
-      const existing = await transaction.get(agentBoardCards, [card.id]);
-      if (existing === undefined) {
-        await transaction.insert(agentBoardCards, {
-          id: card.id,
-          boardId: input.boardId,
-          x: card.x,
-          y: card.y,
-          markdown: card.markdown,
-          mediaId: card.mediaId,
-          createdAt: input.now,
-          updatedAt: input.now,
-        });
-      } else {
-        await transaction.update(agentBoardCards, [card.id], {
-          x: card.x,
-          y: card.y,
-          markdown: card.markdown,
-          mediaId: card.mediaId,
-          updatedAt: input.now,
-        });
-      }
-    }
-    // Drop media no surviving card references, so deleted image cards do
-    // not leave their bytes behind.
-    const referenced = new Set(
-      input.cards.flatMap((card) => (card.mediaId ? [card.mediaId] : [])),
-    );
-    for (const mediaId of input.removedMediaIds) {
-      if (!referenced.has(mediaId)) {
-        if ((await transaction.get(agentBoardMedia, [mediaId])) !== undefined) {
-          await transaction.delete(agentBoardMedia, [mediaId]);
-        }
-      }
-    }
-  },
-});
-
-// One image per media row, written as soon as the renderer pastes it —
-// before the card that references it is saved.
-const saveBoardMediaCommand = hydb.command({
-  input: z.object({
-    boardId: z.string(),
-    mediaId: z.string(),
-    data: z.string(),
-    now: z.date(),
-  }),
-  async handler(transaction, input) {
-    const existing = await transaction.get(agentBoardMedia, [input.mediaId]);
-    if (existing === undefined) {
-      await transaction.insert(agentBoardMedia, {
-        id: input.mediaId,
-        boardId: input.boardId,
-        data: input.data,
-        createdAt: input.now,
-      });
-    } else {
-      await transaction.update(agentBoardMedia, [input.mediaId], {
-        data: input.data,
-      });
-    }
-  },
-});
-
 const endRunCommand = hydb.command({
   input: z.object({
     sessionId: z.string(),
@@ -868,12 +762,6 @@ export interface AgentStore {
   replaceGlobalTabs(tabs: readonly AgentGlobalTabRow[]): Promise<void>;
   /** Fires whenever the global tabs table changes; the caller re-reads. */
   watchGlobalTabs(listener: () => void): () => void;
-  /** A board's cards and media; a board that was never saved reads as empty. */
-  loadBoard(boardId: string): Promise<AgentBoard>;
-  /** Replace a board's whole card list with the given one. */
-  saveBoard(boardId: string, cards: readonly AgentBoardCard[]): Promise<void>;
-  /** Store one image (a data URL) referenced by a card's mediaId. */
-  saveBoardMedia(boardId: string, mediaId: string, data: string): Promise<void>;
   updateUsage(
     sessionId: string,
     messageId: string,
@@ -1213,73 +1101,6 @@ export function createAgentStore(database: Database): AgentStore {
           .many(),
         listener,
       );
-    },
-    async loadBoard(boardId) {
-      const rows = await database.fetch(
-        hydb
-          .query(agentBoardCards)
-          .where((card) => card.boardId.eq(boardId))
-          .orderBy((card) => [card.id.asc()])
-          .many(),
-      );
-      const mediaRows = await database.fetch(
-        hydb
-          .query(agentBoardMedia)
-          .where((media) => media.boardId.eq(boardId))
-          .many(),
-      );
-      return {
-        boardId,
-        cards: rows.map((row) => ({
-          id: row.id,
-          x: row.x,
-          y: row.y,
-          markdown: row.markdown,
-          mediaId: row.mediaId,
-        })),
-        media: Object.fromEntries(mediaRows.map((row) => [row.id, row.data])),
-      };
-    },
-    async saveBoard(boardId, cards) {
-      const stored = await database.fetch(
-        hydb
-          .query(agentBoardCards)
-          .where((card) => card.boardId.eq(boardId))
-          .many(),
-      );
-      const kept = new Set(cards.map((card) => card.id));
-      const removedIds = stored
-        .filter((row) => !kept.has(row.id))
-        .map((row) => row.id);
-      // Media orphans: referenced nowhere after this save, so their image
-      // bytes are deleted alongside the cards that pointed at them.
-      const referenced = new Set(
-        cards.flatMap((card) => (card.mediaId ? [card.mediaId] : [])),
-      );
-      const storedMedia = await database.fetch(
-        hydb
-          .query(agentBoardMedia)
-          .where((media) => media.boardId.eq(boardId))
-          .many(),
-      );
-      const removedMediaIds = storedMedia
-        .filter((row) => !referenced.has(row.id))
-        .map((row) => row.id);
-      await database.execute(saveBoardCommand, {
-        boardId,
-        now: now(),
-        cards: cards.map((card) => ({ ...card })),
-        removedIds,
-        removedMediaIds,
-      });
-    },
-    async saveBoardMedia(boardId, mediaId, data) {
-      await database.execute(saveBoardMediaCommand, {
-        boardId,
-        mediaId,
-        data,
-        now: now(),
-      });
     },
     async updateUsage(sessionId, messageId, usage) {
       await database.execute(updateUsageCommand, {

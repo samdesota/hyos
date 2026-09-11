@@ -1,7 +1,5 @@
 import {
   agentCapability,
-  type AgentBoard,
-  type AgentBoardCard,
   type AgentCommand,
   type AgentCommandResult,
   type AgentFeedChange,
@@ -92,9 +90,6 @@ export interface AgentClient {
     sessionId: string,
     tabs: AgentSessionTabs | null,
   ): Promise<void>;
-  board(boardId: string): Promise<AgentBoard>;
-  saveBoard(boardId: string, cards: readonly AgentBoardCard[]): Promise<void>;
-  saveBoardMedia(boardId: string, mediaId: string, data: string): Promise<void>;
   globalTabs(): Promise<readonly AgentGlobalTabRow[]>;
   replaceGlobalTabs(tabs: readonly AgentGlobalTabRow[]): Promise<void>;
   dispose(): void;
@@ -177,10 +172,6 @@ export function createAgentClient(
     sessionTabs: (sessionId) => agent.call("sessionTabs", sessionId),
     saveSessionTabs: (sessionId, tabs) =>
       agent.call("saveSessionTabs", sessionId, tabs),
-    board: (boardId) => agent.call("board", boardId),
-    saveBoard: (boardId, cards) => agent.call("saveBoard", boardId, cards),
-    saveBoardMedia: (boardId, mediaId, data) =>
-      agent.call("saveBoardMedia", boardId, mediaId, data),
     globalTabs: () => agent.call("globalTabs"),
     replaceGlobalTabs: (tabs) => agent.call("replaceGlobalTabs", tabs),
     dispose() {
