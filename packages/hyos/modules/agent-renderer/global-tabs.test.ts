@@ -202,22 +202,53 @@ test("reconciliation keeps whiteboard tabs regardless of the browser host", () =
   assert.equal(reconcileGlobalTabs(tabs, hostState([{ id: "tab-1" }])), tabs);
 });
 
-test("whiteboard tabs survive strip snapshots unrepresented", () => {
-  // Board persistence lives in the boards schema, not the strip snapshot;
-  // browser-only snapshots simply skip whiteboard tabs.
-  const scope = {
-    tabs: [whiteboardTab("board-1")],
-    activeId: whiteboardTab("board-1").id,
-  };
-  assert.equal(snapshotGlobalTabs(scope, emptyBrowserState), null);
-  const mixed = {
-    tabs: [whiteboardTab("board-1"), browserGlobalTab("tab-1")],
-    activeId: whiteboardTab("board-1").id,
-  };
-  // A focused whiteboard tab means no browser entry carries the focus.
-  const snapshot = snapshotGlobalTabs(mixed, hostState([{ id: "tab-1" }]));
+test("snapshots keep whiteboard tabs as boardId entries, focus included", () => {
+  // Board persistence lives in the boards schema; a whiteboard tab only
+  // needs its stable boardId to come back after a reload.
+  const wb = whiteboardTab("board-1");
+  const snapshot = snapshotGlobalTabs(
+    { tabs: [wb], activeId: wb.id },
+    emptyBrowserState,
+  );
   assert.deepEqual(snapshot, {
-    tabs: [{ kind: "browser", url: "https://tab-1.example/", title: "tab-1" }],
-    activeIndex: -1,
+    tabs: [{ kind: "whiteboard", boardId: "board-1" }],
+    activeIndex: 0,
   });
+  // A mixed strip keeps order, and a focused whiteboard tab carries the
+  // focus index even when a browser entry precedes it.
+  const mixed = {
+    tabs: [browserGlobalTab("tab-1"), wb],
+    activeId: wb.id,
+  };
+  assert.deepEqual(snapshotGlobalTabs(mixed, hostState([{ id: "tab-1" }])), {
+    tabs: [
+      { kind: "browser", url: "https://tab-1.example/", title: "tab-1" },
+      { kind: "whiteboard", boardId: "board-1" },
+    ],
+    activeIndex: 1,
+  });
+  // An unknown focus id still restores as -1.
+  assert.equal(
+    snapshotGlobalTabs({ ...mixed, activeId: "tab-9" }, hostState([{ id: "tab-1" }]))
+      ?.activeIndex,
+    -1,
+  );
+});
+
+test("restore passes whiteboard entries straight through as placements", () => {
+  const restore = restoreGlobalTabs(
+    {
+      tabs: [
+        { kind: "whiteboard", boardId: "board-1" },
+        { kind: "browser", url: "https://a.example/", title: "A" },
+      ],
+      activeIndex: 0,
+    },
+    hostState([{ id: "tab-1", url: "https://a.example/" }]),
+  );
+  assert.deepEqual(restore.placements, [
+    { kind: "whiteboard", boardId: "board-1" },
+    { kind: "reuse", tabId: "tab-1", url: "https://a.example/" },
+  ]);
+  assert.equal(restore.activeIndex, 0);
 });

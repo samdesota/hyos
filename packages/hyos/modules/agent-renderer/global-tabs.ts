@@ -102,15 +102,18 @@ export type GlobalTabsSnapshot = Readonly<{
   activeIndex: number;
 }>;
 
-/** One persisted browser entry — the mutable shape the snapshot builds. */
-type GlobalTabsSnapshotEntry = { kind: "browser"; url: string; title: string };
+/** One persisted entry — the mutable shape the snapshot builds. */
+type GlobalTabsSnapshotEntry =
+  | { kind: "browser"; url: string; title: string }
+  | { kind: "whiteboard"; boardId: string };
 
 /**
- * The strip as a persistence snapshot: one browser entry per adopted host
- * tab, in strip order, with the focused entry's index — or -1 when nothing
- * browser-y was focused. Host tab ids are runtime ids, so only what outlives
- * them — url and title — is kept. Null when the strip is empty, so restoring
- * skips the write instead of persisting nothing.
+ * The strip as a persistence snapshot: one entry per tab, in strip order,
+ * with the focused entry's index — or -1 when nothing was focused. Browser
+ * host tab ids are runtime ids, so only what outlives them — url and title —
+ * is kept; a whiteboard tab persists as its boardId, which is already
+ * stable. Null when the strip is empty, so restoring skips the write instead
+ * of persisting nothing.
  */
 export function snapshotGlobalTabs(
   scope: Readonly<{ tabs: readonly GlobalTab[]; activeId: string | null }>,
@@ -118,32 +121,34 @@ export function snapshotGlobalTabs(
 ): GlobalTabsSnapshot | null {
   const byTabId = new Map(state.tabs.map((tab) => [tab.id, tab]));
   const tabs: GlobalTabsSnapshotEntry[] = [];
-  const indices = new Map<TabId, number>();
+  const indices = new Map<string, number>();
   for (const tab of scope.tabs) {
-    if (tab.kind !== "browser") continue;
+    if (tab.kind === "whiteboard") {
+      indices.set(tab.id, tabs.length);
+      tabs.push({ kind: "whiteboard", boardId: tab.boardId });
+      continue;
+    }
     const hostTab = byTabId.get(tab.tabId);
     if (!hostTab) continue; // stale; reconciliation drops it anyway
-    indices.set(tab.tabId, tabs.length);
+    indices.set(tab.id, tabs.length);
     tabs.push({ kind: "browser", url: hostTab.url, title: hostTab.title });
   }
   if (tabs.length === 0) return null;
-  const focused = scope.tabs.find(({ id }) => id === scope.activeId);
   return {
     tabs,
     activeIndex:
-      focused && focused.kind === "browser"
-        ? (indices.get(focused.tabId) ?? -1)
-        : -1,
+      (scope.activeId !== null ? indices.get(scope.activeId) : undefined) ?? -1,
   };
 }
 
-/** One restored browser tab resolved against the live host state. */
+/** One restored tab resolved against the live host state. */
 export type GlobalTabPlacement =
   | Readonly<{ kind: "reuse"; tabId: TabId; url: string }>
-  | Readonly<{ kind: "create"; url: string }>;
+  | Readonly<{ kind: "create"; url: string }>
+  | Readonly<{ kind: "whiteboard"; boardId: string }>;
 
 export type GlobalTabsRestore = Readonly<{
-  /** One placement per saved browser tab, in saved order. */
+  /** One placement per saved tab, in saved order. */
   placements: readonly GlobalTabPlacement[];
   /** The placement to focus, or -1 → nothing is focused on restore. */
   activeIndex: number;
@@ -151,10 +156,12 @@ export type GlobalTabsRestore = Readonly<{
 
 /**
  * Resolve a saved strip against the live host state. Host tabs are global
- * and keep running across reloads, so a saved tab reuses the first host tab
- * not already claimed by an earlier entry that shows its url — restoring
- * must not duplicate pages that are still open — and only urls with no live
- * match open fresh. A focus that cannot be honored restores as -1.
+ * and keep running across reloads, so a saved browser tab reuses the first
+ * host tab not already claimed by an earlier entry that shows its url —
+ * restoring must not duplicate pages that are still open — and only urls
+ * with no live match open fresh. A whiteboard tab needs no host state: it
+ * restores directly as its boardId. A focus that cannot be honored restores
+ * as -1.
  */
 export function restoreGlobalTabs(
   saved: GlobalTabsSnapshot | null,
@@ -164,6 +171,9 @@ export function restoreGlobalTabs(
   if (savedTabs.length === 0) return { placements: [], activeIndex: -1 };
   const claimed = new Set<TabId>();
   const placements = savedTabs.map((tab): GlobalTabPlacement => {
+    if (tab.kind === "whiteboard") {
+      return { kind: "whiteboard", boardId: tab.boardId };
+    }
     const hostTab = state.tabs.find(
       ({ id, url }) => !claimed.has(id) && url === tab.url,
     );
