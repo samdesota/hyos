@@ -106,9 +106,15 @@ export function responsesRequestBody(
     model: input.model,
     instructions: input.instructions,
     input: [...input.input],
-    tools: input.tools.map(responsesToolPayload),
-    tool_choice: "auto",
-    parallel_tool_calls: false,
+    // No tools offered means a text-only round: omit the tools fields so the
+    // API cannot be asked to choose among them.
+    ...(input.tools.length > 0
+      ? {
+          tools: input.tools.map(responsesToolPayload),
+          tool_choice: "auto",
+          parallel_tool_calls: false,
+        }
+      : {}),
     ...(input.effort
       ? {
           reasoning: {

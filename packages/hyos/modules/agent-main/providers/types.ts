@@ -14,7 +14,7 @@ export type AgentRunInput = Readonly<{
   /** The session the run belongs to, when the run is session-backed. */
   sessionId?: string;
   mode?: AgentMode;
-  intent?: "implement" | "investigate";
+  intent?: "implement" | "investigate" | "summary";
   firstTurn?: boolean;
   /** The session's persisted plan, sent at the start of every user response. */
   plan?: AgentPlan | null;

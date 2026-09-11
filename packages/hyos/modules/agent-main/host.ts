@@ -12,6 +12,8 @@ import {
   type AgentMessage,
   type AgentMessageChange,
   type AgentMessagePage,
+  type AgentMode,
+  type AgentReasoningEffort,
   type AgentSessionsState,
 } from "../../capabilities/agent.js";
 import { browserCapability } from "../../capabilities/browser.js";
@@ -25,6 +27,16 @@ import type { AgentStore } from "./store.js";
 import { createCommentaryWriter } from "./commentary-writer.js";
 import { perfLog, perfNow } from "../agent-renderer/perf-time.js";
 import { parsePlanBlock } from "../../capabilities/plan.js";
+
+/**
+ * The fixed prompt for an interrupt's summary turn: the interrupted work is
+ * abandoned, and the agent — offered no tools — replies in prose about what
+ * it was doing, the current state, and what remains.
+ */
+export const INTERRUPT_SUMMARY_PROMPT =
+  "The previous turn was interrupted by the user. Do not perform any actions " +
+  "or tool calls, and do not continue the interrupted work. Summarize for the " +
+  "user what you were doing, the current state of things, and what remains.";
 
 type ActiveRun = Readonly<{
   controller: AbortController;
@@ -499,7 +511,7 @@ export function createAgentHost(options: {
     assistantMessageId: string,
     prompt: string,
     firstTurn = false,
-    intent?: "implement" | "investigate",
+    intent?: "implement" | "investigate" | "summary",
   ): void => {
     const controller = new AbortController();
     const done = (async () => {
@@ -678,6 +690,59 @@ export function createAgentHost(options: {
       .catch(() => undefined);
   };
 
+  /**
+   * Start a follow-up turn in an existing session — the send-message path,
+   * reused by the interrupt flow for its summary turn.
+   */
+  const sendTurn = async (
+    sessionId: string,
+    prompt: string,
+    intent?: "implement" | "investigate" | "summary",
+    mode?: AgentMode,
+    reasoningEffort?: AgentReasoningEffort | null,
+  ): Promise<AgentCommandResult> => {
+    if (activeRuns.has(sessionId)) {
+      throw new Error("This session already has a running turn.");
+    }
+    const session = await store.getSession(sessionId);
+    if (session.archivedAt) {
+      throw new Error("Unarchive this session before sending a message.");
+    }
+    const sendStartedAt = perfNow();
+    const provider = providers.get(session.providerId);
+    if (!provider)
+      throw new Error(`Unknown agent provider: ${session.providerId}`);
+    await provider.prepare?.();
+    perfLog(`send:prepare(${session.providerId})`, perfNow() - sendStartedAt);
+    const model = provider.summary.models.find(
+      (candidate) => candidate.id === session.modelId,
+    );
+    if (
+      reasoningEffort &&
+      model &&
+      !model.reasoningEfforts?.includes(reasoningEffort)
+    ) {
+      throw new Error(
+        `${model.label} does not support ${reasoningEffort} reasoning.`,
+      );
+    }
+    const turn = await store.startTurn(
+      sessionId,
+      prompt,
+      mode,
+      reasoningEffort,
+    );
+    perfLog(`send:startTurn(${session.providerId})`, perfNow() - sendStartedAt);
+    generateStatusDetail(
+      turn.sessionId,
+      provider,
+      prompt,
+      turn.previousResponse,
+    );
+    runTurn(turn.sessionId, turn.assistantMessageId, prompt, false, intent);
+    return { type: "accepted" };
+  };
+
   const execute = async (
     command: AgentCommand,
   ): Promise<AgentCommandResult> => {
@@ -714,6 +779,12 @@ export function createAgentHost(options: {
       }
       await store.getSession(command.sessionId);
       await store.renameSession(command.sessionId, command.title);
+      return { type: "accepted" };
+    }
+    if (command.type === "reorder-sessions") {
+      // Rank rewrite, not a per-session mutation: no running-run guard is
+      // needed and the sessions publish fires through watchSessions.
+      await store.reorderSessions(command.orderedIds);
       return { type: "accepted" };
     }
     if (command.type === "start-session") {
@@ -762,52 +833,29 @@ export function createAgentHost(options: {
       );
       return { type: "session-started", sessionId: turn.sessionId };
     }
-    if (activeRuns.has(command.sessionId)) {
-      throw new Error("This session already has a running turn.");
+    if (command.type === "interrupt") {
+      // Abort the running turn now; once its cleanup settles (checkpoint
+      // flush, message close), start a zero-tool summary turn that reports
+      // where things stand in the thread. The summary reuses the persisted
+      // provider session (or the persisted-context fallback) so it knows
+      // what the interrupted turn was doing.
+      const run = activeRuns.get(command.sessionId);
+      if (!run) return { type: "accepted" };
+      run.controller.abort();
+      void run.done
+        .then(() =>
+          sendTurn(command.sessionId, INTERRUPT_SUMMARY_PROMPT, "summary"),
+        )
+        .catch(() => undefined);
+      return { type: "accepted" };
     }
-    const session = await store.getSession(command.sessionId);
-    if (session.archivedAt) {
-      throw new Error("Unarchive this session before sending a message.");
-    }
-    const sendStartedAt = perfNow();
-    const provider = providers.get(session.providerId);
-    if (!provider)
-      throw new Error(`Unknown agent provider: ${session.providerId}`);
-    await provider.prepare?.();
-    perfLog(`send:prepare(${session.providerId})`, perfNow() - sendStartedAt);
-    const model = provider.summary.models.find(
-      (candidate) => candidate.id === session.modelId,
-    );
-    if (
-      command.reasoningEffort &&
-      model &&
-      !model.reasoningEfforts?.includes(command.reasoningEffort)
-    ) {
-      throw new Error(
-        `${model.label} does not support ${command.reasoningEffort} reasoning.`,
-      );
-    }
-    const turn = await store.startTurn(
+    return sendTurn(
       command.sessionId,
       command.prompt,
+      command.intent,
       command.mode,
       command.reasoningEffort,
     );
-    perfLog(`send:startTurn(${session.providerId})`, perfNow() - sendStartedAt);
-    generateStatusDetail(
-      turn.sessionId,
-      provider,
-      command.prompt,
-      turn.previousResponse,
-    );
-    runTurn(
-      turn.sessionId,
-      turn.assistantMessageId,
-      command.prompt,
-      false,
-      command.intent,
-    );
-    return { type: "accepted" };
   };
 
   const provider: RemoteProvider<typeof agentCapability> = {

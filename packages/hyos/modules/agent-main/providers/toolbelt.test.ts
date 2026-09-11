@@ -4,7 +4,7 @@ import test from "node:test";
 import type { BrowserState } from "../../../capabilities/browser.js";
 import type { BrowserClient } from "../../browser-client/types.js";
 import type { OpenCodeTool } from "./opencode-tools.js";
-import { agentToolbelt } from "./toolbelt.js";
+import { agentToolbelt, runToolCalls } from "./toolbelt.js";
 import type { AgentRunInput } from "./types.js";
 
 /** A browser host stub that reports one created tab per create-tab call. */
@@ -119,4 +119,54 @@ test("a failed strip write never fails the tool call", async () => {
     new AbortController().signal,
   );
   assert.match(result.output, /Opened browser tab/);
+});
+
+test("summary intent offers no tools at all", () => {
+  const { offered, byName } = agentToolbelt(runInput({ intent: "summary" }), {
+    name: "web_search",
+    description: "",
+    category: "read",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      return { output: "" };
+    },
+  });
+  assert.deepEqual(offered, []);
+  assert.equal(byName.size, 0);
+});
+
+test("runToolCalls refuses to execute anything on a summary turn", async () => {
+  const executed: string[] = [];
+  const activities: { id: string; status: string }[] = [];
+  const results = await runToolCalls({
+    folder: "/tmp/project",
+    intent: "summary",
+    toolsByName: new Map([
+      [
+        "read",
+        {
+          name: "read",
+          description: "",
+          category: "read",
+          parameters: { type: "object", properties: {} },
+          async execute() {
+            executed.push("read");
+            return { output: "contents" };
+          },
+        } satisfies OpenCodeTool,
+      ],
+    ]),
+    calls: [{ id: "call-1", name: "read", arguments: "{}" }],
+    signal: new AbortController().signal,
+    activity: async (id, _activity, status) => {
+      activities.push({ id, status });
+    },
+    itemIdPrefix: "test",
+  });
+  assert.deepEqual(executed, []);
+  assert.match(results[0].output, /Blocked/);
+  assert.deepEqual(activities, [
+    { id: "test:call-1", status: "streaming" },
+    { id: "test:call-1", status: "failed" },
+  ]);
 });

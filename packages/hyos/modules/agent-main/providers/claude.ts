@@ -220,7 +220,13 @@ export function createClaudeProvider(
         pendingText = "";
       };
 
-      let queryPrompt = `${promptWithPatchContract(input.prompt)}\n\n${claudePatchToolInstruction}\n\n${claudeCompletionInstruction}`;
+      // A summary turn (interrupt follow-up) must make no tool calls: no
+      // built-in tools, no MCP patch server, no patch/completion contract,
+      // and exactly one model round.
+      const summary = input.intent === "summary";
+      let queryPrompt = summary
+        ? input.prompt
+        : `${promptWithPatchContract(input.prompt)}\n\n${claudePatchToolInstruction}\n\n${claudeCompletionInstruction}`;
       try {
         while (!completionConfirmed) {
           const stream = query({
@@ -233,13 +239,17 @@ export function createClaudeProvider(
               includePartialMessages: true,
               thinking: { type: "adaptive", display: "summarized" },
               permissionMode: "acceptEdits",
-              tools: { type: "preset", preset: "claude_code" },
-              mcpServers: { hyos: patchServer },
-              toolAliases: {
-                Edit: "mcp__hyos__Edit",
-                Write: "mcp__hyos__Write",
-                Complete: "mcp__hyos__Complete",
-              },
+              tools: summary ? [] : { type: "preset", preset: "claude_code" },
+              ...(summary
+                ? {}
+                : {
+                    mcpServers: { hyos: patchServer },
+                    toolAliases: {
+                      Edit: "mcp__hyos__Edit",
+                      Write: "mcp__hyos__Write",
+                      Complete: "mcp__hyos__Complete",
+                    },
+                  }),
               pathToClaudeCodeExecutable: await binary(),
               env: environment,
             },
@@ -426,6 +436,9 @@ export function createClaudeProvider(
             stream.close();
           }
           if (!completionConfirmed) {
+            // A summary round is single-shot: it never calls Complete, so
+            // looping would re-prompt forever.
+            if (summary) break;
             if (signal.aborted) throw new Error("Cancelled");
             queryPrompt = `You ended the previous turn without calling Complete, so the task is still incomplete. Continue implementing and verifying the original request. Call Complete only when no requested work remains.\n\n${claudePatchToolInstruction}\n\n${claudeCompletionInstruction}`;
           }

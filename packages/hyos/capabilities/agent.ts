@@ -198,15 +198,20 @@ export type AgentCommand =
       prompt: string;
       mode?: AgentMode;
       reasoningEffort?: AgentReasoningEffort | null;
-      intent?: "implement" | "investigate";
+      intent?: "implement" | "investigate" | "summary";
     }>
   | Readonly<{ type: "cancel"; sessionId: AgentSessionId }>
+  | Readonly<{ type: "interrupt"; sessionId: AgentSessionId }>
   | Readonly<{ type: "archive-session"; sessionId: AgentSessionId }>
   | Readonly<{ type: "unarchive-session"; sessionId: AgentSessionId }>
   | Readonly<{
       type: "rename-session";
       sessionId: AgentSessionId;
       title: string;
+    }>
+  | Readonly<{
+      type: "reorder-sessions";
+      orderedIds: readonly AgentSessionId[];
     }>;
 
 export type AgentCommandResult =
@@ -216,7 +221,7 @@ export type AgentCommandResult =
 
 export const agentCapability = defineRemoteCapability({
   id: "agent",
-  version: 4,
+  version: 5,
   methods: {
     execute: remoteMethod<
       readonly [command: AgentCommand],

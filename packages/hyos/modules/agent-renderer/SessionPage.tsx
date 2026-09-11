@@ -488,7 +488,12 @@ export const SessionPage: Component<SessionPageProps> = (props) => {
                   class="send secondary"
                   type="button"
                   title="Stop the agent and reply with a summary of where things stand"
-                  disabled
+                  onClick={() =>
+                    void props.client.execute({
+                      type: "interrupt",
+                      sessionId: session().id,
+                    })
+                  }
                 >
                   Interrupt
                 </button>

@@ -339,8 +339,9 @@ export function createGlmProvider(
           body: JSON.stringify({
             model: input.modelId,
             messages,
-            tools: toolsPayload(offered),
-            tool_choice: "auto",
+            ...(offered.length > 0
+              ? { tools: toolsPayload(offered), tool_choice: "auto" as const }
+              : {}),
             stream: true,
             stream_options: { include_usage: true },
             reasoning: nonThinking

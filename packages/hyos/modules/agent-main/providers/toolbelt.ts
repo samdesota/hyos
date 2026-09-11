@@ -149,6 +149,9 @@ export function agentToolbelt(
   byName: ReadonlyMap<string, OpenCodeTool>;
 }> {
   const all = [...openCodeTools, search];
+  // Summary turns (interrupt follow-ups) must make no tool calls at all:
+  // nothing is offered to the model, so it can only reply in prose.
+  if (input.intent === "summary") return { offered: [], byName: new Map() };
   const offeredBase =
     input.intent === "investigate"
       ? all.filter((tool) => tool.category !== "edit")
@@ -203,7 +206,7 @@ function withPathLock<T>(key: string, run: () => Promise<T>): Promise<T> {
 
 export async function runToolCalls(options: {
   folder: string;
-  intent?: "implement" | "investigate";
+  intent?: "implement" | "investigate" | "summary";
   toolsByName: ReadonlyMap<string, OpenCodeTool>;
   calls: readonly Readonly<{
     id: string;
@@ -236,6 +239,20 @@ export async function runToolCalls(options: {
         "streaming",
       );
       try {
+        if (options.intent === "summary") {
+          // Belt-and-suspenders: a summary turn offers no tools, so any call
+          // attempt is refused without executing anything.
+          await options.activity(
+            providerItemId,
+            toolActivity(call.name, JSON.stringify(args, null, 2)),
+            "failed",
+          );
+          return {
+            call,
+            output:
+              "Blocked: this summary turn cannot make tool calls. Reply in prose only.",
+          };
+        }
         const tool = options.toolsByName.get(call.name);
         if (!tool) throw new Error(`Unknown tool: ${call.name}`);
         if (options.intent === "investigate" && tool.category === "edit") {
