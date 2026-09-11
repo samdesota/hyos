@@ -791,14 +791,12 @@ test("reorder-sessions command persists manual order and publishes sessions", as
   const reordered = new Promise<void>((resolve) => {
     reorderedPublished = resolve;
   });
-  let expectSecondFirst = false;
   let second: Awaited<ReturnType<typeof store.createSession>> | undefined;
   const host = createAgentHost({
     window: {} as never,
     remote: {
       publish(_capability: unknown, event: string, payload: unknown) {
         if (event !== "sessions") return;
-        if (!expectSecondFirst) return;
         const sessions = (payload as { sessions: { id: string }[] }).sessions;
         if (sessions.length >= 2 && sessions[0].id === second?.sessionId) {
           reorderedPublished();
@@ -844,7 +842,6 @@ test("reorder-sessions command persists manual order and publishes sessions", as
       (await store.listSessions()).map((session) => session.id),
       [second.sessionId, first.sessionId],
     );
-    expectSecondFirst = true;
     await reordered;
   } finally {
     await host.dispose();
