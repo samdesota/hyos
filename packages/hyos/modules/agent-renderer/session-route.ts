@@ -13,6 +13,39 @@ const ROUTE_PREFIX = "#";
 const SESSION_ROUTE = "/session/";
 const TABS_ROUTE = "/tabs/";
 
+/** Router paths (without the hash prefix) for each AppRoute kind. */
+export const ROUTE_PATHS = {
+  new: "/",
+  session: "/session/:id",
+  globalTabs: "/tabs/:id",
+} as const;
+
+/** Route kinds, mirroring AppRoute's `kind` discriminant. */
+export type RouteKind = AppRoute["kind"];
+
+/**
+ * AppRoute for a matched router route and its raw `:id` param. Router
+ * params arrive percent-encoded, matching how `routeFromHash` decodes
+ * them; an absent/empty id falls back to the new-session view.
+ */
+export function routeFromParams(
+  kind: RouteKind,
+  id: string | undefined,
+): AppRoute {
+  switch (kind) {
+    case "session":
+      return id
+        ? { kind: "session", sessionId: decodeURIComponent(id) }
+        : { kind: "new" };
+    case "global-tabs":
+      return id
+        ? { kind: "global-tabs", tabId: decodeURIComponent(id) }
+        : { kind: "new" };
+    case "new":
+      return { kind: "new" };
+  }
+}
+
 /** The route encoded in the URL hash; unrecognized hashes read as `/`. */
 export function routeFromHash(hash: string = window.location.hash): AppRoute {
   if (!hash.startsWith(ROUTE_PREFIX)) return { kind: "new" };

@@ -6,6 +6,7 @@ import type { BrowserClient } from "../browser-client/types.js";
 import type { BrowserViewModule } from "../browser-view/types.js";
 import { AgentApp } from "./AgentApp.js";
 import { createAgentClient, createKeybindingClient } from "./client.js";
+import { ROUTE_PATHS } from "./session-route.js";
 
 const { defineModule, registerModule } = globalThis.PrototypeModules;
 
@@ -31,21 +32,26 @@ registerModule(
       const keybindingClient = createKeybindingClient(remote);
       const dispose = render(
         () => (
-          // Hash-mode router shell. Routing is not yet wired into the app;
-          // the catch-all route just renders AgentApp exactly as before.
-          <HashRouter>
-            <Route
-              path="*"
-              component={() => (
-                <AgentApp
-                  root={root}
-                  client={client}
-                  keybindingClient={keybindingClient}
-                  browserClient={browserClient}
-                  BrowserView={BrowserView}
-                />
-              )}
-            />
+          // Hash-mode router shell. Routes mirror the AppRoute model
+          // (`/`, `/session/:id`, `/tabs/:id`); AgentApp renders once in
+          // the root layout and still derives its view from app state,
+          // so behavior is unchanged until the URL becomes authoritative.
+          <HashRouter
+            root={() => (
+              <AgentApp
+                root={root}
+                client={client}
+                keybindingClient={keybindingClient}
+                browserClient={browserClient}
+                BrowserView={BrowserView}
+              />
+            )}
+          >
+            <Route path={ROUTE_PATHS.new} />
+            <Route path={ROUTE_PATHS.session} />
+            <Route path={ROUTE_PATHS.globalTabs} />
+            {/* Unrecognized hashes land here and read as `/`. */}
+            <Route path="*" />
           </HashRouter>
         ),
         mount,

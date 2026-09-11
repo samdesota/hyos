@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ROUTE_PATHS,
   hashForRoute,
   hashForSession,
   routeFromHash,
+  routeFromParams,
   sessionFromHash,
 } from "./session-route.js";
 
@@ -35,6 +37,35 @@ test("hash routes resolve to the three route kinds", () => {
     tabId: "tab/1",
   });
   assert.deepEqual(routeFromHash("#/tabs/"), { kind: "new" });
+});
+
+test("router paths mirror the AppRoute kinds", () => {
+  assert.deepEqual(ROUTE_PATHS, {
+    new: "/",
+    session: "/session/:id",
+    globalTabs: "/tabs/:id",
+  });
+});
+
+test("route params map back onto the AppRoute model", () => {
+  assert.deepEqual(routeFromParams("new", undefined), { kind: "new" });
+  assert.deepEqual(routeFromParams("session", "session-1"), {
+    kind: "session",
+    sessionId: "session-1",
+  });
+  // Params arrive percent-encoded, as the router stores them.
+  assert.deepEqual(routeFromParams("session", "ses%2Fsion"), {
+    kind: "session",
+    sessionId: "ses/sion",
+  });
+  assert.deepEqual(routeFromParams("global-tabs", "tab%2F1"), {
+    kind: "global-tabs",
+    tabId: "tab/1",
+  });
+  // Missing or empty ids fall back to the new-session view, like a
+  // `/session/` hash would.
+  assert.deepEqual(routeFromParams("session", undefined), { kind: "new" });
+  assert.deepEqual(routeFromParams("global-tabs", ""), { kind: "new" });
 });
 
 test("hash routes round-trip", () => {
