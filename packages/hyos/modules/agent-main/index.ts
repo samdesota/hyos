@@ -53,6 +53,11 @@ export = defineModule<AgentMainConfig>({
     const storage = await openNodeStorage({
       directory: path.resolve(root, config.storagePath),
       schema: agentSchema,
+      addedTables: [
+        "hyos_agent_boards",
+        "hyos_agent_board_cards",
+        "hyos_agent_board_media",
+      ],
       nullableColumnMigrations: [
         { hyos_agent_sessions: ["archivedAt"] },
         {

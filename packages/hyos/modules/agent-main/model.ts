@@ -3,6 +3,7 @@ import {
   id,
   index,
   integer,
+  number,
   text,
   timestamp,
   uniqueIndex,
@@ -103,10 +104,64 @@ export const agentMessageChunks = hydb.table(
   ],
 );
 
+// Boards are identified up front by the tab's uuid, so the row is created
+// lazily on first save; a board with no row simply has no cards yet.
+export const agentBoards = hydb.table(
+  "hyos_agent_boards",
+  {
+    id: id().primaryKey(),
+    createdAt: timestamp().notNull(),
+    updatedAt: timestamp().notNull(),
+  },
+  (columns) => [index("hyos_agent_boards_updated_idx").on(columns.updatedAt)],
+);
+
+// hydb has no blob type (Uint8Array silently corrupts), so image bytes
+// live as base64 text in this dedicated table, referenced by card mediaId.
+// Declared before the cards table so their forward reference is safe.
+export const agentBoardMedia = hydb.table(
+  "hyos_agent_board_media",
+  {
+    id: id().primaryKey(),
+    boardId: id()
+      .notNull()
+      .references(() => agentBoards.id),
+    data: text().notNull(),
+    createdAt: timestamp().notNull(),
+  },
+  (columns) => [
+    index("hyos_agent_board_media_board_idx").on(columns.boardId, columns.id),
+  ],
+);
+
+export const agentBoardCards = hydb.table(
+  "hyos_agent_board_cards",
+  {
+    id: id().primaryKey(),
+    boardId: id()
+      .notNull()
+      .references(() => agentBoards.id),
+    // World coordinates of the card's top-left corner.
+    x: number().notNull(),
+    y: number().notNull(),
+    markdown: text().notNull(),
+    // Set once image cards exist: a reference into agentBoardMedia.
+    mediaId: id().references(() => agentBoardMedia.id),
+    createdAt: timestamp().notNull(),
+    updatedAt: timestamp().notNull(),
+  },
+  (columns) => [
+    index("hyos_agent_board_cards_board_idx").on(columns.boardId, columns.id),
+  ],
+);
+
 export const agentSchema = hydb.schema({
   agentSessions,
   agentMessages,
   agentMessageChunks,
+  agentBoards,
+  agentBoardCards,
+  agentBoardMedia,
 });
 
 export type StoredAgentSession = InferRow<typeof agentSessions>;

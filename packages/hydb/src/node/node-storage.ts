@@ -189,6 +189,7 @@ function cloneManifest(manifest: DatabaseManifest): DatabaseManifest {
 function schemaMetadata(
   schema: AnySchema,
   addedNullableColumns: Readonly<Record<string, readonly string[]>> = {},
+  omittedTables: readonly string[] = [],
 ): {
   fingerprint: string;
   tables: ReadonlyMap<string, TableMetadata>;
@@ -246,6 +247,7 @@ function schemaMetadata(
         indexes,
       };
     })
+    .filter((table) => !omittedTables.includes(table.name))
     .sort((left, right) => left.name.localeCompare(right.name));
   for (const name of Object.keys(addedNullableColumns)) {
     if (!tables.has(name))
@@ -436,6 +438,8 @@ export class NodeStorageDatabase implements StorageDatabase {
       from: string;
       to: string;
       columns: Readonly<Record<string, readonly string[]>>;
+      /** Tables absent from the `from` schema; seeded into the manifest. */
+      tables?: readonly string[];
     }[] = [],
   ) {
     this.#generation = generation;
@@ -464,12 +468,26 @@ export class NodeStorageDatabase implements StorageDatabase {
     if (options.addNullableColumns && options.nullableColumnMigrations) {
       throw new TypeError("Specify only one nullable migration configuration");
     }
+    // Table additions are the newest migration: the previous schema is the
+    // current one minus those tables, and opening seeds the new tables'
+    // manifest entries (no rows to rewrite).
+    const addedTableNames = [...(options.addedTables ?? [])].sort();
+    const tablesAddedFingerprint = addedTableNames.length
+      ? schemaMetadata(options.schema, {}, addedTableNames).fingerprint
+      : metadata.fingerprint;
     const steps =
       options.nullableColumnMigrations ??
       (options.addNullableColumns ? [options.addNullableColumns] : []);
     const omitted: Record<string, string[]> = {};
-    let target = metadata.fingerprint;
-    const nullableMigrations = [...steps]
+    // The nullable-column chain composes on top of the table addition: its
+    // oldest step must reach the pre-table-addition fingerprint.
+    let target = tablesAddedFingerprint;
+    const nullableMigrations: {
+      from: string;
+      to: string;
+      columns: Readonly<Record<string, readonly string[]>>;
+      tables?: readonly string[];
+    }[] = [...steps]
       .reverse()
       .map((columns) => {
         if (!Object.values(columns).some((names) => names.length))
@@ -484,12 +502,26 @@ export class NodeStorageDatabase implements StorageDatabase {
             existing.push(name);
           }
         }
-        const from = schemaMetadata(options.schema, omitted).fingerprint;
+        const from = schemaMetadata(
+          options.schema,
+          omitted,
+          addedTableNames,
+        ).fingerprint;
         const migration = { from, to: target, columns };
         target = from;
         return migration;
       })
       .reverse();
+    // Newest migration last: the table addition itself, chaining the
+    // pre-addition fingerprint to the full target schema.
+    if (addedTableNames.length > 0) {
+      nullableMigrations.push({
+        from: tablesAddedFingerprint,
+        to: metadata.fingerprint,
+        columns: {},
+        tables: addedTableNames,
+      });
+    }
     const dataPath = join(options.directory, "hydb.data");
     debugBoot("checkpoint:read:start");
     const checkpoint = await readStartupCheckpoint(dataPath);
@@ -873,11 +905,27 @@ export class NodeStorageDatabase implements StorageDatabase {
 
   private async migrateNullableColumns(): Promise<void> {
     for (const migration of this.nullableMigrations) {
+      if (!Object.keys(migration.columns).length && !migration.tables?.length) {
+        continue;
+      }
       for (const [branch, current] of this.#branches) {
         const parent = await this.readCommit(current.head);
         if (parent.manifest.schema !== migration.from) continue;
         const manifest = cloneManifest(parent.manifest);
         const changes: StoredChange[] = [];
+        // Added tables carry no existing rows; they only need manifest
+        // entries so later writes against them resolve.
+        for (const name of migration.tables ?? []) {
+          const metadata = this.tables.get(name);
+          if (metadata === undefined)
+            throw new TypeError(`Unknown migration table: ${name}`);
+          manifest.tables[name] = {
+            primary: null,
+            indexes: Object.fromEntries(
+              metadata.indexes.map((index) => [index.name, null]),
+            ),
+          };
+        }
         for (const [name, columns] of Object.entries(migration.columns)) {
           const table = manifest.tables[name]!;
           const metadata = this.tables.get(name)!;
@@ -1456,6 +1504,9 @@ export type NodeStorageOptions = Readonly<{
   nullableColumnMigrations?: readonly Readonly<
     Record<string, readonly string[]>
   >[];
+  /** Tables newly added to the schema since the storage was created. Opening
+   * an existing storage seeds them into the manifest; no rows are rewritten. */
+  addedTables?: readonly string[];
   cacheBytes?: number;
   maxEntries?: number;
   memory?: MemoryManager;

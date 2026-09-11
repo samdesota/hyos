@@ -169,6 +169,25 @@ export type AgentSessionsState = Readonly<{
   sessions: readonly AgentSessionSummary[];
 }>;
 
+/**
+ * One card on a whiteboard: a markdown note (or, later, an image reference)
+ * placed at world coordinates, so it pans and zooms with the canvas.
+ */
+export type AgentBoardCard = Readonly<{
+  id: string;
+  x: number;
+  y: number;
+  markdown: string;
+  /** Reference into the board's media table once image cards exist. */
+  mediaId: string | null;
+}>;
+
+/** A board's full card list, loaded or saved as one unit. */
+export type AgentBoard = Readonly<{
+  boardId: string;
+  cards: readonly AgentBoardCard[];
+}>;
+
 export type AgentFeedOpened = Readonly<{
   feedId: AgentFeedId;
   sequence: number;
@@ -221,7 +240,7 @@ export type AgentCommandResult =
 
 export const agentCapability = defineRemoteCapability({
   id: "agent",
-  version: 5,
+  version: 6,
   methods: {
     execute: remoteMethod<
       readonly [command: AgentCommand],
@@ -252,6 +271,13 @@ export const agentCapability = defineRemoteCapability({
     >(),
     saveSessionTabs: remoteMethod<
       readonly [sessionId: AgentSessionId, tabs: AgentSessionTabs | null],
+      void
+    >(),
+    /** A board's cards; a board that was never saved reads as empty. */
+    board: remoteMethod<readonly [boardId: string], AgentBoard>(),
+    /** Replace a board's whole card list with the given one. */
+    saveBoard: remoteMethod<
+      readonly [boardId: string, cards: readonly AgentBoardCard[]],
       void
     >(),
   },

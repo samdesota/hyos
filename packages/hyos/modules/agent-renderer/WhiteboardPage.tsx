@@ -1,12 +1,14 @@
 import {
   For,
   Show,
+  createEffect,
   createSignal,
   onCleanup,
   onMount,
   type Component,
 } from "solid-js";
 
+import type { AgentClient } from "./client.js";
 import { renderAgentMarkdown } from "./markdown.js";
 import {
   addWhiteboardCard,
@@ -27,10 +29,14 @@ import {
 
 export type WhiteboardPageProps = Readonly<{
   boardId: string;
+  client: AgentClient;
 }>;
 
 /** Movement (px) below which a pointer gesture counts as a click. */
 const clickTolerancePx = 4;
+
+/** How long after the last card change a save is debounced. */
+const saveDebounceMs = 400;
 
 /**
  * The whiteboard surface for one board: an infinite pan/zoom canvas of
@@ -38,9 +44,8 @@ const clickTolerancePx = 4;
  * trackpad pinch) zooms toward the cursor, a double-click on empty canvas
  * plants a new card, dragging a card moves it, and clicking a card edits
  * its markdown inline. Cards live at world coordinates, so they pan and
- * zoom with the board; the board is identified by id only and persistence
- * arrives with the agent capability, so the card list is
- * presentation-local for now.
+ * zoom with the board; the card list is loaded from and debounced-saved to
+ * the agent capability's boards schema, keyed by the tab's boardId.
  */
 export const WhiteboardPage: Component<WhiteboardPageProps> = (props) => {
   const [viewport, setViewport] = createSignal<Viewport>(initialViewport);
@@ -48,6 +53,90 @@ export const WhiteboardPage: Component<WhiteboardPageProps> = (props) => {
   const [cards, setCards] = createSignal<readonly WhiteboardCard[]>([]);
   const [editingId, setEditingId] = createSignal<string | null>(null);
   const [draggingId, setDraggingId] = createSignal<string | null>(null);
+
+  // --- Persistence -------------------------------------------------------
+  // The board loads once on mount; every subsequent card change schedules a
+  // debounced whole-list save. Array identity separates the load-triggered
+  // effect run (already saved) from real edits.
+  let disposed = false;
+  const [loaded, setLoaded] = createSignal(false);
+  let savedSnapshot: readonly WhiteboardCard[] | undefined;
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const flushSave = async (
+    current: readonly WhiteboardCard[],
+  ): Promise<void> => {
+    saveTimer = undefined;
+    if (disposed || savedSnapshot === current) return;
+    try {
+      await props.client.saveBoard(
+        props.boardId,
+        current.map((card) => ({
+          id: card.id,
+          x: card.x,
+          y: card.y,
+          markdown: card.markdown,
+          mediaId: null,
+        })),
+      );
+      savedSnapshot = current;
+    } catch (error) {
+      // Retry on the same debounce cadence; superseded by any newer edit.
+      console.error("Whiteboard save failed; retrying", error);
+      if (!disposed) scheduleSave(current);
+    }
+  };
+  const scheduleSave = (current: readonly WhiteboardCard[]): void => {
+    if (saveTimer !== undefined) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => void flushSave(current), saveDebounceMs);
+  };
+
+  onMount(() => {
+    void props.client
+      .board(props.boardId)
+      .then((board) => {
+        if (disposed) return;
+        const restored = board.cards.map(({ id, x, y, markdown }) => ({
+          id,
+          x,
+          y,
+          markdown,
+        }));
+        savedSnapshot = restored;
+        setCards(restored);
+        setLoaded(true);
+      })
+      .catch((error) => console.error("Whiteboard load failed", error));
+  });
+  createEffect(() => {
+    const current = cards();
+    if (!loaded() || savedSnapshot === current) return;
+    scheduleSave(current);
+  });
+  onCleanup(() => {
+    disposed = true;
+    // Flush synchronously on teardown so closing the tab cannot lose the
+    // tail of the debounce window.
+    if (saveTimer !== undefined) {
+      clearTimeout(saveTimer);
+      saveTimer = undefined;
+      const current = cards();
+      if (savedSnapshot !== current) {
+        void props.client
+          .saveBoard(
+            props.boardId,
+            current.map((card) => ({
+              id: card.id,
+              x: card.x,
+              y: card.y,
+              markdown: card.markdown,
+              mediaId: null,
+            })),
+          )
+          .catch(() => undefined);
+      }
+    }
+  });
   let canvas: HTMLDivElement | undefined;
   // The in-flight pan: pointer id plus the last screen position, so each
   // move pans by the delta since the previous one. `moved` separates a

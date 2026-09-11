@@ -6,6 +6,8 @@ import { z } from "zod";
 
 import type {
   AgentActivity,
+  AgentBoard,
+  AgentBoardCard,
   AgentMode,
   AgentMessage,
   AgentMessageCursor,
@@ -19,6 +21,8 @@ import type {
   AgentSessionTabsChange,
 } from "../../capabilities/agent.js";
 import {
+  agentBoardCards,
+  agentBoards,
   agentMessageChunks,
   agentMessages,
   agentSessions,
@@ -481,6 +485,68 @@ const updateSessionTabsCommand = hydb.command({
   },
 });
 
+// A board save is a whole-list replacement: the board row is created
+// lazily, every surviving card is upserted, and cards the renderer
+// dropped are deleted. The renderer owns the full card list, so nothing
+// is merged.
+const saveBoardCommand = hydb.command({
+  input: z.object({
+    boardId: z.string(),
+    now: z.date(),
+    cards: z.array(
+      z.object({
+        id: z.string(),
+        x: z.number(),
+        y: z.number(),
+        markdown: z.string(),
+        mediaId: z.string().nullable(),
+      }),
+    ),
+    removedIds: z.array(z.string()),
+  }),
+  async handler(transaction, input) {
+    if ((await transaction.get(agentBoards, [input.boardId])) === undefined) {
+      await transaction.insert(agentBoards, {
+        id: input.boardId,
+        createdAt: input.now,
+        updatedAt: input.now,
+      });
+    } else {
+      await transaction.update(agentBoards, [input.boardId], {
+        updatedAt: input.now,
+      });
+    }
+    for (const removedId of input.removedIds) {
+      if ((await transaction.get(agentBoardCards, [removedId])) !== undefined) {
+        await transaction.delete(agentBoardCards, [removedId]);
+      }
+    }
+    for (const card of input.cards) {
+      const existing = await transaction.get(agentBoardCards, [card.id]);
+      if (existing === undefined) {
+        await transaction.insert(agentBoardCards, {
+          id: card.id,
+          boardId: input.boardId,
+          x: card.x,
+          y: card.y,
+          markdown: card.markdown,
+          mediaId: card.mediaId,
+          createdAt: input.now,
+          updatedAt: input.now,
+        });
+      } else {
+        await transaction.update(agentBoardCards, [card.id], {
+          x: card.x,
+          y: card.y,
+          markdown: card.markdown,
+          mediaId: card.mediaId,
+          updatedAt: input.now,
+        });
+      }
+    }
+  },
+});
+
 const endRunCommand = hydb.command({
   input: z.object({
     sessionId: z.string(),
@@ -665,6 +731,10 @@ export interface AgentStore {
     sessionId: string,
     tabs: AgentSessionTabs | null,
   ): Promise<void>;
+  /** A board's cards; a board that was never saved reads as empty. */
+  loadBoard(boardId: string): Promise<AgentBoard>;
+  /** Replace a board's whole card list with the given one. */
+  saveBoard(boardId: string, cards: readonly AgentBoardCard[]): Promise<void>;
   updateUsage(
     sessionId: string,
     messageId: string,
@@ -952,6 +1022,43 @@ export function createAgentStore(database: Database): AgentStore {
       await database.execute(updateSessionTabsCommand, {
         sessionId,
         tabs: encodeSessionTabs(tabs),
+      });
+    },
+    async loadBoard(boardId) {
+      const rows = await database.fetch(
+        hydb
+          .query(agentBoardCards)
+          .where((card) => card.boardId.eq(boardId))
+          .orderBy((card) => [card.id.asc()])
+          .many(),
+      );
+      return {
+        boardId,
+        cards: rows.map((row) => ({
+          id: row.id,
+          x: row.x,
+          y: row.y,
+          markdown: row.markdown,
+          mediaId: row.mediaId,
+        })),
+      };
+    },
+    async saveBoard(boardId, cards) {
+      const stored = await database.fetch(
+        hydb
+          .query(agentBoardCards)
+          .where((card) => card.boardId.eq(boardId))
+          .many(),
+      );
+      const kept = new Set(cards.map((card) => card.id));
+      const removedIds = stored
+        .filter((row) => !kept.has(row.id))
+        .map((row) => row.id);
+      await database.execute(saveBoardCommand, {
+        boardId,
+        now: now(),
+        cards: cards.map((card) => ({ ...card })),
+        removedIds,
       });
     },
     async updateUsage(sessionId, messageId, usage) {

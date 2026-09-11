@@ -33,9 +33,8 @@ registerModule(
       const dispose = render(
         () => (
           // Hash-mode router shell. Routes mirror the AppRoute model
-          // (`/`, `/session/:id`, `/tabs/:id`); AgentApp renders once in
-          // the root layout and still derives its view from app state,
-          // so behavior is unchanged until the URL becomes authoritative.
+          // (`/`, `/session/:id`, `/tabs/:id`); the URL is authoritative —
+          // AgentApp derives its open view from the matched route.
           <HashRouter
             root={() => (
               <AgentApp

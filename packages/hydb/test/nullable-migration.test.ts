@@ -189,3 +189,66 @@ test("migration rejects unrelated changes and required additions without writing
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("added tables open existing storages and accept new rows", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hydb-table-migration-"));
+  const logs = hydb.table("logs", {
+    id: id().primaryKey(),
+    note: text().notNull(),
+  });
+  const tags = hydb.table("tags", {
+    id: id().primaryKey(),
+    label: text().notNull(),
+  });
+  const oldSchema = hydb.schema({ logs });
+  const schema = hydb.schema({ logs, tags });
+  try {
+    let storage = await openNodeStorage({ directory, schema: oldSchema });
+    const start = await storage.snapshot();
+    const saved = await storage.commit({
+      branch: "main",
+      expectedHead: start.commit,
+      mutations: [storageMutation.insert(logs, { id: "a", note: "Keep" })],
+    });
+    await start.close();
+    await storage.close();
+    // Without declaring the addition the fingerprint mismatch is rejected.
+    await assert.rejects(
+      openNodeStorage({ directory, schema }),
+      /schema does not match/,
+    );
+    storage = await openNodeStorage({
+      directory,
+      schema,
+      addedTables: ["tags"],
+    });
+    const snapshot = await storage.snapshot();
+    assert.deepEqual(await snapshot.get(logs, ["a"]), {
+      id: "a",
+      note: "Keep",
+    });
+    await snapshot.close();
+    // The new table accepts writes immediately after migration.
+    const head = await storage.head();
+    await storage.commit({
+      branch: "main",
+      expectedHead: head,
+      mutations: [storageMutation.insert(tags, { id: "t1", label: "ok" })],
+    });
+    const after = await storage.snapshot();
+    assert.deepEqual(await after.get(tags, ["t1"]), { id: "t1", label: "ok" });
+    const migrated = after.commit;
+    await after.close();
+    await storage.close();
+    // Reopening is idempotent: the migration commit is already the head.
+    storage = await openNodeStorage({
+      directory,
+      schema,
+      addedTables: ["tags"],
+    });
+    assert.equal(await storage.head(), migrated);
+    await storage.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

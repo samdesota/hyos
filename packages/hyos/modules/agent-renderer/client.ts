@@ -1,5 +1,7 @@
 import {
   agentCapability,
+  type AgentBoard,
+  type AgentBoardCard,
   type AgentCommand,
   type AgentCommandResult,
   type AgentFeedChange,
@@ -87,6 +89,8 @@ export interface AgentClient {
     sessionId: string,
     tabs: AgentSessionTabs | null,
   ): Promise<void>;
+  board(boardId: string): Promise<AgentBoard>;
+  saveBoard(boardId: string, cards: readonly AgentBoardCard[]): Promise<void>;
   dispose(): void;
 }
 
@@ -166,6 +170,8 @@ export function createAgentClient(
     sessionTabs: (sessionId) => agent.call("sessionTabs", sessionId),
     saveSessionTabs: (sessionId, tabs) =>
       agent.call("saveSessionTabs", sessionId, tabs),
+    board: (boardId) => agent.call("board", boardId),
+    saveBoard: (boardId, cards) => agent.call("saveBoard", boardId, cards),
     dispose() {
       unsubscribeFeedEvents();
       feeds.clear();

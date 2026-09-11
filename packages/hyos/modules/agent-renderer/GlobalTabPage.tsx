@@ -2,11 +2,13 @@ import { Show, Match, Switch, type Component } from "solid-js";
 
 import type { BrowserViewModule } from "../browser-view/types.js";
 import { BrowserTabContent } from "./browser-tab.js";
+import type { AgentClient } from "./client.js";
 import type { AppState } from "./app-state.js";
 import { WhiteboardPage } from "./WhiteboardPage.js";
 
 export type GlobalTabPageProps = Readonly<{
   app: AppState;
+  client: AgentClient;
   root: Document;
   BrowserView: BrowserViewModule["BrowserView"];
 }>;
@@ -19,7 +21,12 @@ export const GlobalTabPage: Component<GlobalTabPageProps> = (props) => {
       {(tab) => (
         <Switch>
           <Match when={tab.kind === "whiteboard" ? tab : undefined} keyed>
-            {(whiteboard) => <WhiteboardPage boardId={whiteboard.boardId} />}
+            {(whiteboard) => (
+              <WhiteboardPage
+                boardId={whiteboard.boardId}
+                client={props.client}
+              />
+            )}
           </Match>
           <Match when={tab.kind === "browser" ? tab : undefined} keyed>
             {(browser) => (

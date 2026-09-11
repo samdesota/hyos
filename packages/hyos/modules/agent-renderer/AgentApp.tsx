@@ -102,6 +102,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
         <main class="agent-main">
           <GlobalTabPage
             app={app}
+            client={props.client}
             root={props.root}
             BrowserView={props.BrowserView}
           />
