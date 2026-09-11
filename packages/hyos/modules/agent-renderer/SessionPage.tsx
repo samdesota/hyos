@@ -276,20 +276,6 @@ export const SessionPage: Component<SessionPageProps> = (props) => {
             {describeModel(app.providers(), session())} · {session().folder}
           </span>
         </div>
-        <Show when={session().status === "running"}>
-          <button
-            class="cancel"
-            type="button"
-            onClick={() =>
-              void props.client.execute({
-                type: "cancel",
-                sessionId: session().id,
-              })
-            }
-          >
-            Stop
-          </button>
-        </Show>
       </header>
       <div
         class="transcript"
@@ -453,31 +439,60 @@ export const SessionPage: Component<SessionPageProps> = (props) => {
               )}
             </Show>
             <div class="composer-actions">
-              <button
-                class="send investigate"
-                type="button"
-                title="Read-only run: no file changes unless a reversible test is needed"
-                onClick={() => void app.sendMessage("investigate")}
-                disabled={
-                  app.submitting() ||
-                  session().status === "running" ||
-                  !app.prompt().trim()
+              <Show
+                when={session().status === "running"}
+                fallback={
+                  <>
+                    <button
+                      class="send investigate"
+                      type="button"
+                      title="Read-only run: no file changes unless a reversible test is needed"
+                      onClick={() => void app.sendMessage("investigate")}
+                      disabled={
+                        app.submitting() ||
+                        session().status === "running" ||
+                        !app.prompt().trim()
+                      }
+                    >
+                      Investigate
+                    </button>
+                    <button
+                      class="send"
+                      type="button"
+                      onClick={() => void app.sendMessage("implement")}
+                      disabled={
+                        app.submitting() ||
+                        session().status === "running" ||
+                        !app.prompt().trim()
+                      }
+                    >
+                      Implement
+                    </button>
+                  </>
                 }
               >
-                Investigate
-              </button>
-              <button
-                class="send"
-                type="button"
-                onClick={() => void app.sendMessage("implement")}
-                disabled={
-                  app.submitting() ||
-                  session().status === "running" ||
-                  !app.prompt().trim()
-                }
-              >
-                Implement
-              </button>
+                <button
+                  class="send secondary"
+                  type="button"
+                  title="Stop the agent"
+                  onClick={() =>
+                    void props.client.execute({
+                      type: "cancel",
+                      sessionId: session().id,
+                    })
+                  }
+                >
+                  Stop
+                </button>
+                <button
+                  class="send secondary"
+                  type="button"
+                  title="Stop the agent and reply with a summary of where things stand"
+                  disabled
+                >
+                  Interrupt
+                </button>
+              </Show>
             </div>
           </div>
         </div>

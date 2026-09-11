@@ -484,6 +484,9 @@ export const agentStyles = String.raw`
   .composer .send { margin: 0; padding: 4px 12px; font-size: 11px; }
   .composer .send.investigate { background: #33352e; color: #c9cbbf; font-weight: 600; }
   .composer .send.investigate:hover { background: #3c3e37; }
+  .composer .send.secondary { background: #33352e; color: #c9cbbf; font-weight: 600; }
+  .composer .send.secondary:hover:not(:disabled) { background: #3c3e37; }
+  .composer .send.secondary:disabled { opacity: .55; cursor: default; }
   .side-pane {
     position: relative; grid-column: 2; grid-row: 1 / -1; display: flex; flex-direction: column; min-width: 0; min-height: 0;
     border-left: 1px solid #30312d; background: #1d1e1b;
