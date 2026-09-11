@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { emptyBrowserState } from "./browser-tab.js";
+import type { TabId } from "../../capabilities/browser.js";
 import { snapshotGlobalTabs, type GlobalTabsSnapshot } from "./global-tabs.js";
 import {
   createGlobalTabsPersister,
@@ -9,7 +10,7 @@ import {
   snapshotFromRows,
 } from "./global-tabs-persist.js";
 
-const browserGlobalTab = (tabId: string) => ({
+const browserGlobalTab = (tabId: TabId) => ({
   id: tabId,
   kind: "browser" as const,
   tabId,
@@ -33,8 +34,8 @@ test("rows round-trip through a snapshot, focus included", () => {
     {
       ...emptyBrowserState,
       tabs: [
-        { id: "tab-1", url: "https://a.example/", title: "A" },
-        { id: "tab-2", url: "https://b.example/", title: "B" },
+        { id: "tab-1" as TabId, url: "https://a.example/", title: "A" },
+        { id: "tab-2" as TabId, url: "https://b.example/", title: "B" },
       ].map((tab) => ({
         loading: false,
         canGoBack: false,

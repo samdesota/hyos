@@ -46,6 +46,15 @@ export const applicationManifest = defineApplicationManifest({
       },
     },
     {
+      id: "whiteboard.main",
+      file: "./modules/whiteboard/main/index.ts",
+      host: "main",
+      reload: "hot",
+      config: {
+        storagePath: ".data/whiteboard",
+      },
+    },
+    {
       id: "browser.remote-client",
       file: "./modules/browser-client/index.ts",
       host: "renderer",
