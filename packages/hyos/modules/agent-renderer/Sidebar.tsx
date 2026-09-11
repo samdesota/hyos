@@ -12,10 +12,7 @@ import type { AgentSessionSummary } from "../../capabilities/agent.js";
 import type { AppState } from "./app-state.js";
 import { globalTabDescriptors, globalTabLabel } from "./global-tabs.js";
 import { Modal } from "./Modal.js";
-import {
-  groupSessionsByFolder,
-  reorderWithinFolder,
-} from "./sessions-model.js";
+import { groupSessionsByFolder } from "./sessions-model.js";
 
 const SessionFolderList: Component<{
   sessions: readonly AgentSessionSummary[];
@@ -188,72 +185,200 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
   const [createIndex, setCreateIndex] = createSignal(0);
   let createInput: HTMLInputElement | undefined;
 
-  // Session drag-and-drop via pointer events (not the HTML5 drag API,
-  // which Chromium refuses to start from rows of buttons): pointerdown
-  // arms the row, a move past a small threshold starts the drag, and the
-  // row under the pointer is found with elementFromPoint. A drop inside
-  // the same folder group reorders the active list through the host's
-  // reorder-sessions command (the helper keeps folder groups contiguous).
+  // Session drag-and-drop: Apple-style live reorder via pointer events (the
+  // HTML5 drag API is both flaky in Chromium and incapable of this interaction).
+  // Crossing the threshold "lifts" the row into a floating ghost that follows
+  // the pointer raw (direct style writes, no easing); as the pointer crosses a
+  // sibling's midpoint the optimistic dragOrder signal updates and the
+  // displaced siblings FLIP-animate into their new slots. The invisible
+  // in-flow dragged row marks the landing gap. Dropping commits the order
+  // through the host's reorder-sessions command.
   const [dragSessionId, setDragSessionId] = createSignal<string | null>(null);
-  const [dragOverId, setDragOverId] = createSignal<string | null>(null);
+  // Optimistic active-list id order while dragging; null = render as-is.
+  const [dragOrder, setDragOrder] = createSignal<readonly string[] | null>(
+    null,
+  );
   // Set once a drag actually engaged, so the trailing click on pointerup
   // doesn't select the session that was just dragged.
   let suppressNextClick = false;
-  const dropSession = (dragged: string, targetId: string | null): void => {
-    setDragSessionId(null);
-    setDragOverId(null);
-    if (!targetId) return;
-    const ordered = reorderWithinFolder(activeSessions(), dragged, targetId);
-    if (ordered) void reorderSessions(ordered);
+  let ghostEl: HTMLDivElement | undefined;
+
+  const effectiveSessions = createMemo(() => {
+    const order = dragOrder();
+    const sessions = activeSessions();
+    if (!order) return sessions;
+    const byId = new Map(sessions.map((s) => [s.id, s] as const));
+    const ordered = order
+      .map((id) => byId.get(id))
+      .filter((s): s is AgentSessionSummary => Boolean(s));
+    for (const session of sessions)
+      if (!order.includes(session.id)) ordered.push(session);
+    return ordered;
+  });
+
+  const ghostSession = createMemo(() => {
+    const id = dragSessionId();
+    return id ? (activeSessions().find((s) => s.id === id) ?? null) : null;
+  });
+
+  // FLIP siblings: after each reorder the DOM is already in its final layout,
+  // so measure rows, diff against the previous frame's rects, and animate the
+  // delta back to identity. Re-running animate() replaces the previous
+  // animation, which keeps slides retargetable mid-flight.
+  let rowRects = new Map<string, number>();
+  createEffect(() => {
+    if (!dragSessionId()) {
+      rowRects = new Map();
+      return;
+    }
+    effectiveSessions();
+    const next = new Map<string, number>();
+    for (const row of Array.from(
+      document.querySelectorAll<HTMLElement>(".session-row[data-session-id]"),
+    )) {
+      const id = row.dataset.sessionId;
+      if (id) next.set(id, row.getBoundingClientRect().top);
+    }
+    for (const [id, top] of next) {
+      const previous = rowRects.get(id);
+      if (previous === undefined || previous === top) continue;
+      document
+        .querySelector<HTMLElement>(
+          `.session-row[data-session-id="${CSS.escape(id)}"]`,
+        )
+        ?.animate(
+          [
+            { transform: `translateY(${previous - top}px)` },
+            { transform: "translateY(0)" },
+          ],
+          { duration: 180, easing: "cubic-bezier(0.2, 0, 0, 1)" },
+        );
+    }
+    rowRects = next;
+  });
+
+  // Once the host publishes the committed order, the override is redundant.
+  createEffect(() => {
+    const order = dragOrder();
+    if (!order || dragSessionId()) return;
+    const active = activeSessions().map((s) => s.id);
+    if (
+      active.length === order.length &&
+      active.every((id, index) => id === order[index])
+    )
+      setDragOrder(null);
+  });
+
+  const sessionById = (id: string): AgentSessionSummary | undefined =>
+    activeSessions().find((session) => session.id === id);
+
+  /** Move the dragged session so the pointer sits at `index` among its folder siblings. */
+  const reorderDraggedTo = (draggedId: string, index: number): void => {
+    const dragged = sessionById(draggedId);
+    if (!dragged) return;
+    const others = (dragOrder() ?? activeSessions().map((s) => s.id)).filter(
+      (id) => {
+        const session = sessionById(id);
+        return session?.folder === dragged.folder && id !== draggedId;
+      },
+    );
+    if (index < 0 || index > others.length) return;
+    const folderIds = [
+      ...others.slice(0, index),
+      draggedId,
+      ...others.slice(index),
+    ];
+    const queue = [...folderIds];
+    const order = activeSessions().map((session) =>
+      session.folder === dragged.folder ? queue.shift()! : session.id,
+    );
+    const current = dragOrder() ?? activeSessions().map((s) => s.id);
+    if (
+      current.length === order.length &&
+      current.every((id, i) => id === order[i])
+    )
+      return;
+    setDragOrder(order);
   };
 
-  /** Id of the active session row under the pointer, if any. */
-  const sessionRowIdAt = (x: number, y: number): string | null => {
-    const row = document
-      .elementFromPoint(x, y)
-      ?.closest<HTMLElement>(".session-row[data-session-id]");
-    return row?.dataset.sessionId ?? null;
+  /** Folder slot index whose gap the pointer is over (midpoint hit-testing). */
+  const dragIndexAt = (draggedId: string, y: number): number => {
+    const dragged = sessionById(draggedId);
+    if (!dragged) return -1;
+    const others = effectiveSessions().filter(
+      (session) =>
+        session.folder === dragged.folder && session.id !== draggedId,
+    );
+    for (let index = 0; index < others.length; index++) {
+      const row = document.querySelector<HTMLElement>(
+        `.session-row[data-session-id="${CSS.escape(others[index].id)}"]`,
+      );
+      if (!row) continue;
+      const rect = row.getBoundingClientRect();
+      if (y < rect.top + rect.height / 2) return index;
+    }
+    return others.length;
   };
 
   const startSessionDrag = (id: string, event: PointerEvent): void => {
+    const row = event.currentTarget as HTMLElement;
     const startY = event.clientY;
     let dragging = false;
+    let grabDx = 0;
+    let grabDy = 0;
+    let pointerX = event.clientX;
+    let pointerY = event.clientY;
+    const placeGhost = (): void => {
+      if (!ghostEl) return;
+      ghostEl.style.width = `${row.getBoundingClientRect().width}px`;
+      ghostEl.style.transform = `translate(${pointerX - grabDx}px, ${pointerY - grabDy}px)`;
+    };
+    const engage = (): void => {
+      dragging = true;
+      suppressNextClick = true;
+      const rect = row.getBoundingClientRect();
+      grabDx = pointerX - rect.left;
+      grabDy = pointerY - rect.top;
+      setDragSessionId(id);
+      // The ghost node is created synchronously by the signal write; style it
+      // on the next tick so it never flashes at its untransformed position.
+      queueMicrotask(placeGhost);
+    };
     const move = (moveEvent: PointerEvent): void => {
+      pointerX = moveEvent.clientX;
+      pointerY = moveEvent.clientY;
       if (!dragging) {
-        if (Math.abs(moveEvent.clientY - startY) < 5) return;
-        dragging = true;
-        suppressNextClick = true;
-        setDragSessionId(id);
+        if (Math.abs(pointerY - startY) < 5) return;
+        engage();
       }
       moveEvent.preventDefault();
-      const targetId = sessionRowIdAt(moveEvent.clientX, moveEvent.clientY);
-      // Only same-folder drops are meaningful; the helper would reject
-      // anything else anyway.
-      const dragged = activeSessions().find((session) => session.id === id);
-      const target = activeSessions().find(
-        (session) => session.id === targetId,
-      );
-      setDragOverId(
-        targetId && target && dragged && target.folder === dragged.folder
-          ? targetId
-          : null,
-      );
+      placeGhost();
+      reorderDraggedTo(id, dragIndexAt(id, pointerY));
     };
-    const finish = (upEvent: PointerEvent): void => {
+    const cleanup = (): void => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", cancel);
-      if (dragging)
-        dropSession(id, sessionRowIdAt(upEvent.clientX, upEvent.clientY));
+    };
+    const finish = (): void => {
+      cleanup();
+      if (!dragging) return;
+      const ordered = dragOrder();
+      setDragSessionId(null);
+      if (ordered) {
+        void reorderSessions([...ordered]);
+        // Keep the optimistic order visible until the host republishes (the
+        // effect above clears it) or this safety timer fires on rejection.
+        window.setTimeout(() => {
+          if (dragOrder() === ordered) setDragOrder(null);
+        }, 2000);
+      }
     };
     const cancel = (): void => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", cancel);
-      if (dragging) {
-        setDragSessionId(null);
-        setDragOverId(null);
-      }
+      cleanup();
+      if (!dragging) return;
+      setDragSessionId(null);
+      setDragOrder(null);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", finish);
@@ -461,7 +586,7 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
       </Show>
       <div class="session-label">Sessions</div>
       <div class="session-list" id="agent-session-list">
-        <SessionFolderList sessions={activeSessions()}>
+        <SessionFolderList sessions={effectiveSessions()}>
           {(session) => (
             <Show when={session()}>
               {(s) => (
@@ -469,8 +594,9 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
                   class="session-row"
                   classList={{
                     active: activeId() === s().id,
+                    // The lifted row leaves an invisible gap marking where
+                    // the item will land.
                     dragging: dragSessionId() === s().id,
-                    "drag-over": dragOverId() === s().id,
                   }}
                   data-session-id={s().id}
                   onPointerDown={(event) => {
@@ -558,6 +684,24 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
           </Show>
         </Show>
       </div>
+      <Show when={ghostSession()}>
+        {(s) => (
+          <div class="session-row drag-ghost" ref={ghostEl}>
+            <button type="button" class="session-open" tabindex="-1">
+              <span class="session-title">{s().title}</span>
+              <Show when={s().statusDetail}>
+                {(detail) => (
+                  <span class="session-meta">
+                    <span class={`session-status-text ${s().status}`}>
+                      {detail()}
+                    </span>
+                  </span>
+                )}
+              </Show>
+            </button>
+          </div>
+        )}
+      </Show>
     </aside>
   );
 };
