@@ -63,12 +63,17 @@ import {
   sessionsShallowEqual,
   timelineEntries,
 } from "./sessions-model.js";
-import { sessionFromHash, syncHashToSession } from "./session-route.js";
 
 export type AppStateProps = Readonly<{
   client: AgentClient;
   keybindingClient: KeybindingClient;
   browserClient: BrowserClient;
+  /**
+   * Route change request: the URL is the source of truth for which session
+   * (or the new-session view) is open, so selection actions navigate
+   * instead of writing the hash directly.
+   */
+  navigateToSession: (sessionId: string | null) => void;
 }>;
 
 /**
@@ -81,6 +86,7 @@ export function createAppState({
   client,
   keybindingClient,
   browserClient,
+  navigateToSession,
 }: AppStateProps) {
   const [providers, setProviders] = createSignal<
     readonly AgentProviderSummary[]
@@ -759,7 +765,7 @@ export function createAppState({
       sessionId !== activeId();
     swapSideTabScope(sessionId);
     setActiveId(sessionId);
-    syncHashToSession(sessionId);
+    navigateToSession(sessionId);
     setPrompt("");
     setMessages([]);
     setBefore(null);
@@ -803,7 +809,7 @@ export function createAppState({
     closeFeed();
     swapSideTabScope(null);
     setActiveId(null);
-    syncHashToSession(null);
+    navigateToSession(null);
     setMessages([]);
     setPrompt("");
     setError(null);
@@ -1002,10 +1008,6 @@ export function createAppState({
       );
       setProviders(nextProviders);
       acceptSessions(state);
-      const routedId = sessionFromHash();
-      if (routedId && state.sessions.some(({ id }) => id === routedId)) {
-        void selectSession(routedId);
-      }
     })
     .catch(showError);
 
