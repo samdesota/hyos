@@ -1,7 +1,8 @@
 /**
  * Card model for the whiteboard: markdown notes placed at world
  * coordinates, so they pan and zoom with the canvas. Cards are pure data
- * — the page owns the list, persisted via the whiteboard capability.
+ * — the page keeps them in a keyed Solid store (drag moves are O(1) store
+ * path sets there) and persists the list via the whiteboard capability.
  */
 export type WhiteboardCard = Readonly<{
   id: string;
@@ -30,18 +31,6 @@ export function updateWhiteboardCard(
   const matching = cards.some((card) => card.id === id);
   if (!matching) return cards;
   return cards.map((card) => (card.id === id ? { ...card, markdown } : card));
-}
-
-/** Move one card to new world coordinates, leaving the rest untouched. */
-export function moveWhiteboardCard(
-  cards: readonly WhiteboardCard[],
-  id: string,
-  x: number,
-  y: number,
-): readonly WhiteboardCard[] {
-  const matching = cards.some((card) => card.id === id);
-  if (!matching) return cards;
-  return cards.map((card) => (card.id === id ? { ...card, x, y } : card));
 }
 
 /** Drop a card (used when an edit commits as empty). */

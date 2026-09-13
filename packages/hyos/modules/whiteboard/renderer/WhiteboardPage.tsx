@@ -1,19 +1,18 @@
 import {
   For,
   Show,
-  createEffect,
   createSignal,
   onCleanup,
   onMount,
   type Component,
 } from "solid-js";
+import { createStore } from "solid-js/store";
 
 import { renderAgentMarkdown } from "../../agent-renderer/markdown.js";
 import type { WhiteboardClient } from "./client.js";
 import {
   addWhiteboardCard,
   isBlankCardMarkdown,
-  moveWhiteboardCard,
   removeWhiteboardCard,
   updateWhiteboardCard,
   type WhiteboardCard,
@@ -50,7 +49,10 @@ export function createWhiteboardPage(
   return (props) => {
     const [viewport, setViewport] = createSignal<Viewport>(initialViewport);
     const [panning, setPanning] = createSignal(false);
-    const [cards, setCards] = createSignal<readonly WhiteboardCard[]>([]);
+    // Cards live in a keyed store: <For> keys each row by reference, so a
+    // per-card store mutation re-renders only that card, and a drag frame is
+    // an O(1) path set instead of copying the whole list.
+    const [cards, setCards] = createStore<WhiteboardCard[]>([]);
     const [media, setMedia] = createSignal<Readonly<Record<string, string>>>(
       {},
     );
@@ -58,40 +60,41 @@ export function createWhiteboardPage(
     const [draggingId, setDraggingId] = createSignal<string | null>(null);
 
     // --- Persistence -------------------------------------------------------
-    // The board loads once on mount; every subsequent card change schedules a
-    // debounced whole-list save. Array identity separates the load-triggered
-    // effect run (already saved) from real edits.
+    // The board loads once on mount; every card mutation calls scheduleSave,
+    // debouncing a whole-list save. An explicit unsaved flag (store identity
+    // is stable across keyed mutations) separates the load from real edits.
     let disposed = false;
-    const [loaded, setLoaded] = createSignal(false);
-    let savedSnapshot: readonly WhiteboardCard[] | undefined;
+    let unsaved = false;
     let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
-    const flushSave = async (
-      current: readonly WhiteboardCard[],
-    ): Promise<void> => {
+    const saveCards = (): Promise<void> =>
+      client.saveBoard(
+        props.boardId,
+        cards.map((card) => ({
+          id: card.id,
+          x: card.x,
+          y: card.y,
+          markdown: card.markdown,
+          mediaId: card.mediaId,
+        })),
+      );
+
+    const flushSave = async (): Promise<void> => {
       saveTimer = undefined;
-      if (disposed || savedSnapshot === current) return;
+      if (disposed || !unsaved) return;
+      unsaved = false;
       try {
-        await client.saveBoard(
-          props.boardId,
-          current.map((card) => ({
-            id: card.id,
-            x: card.x,
-            y: card.y,
-            markdown: card.markdown,
-            mediaId: card.mediaId,
-          })),
-        );
-        savedSnapshot = current;
+        await saveCards();
       } catch (error) {
         // Retry on the same debounce cadence; superseded by any newer edit.
         console.error("Whiteboard save failed; retrying", error);
-        if (!disposed) scheduleSave(current);
+        if (!disposed) scheduleSave();
       }
     };
-    const scheduleSave = (current: readonly WhiteboardCard[]): void => {
+    const scheduleSave = (): void => {
+      unsaved = true;
       if (saveTimer !== undefined) clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => void flushSave(current), saveDebounceMs);
+      saveTimer = setTimeout(() => void flushSave(), saveDebounceMs);
     };
 
     onMount(() => {
@@ -108,17 +111,10 @@ export function createWhiteboardPage(
               mediaId,
             }),
           );
-          savedSnapshot = restored;
           setCards(restored);
           setMedia({ ...board.media });
-          setLoaded(true);
         })
         .catch((error) => console.error("Whiteboard load failed", error));
-    });
-    createEffect(() => {
-      const current = cards();
-      if (!loaded() || savedSnapshot === current) return;
-      scheduleSave(current);
     });
     onCleanup(() => {
       disposed = true;
@@ -127,21 +123,9 @@ export function createWhiteboardPage(
       if (saveTimer !== undefined) {
         clearTimeout(saveTimer);
         saveTimer = undefined;
-        const current = cards();
-        if (savedSnapshot !== current) {
-          void client
-            .saveBoard(
-              props.boardId,
-              current.map((card) => ({
-                id: card.id,
-                x: card.x,
-                y: card.y,
-                markdown: card.markdown,
-                mediaId: card.mediaId,
-              })),
-            )
-            .catch(() => undefined);
-        }
+      }
+      if (unsaved) {
+        void saveCards().catch(() => undefined);
       }
     });
     let canvas: HTMLDivElement | undefined;
@@ -154,12 +138,14 @@ export function createWhiteboardPage(
       lastY: number;
       moved: boolean;
     } | null = null;
-    // The in-flight card drag: the card's starting world position plus the
-    // starting screen position, so each move maps the screen delta back
-    // through the viewport scale.
+    // The in-flight card drag: the dragged row's index in the keyed store
+    // (captured once) plus the card's starting world and screen positions,
+    // so each move maps the screen delta back through the viewport scale
+    // and lands as an O(1) store path set.
     let cardDrag: {
       pointerId: number;
       cardId: string;
+      cardIndex: number;
       startScreenX: number;
       startScreenY: number;
       originX: number;
@@ -249,8 +235,8 @@ export function createWhiteboardPage(
         event.clientY - bounds.top,
       );
       const id = crypto.randomUUID();
-      setCards((list) =>
-        addWhiteboardCard(list, {
+      setCards(
+        addWhiteboardCard(cards, {
           id,
           x: world.x,
           y: world.y,
@@ -258,6 +244,7 @@ export function createWhiteboardPage(
           mediaId: null,
         }),
       );
+      scheduleSave();
       setEditingId(id);
     };
 
@@ -266,10 +253,11 @@ export function createWhiteboardPage(
     const commitEdit = (id: string, markdown: string): void => {
       setEditingId(null);
       if (isBlankCardMarkdown(markdown)) {
-        setCards((list) => removeWhiteboardCard(list, id));
+        setCards(removeWhiteboardCard(cards, id));
       } else {
-        setCards((list) => updateWhiteboardCard(list, id, markdown));
+        setCards(updateWhiteboardCard(cards, id, markdown));
       }
+      scheduleSave();
     };
 
     // Pasting an image plants it as an image card at the center of the
@@ -309,8 +297,8 @@ export function createWhiteboardPage(
           .then(() => {
             if (disposed) return;
             setMedia((current) => ({ ...current, [mediaId]: dataUrl }));
-            setCards((list) =>
-              addWhiteboardCard(list, {
+            setCards(
+              addWhiteboardCard(cards, {
                 id: cardId,
                 x: world.x,
                 y: world.y,
@@ -318,6 +306,7 @@ export function createWhiteboardPage(
                 mediaId,
               }),
             );
+            scheduleSave();
           })
           .catch((error) =>
             console.error("Whiteboard image paste failed", error),
@@ -345,9 +334,12 @@ export function createWhiteboardPage(
         // commit it before this card can become the editing target.
         const activeId = editingId();
         if (activeId !== null) commitEdit(activeId, editor?.value ?? "");
+        const cardIndex = cards.findIndex((entry) => entry.id === card.id);
+        if (cardIndex === -1) return;
         cardDrag = {
           pointerId: event.pointerId,
           cardId: card.id,
+          cardIndex,
           startScreenX: event.clientX,
           startScreenY: event.clientY,
           originX: card.x,
@@ -379,16 +371,17 @@ export function createWhiteboardPage(
           moved = true;
         }
         if (!moved) return;
-        // Screen deltas divide by zoom to become world deltas.
+        // Screen deltas divide by zoom to become world deltas. Keyed store
+        // path sets touch only this row: <For> re-renders just this card and
+        // the whole-list copy per frame is gone.
+        const index = cardDrag.cardIndex;
+        if (index >= cards.length || cards[index]!.id !== card.id) return;
         const scale = viewport().scale;
-        setCards((list) =>
-          moveWhiteboardCard(
-            list,
-            card.id,
-            current.originX + dx / scale,
-            current.originY + dy / scale,
-          ),
-        );
+        const x = current.originX + dx / scale;
+        const y = current.originY + dy / scale;
+        setCards(index, "x", x);
+        setCards(index, "y", y);
+        scheduleSave();
       };
     const onCardPointerUp = (card: WhiteboardCard) => (event: PointerEvent) => {
       const current = cardDrag;
