@@ -354,6 +354,7 @@ const sameSession = (a: AgentSessionSummary, b: AgentSessionSummary): boolean =>
   a.mode === b.mode &&
   a.status === b.status &&
   a.statusDetail === b.statusDetail &&
+  a.seenStatusDetail === b.seenStatusDetail &&
   a.lastError === b.lastError &&
   samePlan(a.plan, b.plan) &&
   sameDate(a.archivedAt, b.archivedAt) &&

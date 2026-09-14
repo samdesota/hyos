@@ -37,6 +37,7 @@ test("any meaningful field change is detected", () => {
   const changes: Partial<AgentSessionSummary>[] = [
     { status: "running" },
     { statusDetail: "Fixing spinner" },
+    { seenStatusDetail: "Fixing spinner" },
     { title: "Renamed" },
     { folder: "/tmp/other" },
     { lastError: "boom" },
