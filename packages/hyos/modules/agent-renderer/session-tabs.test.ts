@@ -5,6 +5,13 @@ import {
   createSessionTabsPersister,
   type SessionTabsTarget,
 } from "./session-tabs.js";
+import type { BrowserState } from "../../capabilities/browser.js";
+import {
+  pinnedSideTabs,
+  reconcileSideTabs,
+  snapshotSessionTabs,
+  type SideTabScope,
+} from "./side-pane.js";
 
 const savedTabs = (url: string): SessionTabsTarget => ({
   sessionId: "session-1",
@@ -167,4 +174,85 @@ test("dispose cancels a scheduled write without firing it", () => {
   } finally {
     mock.timers.reset();
   }
+});
+
+const hostTab = (id: string, url: string): BrowserState["tabs"][number] => ({
+  id: id as BrowserState["tabs"][number]["id"],
+  url,
+  title: url,
+  loading: false,
+  canGoBack: false,
+  canGoForward: false,
+  error: null,
+});
+
+/**
+ * Reload regression (turn 2 of the investigation): wiring the module pieces
+ * exactly as app-state.ts does — snapshot taken at flush time from the live,
+ * reconciled strip — demonstrates that a window reload wipes the saved
+ * session tabs. `browser.main` restarts first (new host generation, new tab
+ * ids), the dying renderer's reconcile drops the session's browser tabs, and
+ * the teardown `flush()` then persists the emptied strip as `null`, erasing
+ * the DB row the remounted renderer would restore from.
+ */
+test("reload wipes saved session tabs via the teardown flush", async () => {
+  const writes: SessionTabsTarget[] = [];
+  let strip: SideTabScope = {
+    tabs: [...pinnedSideTabs, { id: "tab-1", kind: "browser", tabId: "tab-1" }],
+    activeId: "tab-1",
+  };
+  let hostState: BrowserState = {
+    generation: 1,
+    sequence: 1,
+    activeTabId: "tab-1",
+    tabs: [hostTab("tab-1", "https://a.example/")],
+  };
+  const persister = createSessionTabsPersister({
+    delay: 500,
+    snapshot: () => ({
+      sessionId: "session-1",
+      tabs: snapshotSessionTabs(strip, hostState),
+    }),
+    save: async (target) => {
+      writes.push(target);
+    },
+  });
+
+  // Normal operation: the strip is persisted under its urls.
+  persister.flush();
+  await settle();
+  assert.deepEqual(writes[0]?.tabs?.tabs, [
+    { kind: "browser", url: "https://a.example/", title: "https://a.example/" },
+  ]);
+
+  // Window reload: browser.main is recreated — new generation, new tab ids,
+  // and the old renderer processes the new host's first publish.
+  hostState = {
+    generation: 2,
+    sequence: 0,
+    activeTabId: "tab-fresh",
+    tabs: [hostTab("tab-fresh", "https://example.com/")],
+  };
+  strip = {
+    tabs: reconcileSideTabs(strip.tabs, hostState),
+    activeId: null,
+  };
+  assert.deepEqual(strip.tabs, pinnedSideTabs);
+
+  // The dying renderer's onCleanup calls tabsPersister.flush().
+  persister.flush();
+  await settle();
+  // ⛔ The saved strip is wiped; restoreSavedTabs will read null.
+  assert.deepEqual(writes, [
+    {
+      sessionId: "session-1",
+      tabs: {
+        tabs: [
+          { kind: "browser", url: "https://a.example/", title: "https://a.example/" },
+        ],
+        activeIndex: 0,
+      },
+    },
+    { sessionId: "session-1", tabs: null },
+  ]);
 });
