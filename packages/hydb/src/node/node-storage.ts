@@ -41,6 +41,11 @@ import {
   encodeValue,
   keyPrefixUpperBound,
 } from "./codec.js";
+import {
+  deriveMigrationFingerprints,
+  type Migration,
+  type SchemaOp,
+} from "./migration.js";
 import { AppendOnlyPageStore } from "./page-store.js";
 import { writeTrace, writeTraceNow } from "./write-trace.js";
 import {
@@ -265,6 +270,63 @@ function primaryKey(metadata: TableMetadata, row: StoredRow): StorageKey {
   return metadata.primaryColumns.map((column) => row[column]);
 }
 
+type PendingMigration = {
+  from: string;
+  to: string;
+  columns: Readonly<Record<string, readonly string[]>>;
+  /** Tables absent from the `from` schema; seeded into the manifest. */
+  tables?: readonly string[];
+};
+
+/**
+ * Converts an ordered migration list into the internal per-step records by
+ * walking the chain of fingerprints backwards from the current schema. Each
+ * migration contributes one step; ops the apply loop cannot express yet are
+ * rejected up front, before the storage is opened.
+ */
+function migrationsToInternal(
+  schema: AnySchema,
+  migrations: readonly Migration[],
+): PendingMigration[] {
+  const nodes = deriveMigrationFingerprints(schema, migrations);
+  const result: PendingMigration[] = [];
+  for (let index = 0; index < migrations.length; index += 1) {
+    const migration = migrations[index]!;
+    const columns: Record<string, string[]> = {};
+    const tables: string[] = [];
+    for (const step of migration.steps) {
+      if ((step as { kind?: unknown }).kind === "data") {
+        throw new TypeError(
+          `Migration ${migration.id} contains data steps, which the migration apply loop does not support yet`,
+        );
+      }
+      const op = step as SchemaOp;
+      if (op.type === "addColumn") {
+        const existing = (columns[op.table] ??= []);
+        if (existing.includes(op.column.name)) {
+          throw new TypeError(
+            `Duplicate migration column: ${op.table}.${op.column.name}`,
+          );
+        }
+        existing.push(op.column.name);
+      } else if (op.type === "addTable") {
+        tables.push(op.description.name);
+      } else {
+        throw new TypeError(
+          `Migration ${migration.id} uses schema operation ${op.type}, which the migration apply loop does not support yet`,
+        );
+      }
+    }
+    result.push({
+      from: nodes[index]!.fingerprint,
+      to: nodes[index + 1]!.fingerprint,
+      columns,
+      ...(tables.length ? { tables } : {}),
+    });
+  }
+  return result;
+}
+
 function indexPrefix(
   index: TableMetadata["indexes"][number],
   row: StoredRow,
@@ -465,6 +527,22 @@ export class NodeStorageDatabase implements StorageDatabase {
         : validateRetention(options.retention);
     await mkdir(options.directory, { recursive: true });
     const metadata = schemaMetadata(options.schema);
+    const inlineMigrations =
+      options.migrations !== undefined
+        ? migrationsToInternal(options.schema, options.migrations)
+        : undefined;
+    if (
+      inlineMigrations !== undefined &&
+      (options.addNullableColumns !== undefined ||
+        options.nullableColumnMigrations !== undefined ||
+        options.addedTables !== undefined ||
+        options.addedTableMigrations !== undefined ||
+        options.postAddedTableNullableColumnMigrations !== undefined)
+    ) {
+      throw new TypeError(
+        "Specify either migrations or the legacy migration options, not both",
+      );
+    }
     if (options.addNullableColumns && options.nullableColumnMigrations) {
       throw new TypeError("Specify only one nullable migration configuration");
     }
@@ -473,6 +551,35 @@ export class NodeStorageDatabase implements StorageDatabase {
         "Specify only one added-table migration configuration",
       );
     }
+    // These nullable additions happened after the table additions. Remove
+    // them when reconstructing every earlier schema fingerprint.
+    const postTableSteps = options.postAddedTableNullableColumnMigrations ?? [];
+    const postTableOmitted: Record<string, string[]> = {};
+    let postTableTarget = metadata.fingerprint;
+    const postTableMigrations = [...postTableSteps]
+      .reverse()
+      .map((columns) => {
+        if (!Object.values(columns).some((names) => names.length))
+          throw new TypeError("Empty nullable migration");
+        for (const [table, names] of Object.entries(columns)) {
+          const existing = (postTableOmitted[table] ??= []);
+          for (const name of names) {
+            if (existing.includes(name))
+              throw new TypeError(
+                `Duplicate migration column: ${table}.${name}`,
+              );
+            existing.push(name);
+          }
+        }
+        const from = schemaMetadata(
+          options.schema,
+          postTableOmitted,
+        ).fingerprint;
+        const migration = { from, to: postTableTarget, columns };
+        postTableTarget = from;
+        return migration;
+      })
+      .reverse();
     // Table additions follow nullable-column migrations. Each group is one
     // historical schema step, allowing storage already upgraded through an
     // earlier group to resume at the next one.
@@ -485,12 +592,18 @@ export class NodeStorageDatabase implements StorageDatabase {
       throw new TypeError("Duplicate added-table migration");
     }
     const tablesAddedFingerprint = addedTableNames.length
-      ? schemaMetadata(options.schema, {}, addedTableNames).fingerprint
-      : metadata.fingerprint;
+      ? schemaMetadata(options.schema, postTableOmitted, addedTableNames)
+          .fingerprint
+      : postTableTarget;
     const steps =
       options.nullableColumnMigrations ??
       (options.addNullableColumns ? [options.addNullableColumns] : []);
-    const omitted: Record<string, string[]> = {};
+    const omitted: Record<string, string[]> = Object.fromEntries(
+      Object.entries(postTableOmitted).map(([table, names]) => [
+        table,
+        [...names],
+      ]),
+    );
     // The nullable-column chain composes on top of the table addition: its
     // oldest step must reach the pre-table-addition fingerprint.
     let target = tablesAddedFingerprint;
@@ -534,7 +647,7 @@ export class NodeStorageDatabase implements StorageDatabase {
       const laterTables = addedTableSteps.slice(index + 1).flat();
       const nextTarget = schemaMetadata(
         options.schema,
-        {},
+        postTableOmitted,
         laterTables,
       ).fingerprint;
       nullableMigrations.push({
@@ -545,6 +658,7 @@ export class NodeStorageDatabase implements StorageDatabase {
       });
       tableTarget = nextTarget;
     }
+    nullableMigrations.push(...postTableMigrations);
     const dataPath = join(options.directory, "hydb.data");
     debugBoot("checkpoint:read:start");
     const checkpoint = await readStartupCheckpoint(dataPath);
@@ -567,7 +681,7 @@ export class NodeStorageDatabase implements StorageDatabase {
       metadata.fingerprint,
       metadata.tables,
       requestedRetention,
-      nullableMigrations,
+      inlineMigrations ?? nullableMigrations,
     );
     try {
       debugBoot("log-load:start");
@@ -1519,7 +1633,11 @@ export class NodeStorageDatabase implements StorageDatabase {
 export type NodeStorageOptions = Readonly<{
   directory: string;
   schema: AnySchema;
-  /** Explicitly upgrade the exact schema obtained by removing these nullable,
+  /** Ordered migration list, oldest first, declared with defineMigration.
+   * Opens any intermediate schema covered by the list and applies only the
+   * remaining steps. Do not combine with the legacy migration options. */
+  migrations?: readonly Migration[];
+  /** Legacy: explicitly upgrade the exact schema obtained by removing these nullable,
    * non-indexed columns. Existing rows receive null; historical commits are unchanged. */
   addNullableColumns?: Readonly<Record<string, readonly string[]>>;
   /** Ordered additions, oldest first. Opens any declared intermediate schema and
@@ -1533,6 +1651,10 @@ export type NodeStorageOptions = Readonly<{
   /** Ordered table-addition groups, oldest first. Opens any declared
    * intermediate schema and applies only the remaining groups. */
   addedTableMigrations?: readonly (readonly string[])[];
+  /** Nullable-column additions after all added-table groups, oldest first. */
+  postAddedTableNullableColumnMigrations?: readonly Readonly<
+    Record<string, readonly string[]>
+  >[];
   cacheBytes?: number;
   maxEntries?: number;
   memory?: MemoryManager;
