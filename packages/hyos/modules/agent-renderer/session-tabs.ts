@@ -18,17 +18,36 @@ export function createSessionTabsPersister(
   options: Readonly<{
     delay: number;
     snapshot: () => SessionTabsTarget | null;
+    /** The live browser host generation; enables the reload guard below. */
+    generation?: () => number;
     save: (target: SessionTabsTarget) => Promise<void>;
   }>,
 ): Readonly<{ request(): void; flush(): void; dispose(): void }> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let savedSessionId: string | null = null;
   let savedJson: string | null = null;
+  let savedGeneration: number | null = null;
 
   const fire = (): void => {
     timer = undefined;
     const target = options.snapshot();
     if (!target) return;
+    const generation = options.generation?.() ?? null;
+    // Reload guard: a browser.main restart rotates the host generation, and
+    // a snapshot taken under a generation this persister has never saved
+    // under describes tabs lost to that restart — not user intent. The
+    // dying renderer's teardown flush would otherwise persist the reconciled
+    // (emptied) strip and wipe the saved record a remounted renderer
+    // restores from. Writes are suppressed until a fresh instance (the
+    // remount's persister, after its restore) saves under the new
+    // generation; without `generation`, no suppression applies.
+    if (
+      savedGeneration !== null &&
+      generation !== null &&
+      generation !== savedGeneration
+    ) {
+      return;
+    }
     const json = JSON.stringify(target.tabs);
     if (target.sessionId === savedSessionId && json === savedJson) return;
     // Bookkeeping only after the save resolves, so a failed write is
@@ -38,6 +57,7 @@ export function createSessionTabsPersister(
       .then(() => {
         savedSessionId = target.sessionId;
         savedJson = json;
+        savedGeneration = generation;
       })
       .catch(() => undefined);
   };

@@ -187,15 +187,17 @@ const hostTab = (id: string, url: string): BrowserState["tabs"][number] => ({
 });
 
 /**
- * Reload regression (turn 2 of the investigation): wiring the module pieces
- * exactly as app-state.ts does — snapshot taken at flush time from the live,
- * reconciled strip — demonstrates that a window reload wipes the saved
- * session tabs. `browser.main` restarts first (new host generation, new tab
- * ids), the dying renderer's reconcile drops the session's browser tabs, and
- * the teardown `flush()` then persists the emptied strip as `null`, erasing
- * the DB row the remounted renderer would restore from.
+/**
+ * Reload regression: wiring the module pieces exactly as app-state.ts does —
+ * snapshot taken at flush time from the live, reconciled strip — a window
+ * reload must not wipe the saved session tabs. `browser.main` restarts first
+ * (new host generation, new tab ids), the dying renderer's reconcile drops
+ * the session's browser tabs, and the teardown `flush()` must NOT persist
+ * the emptied strip as `null` — that would erase the DB row the remounted
+ * renderer restores from. The generation guard suppresses any write taken
+ * under a host generation the persister has not saved under yet.
  */
-test("reload wipes saved session tabs via the teardown flush", async () => {
+test("reload does not wipe saved session tabs via the teardown flush", async () => {
   const writes: SessionTabsTarget[] = [];
   let strip: SideTabScope = {
     tabs: [...pinnedSideTabs, { id: "tab-1", kind: "browser", tabId: "tab-1" }],
@@ -213,6 +215,7 @@ test("reload wipes saved session tabs via the teardown flush", async () => {
       sessionId: "session-1",
       tabs: snapshotSessionTabs(strip, hostState),
     }),
+    generation: () => hostState.generation,
     save: async (target) => {
       writes.push(target);
     },
@@ -230,8 +233,8 @@ test("reload wipes saved session tabs via the teardown flush", async () => {
   hostState = {
     generation: 2,
     sequence: 0,
-    activeTabId: "tab-fresh",
-    tabs: [hostTab("tab-fresh", "https://example.com/")],
+    activeTabId: "tab-9",
+    tabs: [hostTab("tab-9", "https://example.com/")],
   };
   strip = {
     tabs: reconcileSideTabs(strip.tabs, hostState),
@@ -239,20 +242,97 @@ test("reload wipes saved session tabs via the teardown flush", async () => {
   };
   assert.deepEqual(strip.tabs, pinnedSideTabs);
 
-  // The dying renderer's onCleanup calls tabsPersister.flush().
+  // The dying renderer's onCleanup calls tabsPersister.flush(): the
+  // reconciled strip must NOT be persisted — the DB keeps the saved urls
+  // for the remounted renderer's restoreSavedTabs.
   persister.flush();
   await settle();
-  // ⛔ The saved strip is wiped; restoreSavedTabs will read null.
+  assert.equal(writes.length, 1);
+});
+
+// The guard is keyed to the host generation, not to the wipe shape: a user
+// genuinely closing every browser tab under the same host incarnation still
+// clears the row.
+test("clearing the pane under the same generation still writes null", async () => {
+  const writes: SessionTabsTarget[] = [];
+  let strip: SideTabScope = {
+    tabs: [...pinnedSideTabs, { id: "tab-1", kind: "browser", tabId: "tab-1" }],
+    activeId: "patches",
+  };
+  const hostState: BrowserState = {
+    generation: 1,
+    sequence: 1,
+    activeTabId: "tab-1",
+    tabs: [hostTab("tab-1", "https://a.example/")],
+  };
+  const persister = createSessionTabsPersister({
+    delay: 500,
+    snapshot: () => ({
+      sessionId: "session-1",
+      tabs: snapshotSessionTabs(strip, hostState),
+    }),
+    generation: () => hostState.generation,
+    save: async (target) => {
+      writes.push(target);
+    },
+  });
+
+  persister.flush();
+  await settle();
+  strip = { tabs: pinnedSideTabs, activeId: "patches" };
+  persister.flush();
+  await settle();
   assert.deepEqual(writes, [
     {
       sessionId: "session-1",
       tabs: {
         tabs: [
-          { kind: "browser", url: "https://a.example/", title: "https://a.example/" },
+          {
+            kind: "browser",
+            url: "https://a.example/",
+            title: "https://a.example/",
+          },
         ],
-        activeIndex: 0,
+        activeIndex: -1,
       },
     },
     { sessionId: "session-1", tabs: null },
+  ]);
+});
+
+// A fresh renderer instance after the reload starts a new persister whose
+// first save lands under the new generation: it must not be suppressed, or
+// the restored strip would never be persisted again.
+test("a fresh persister saves under the new generation after the reload", async () => {
+  const writes: SessionTabsTarget[] = [];
+  // Post-restore state of the remounted renderer: the restored strip is
+  // live under the new host generation.
+  const strip: SideTabScope = {
+    tabs: [...pinnedSideTabs, { id: "tab-2", kind: "browser", tabId: "tab-2" }],
+    activeId: "tab-2",
+  };
+  const hostState: BrowserState = {
+    generation: 2,
+    sequence: 3,
+    activeTabId: "tab-2",
+    tabs: [hostTab("tab-2", "https://a.example/")],
+  };
+  const persister = createSessionTabsPersister({
+    delay: 500,
+    snapshot: () => ({
+      sessionId: "session-1",
+      tabs: snapshotSessionTabs(strip, hostState),
+    }),
+    generation: () => hostState.generation,
+    save: async (target) => {
+      writes.push(target);
+    },
+  });
+
+  persister.flush();
+  await settle();
+  assert.equal(writes.length, 1);
+  assert.deepEqual(writes[0]?.tabs?.tabs, [
+    { kind: "browser", url: "https://a.example/", title: "https://a.example/" },
   ]);
 });

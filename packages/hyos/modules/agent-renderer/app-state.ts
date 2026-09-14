@@ -321,6 +321,10 @@ export function createAppState({
         ),
       };
     },
+    // The live host generation arms the reload guard: after a browser.main
+    // restart the dying renderer's flush must not wipe the saved strip the
+    // remounted renderer restores from.
+    generation: () => browserState().generation,
     save: ({ sessionId, tabs }) => client.saveSessionTabs(sessionId, tabs),
   });
 
