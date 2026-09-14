@@ -6,7 +6,9 @@ export const tabsDebug = (message: string): void => {
 };
 
 // Boot-time debug traces: enable with ?bootTrace=1 in the renderer URL.
+// Guarded so the module also loads outside a browser (node test runner).
 const BOOT_TRACE =
+  typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).get("bootTrace") === "1";
 export const bootDebug = (message: string): void => {
   if (BOOT_TRACE) console.log(`[DEBUG-boot-7f2c] ${message}`);
