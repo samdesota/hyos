@@ -5,6 +5,7 @@ import { openNodeStorage } from "@hyos/hydb/node";
 import type { BrowserWindow } from "electron";
 
 import { agentCapability } from "../../capabilities/agent.js";
+import { agentSoundCapability } from "../../capabilities/agent-sound.js";
 import { browserCapability } from "../../capabilities/browser.js";
 import type { MainRemoteCapabilities } from "../../remote-capabilities.js";
 import { defineModule } from "../../runtime.js";
@@ -12,6 +13,8 @@ import { createAgentHost } from "./host.js";
 import { agentSchema } from "./model.js";
 import { createAgentProviders } from "./providers/index.js";
 import { createAgentStore } from "./store.js";
+import { createFinishSound } from "./finish-sound.js";
+import type { LogSink } from "../log-main/sink.js";
 
 type AgentMainConfig = Readonly<{
   storagePath: string;
@@ -32,7 +35,12 @@ type AgentMainConfig = Readonly<{
 
 export = defineModule<AgentMainConfig>({
   id: "agent.main",
-  inject: ["application.root", "electron.base-window", "remote.capabilities"],
+  inject: [
+    "application.root",
+    "electron.base-window",
+    "log.sink",
+    "remote.capabilities",
+  ],
   provide: ["agent.sessions"],
 
   async apply(ctx, config) {
@@ -104,6 +112,22 @@ export = defineModule<AgentMainConfig>({
     ctx.effect(() => () => database.close());
     ctx.effect(() => remote.provide(agentCapability, host.provider));
     ctx.effect(() => () => host.dispose());
+
+    // Finish chime: main-process playback via the platform player, with the
+    // enabled preference persisted beside the agent storage.
+    const sink = ctx.get<LogSink>("log.sink");
+    const finishSound = createFinishSound({
+      store,
+      storageDirectory: path.resolve(root, config.storagePath),
+      assetPath: path.resolve(root, "modules/agent-main/finish.mp3"),
+      sink,
+    });
+    ctx.effect(() =>
+      remote.provide(agentSoundCapability, finishSound.provider),
+    );
+    ctx.effect(() => finishSound.watch());
+    ctx.effect(() => () => finishSound.dispose());
+
     bootTrace("host:start:start");
     await host.start();
     bootTrace("host:start:done");

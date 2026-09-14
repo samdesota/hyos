@@ -10,10 +10,14 @@ import { whiteboardCapability } from "./whiteboard.js";
 import { uiAgentCapability } from "./ui-agent.js";
 import { keybindingCapability } from "./keybinding.js";
 import { reloadCapability } from "./reload.js";
+import { agentSoundCapability } from "./agent-sound.js";
+
+export * from "./agent-sound.js";
 
 export const applicationCapabilities = [
   browserCapability,
   agentCapability,
+  agentSoundCapability,
   whiteboardCapability,
   uiAgentCapability,
   keybindingCapability,

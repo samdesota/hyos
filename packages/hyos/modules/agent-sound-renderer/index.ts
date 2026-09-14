@@ -1,56 +1,15 @@
-// Sound played when an agent session finishes, implemented as a small
-// renderer module: it consumes the `agent` capability's `sessions` event,
-// watches for a running → finished transition, and plays a bundled audio
-// asset through the shared `agent.sound` interface.
-import {
-  agentCapability,
-  type AgentSessionId,
-  type AgentSessionStatus,
-} from "../../capabilities/agent.js";
+// Renderer side of the agent finish chime: playback lives in the main
+// process (see modules/agent-main/finish-sound.ts), so this module is only a
+// thin toggle consumer — it proxies the `agent.sound` capability's enabled
+// state for the sidebar's chime button.
+import { agentSoundCapability } from "../../capabilities/agent-sound.js";
 import type {
   RemoteConsumer,
   RendererRemoteCapabilities,
 } from "../../remote-capabilities.js";
-import { FINISH_SOUND_DATA_URI } from "./sound-data.js";
 import type { AgentSound } from "./types.js";
 
 const { defineModule, registerModule } = globalThis.PrototypeModules;
-
-/** The user's finish-notification preference survives reloads and restarts. */
-const STORAGE_KEY = "hyos.agent-sound.enabled";
-
-function readStoredEnabled(): boolean {
-  try {
-    return window.localStorage.getItem(STORAGE_KEY) !== "0";
-  } catch {
-    return true;
-  }
-}
-
-function createAgentSound(): AgentSound {
-  const audio = new Audio(FINISH_SOUND_DATA_URI);
-  audio.volume = 0.5;
-  let enabled = readStoredEnabled();
-  return {
-    play() {
-      if (!enabled) return;
-      audio.currentTime = 0;
-      void audio.play().catch(() => {
-        // Autoplay restrictions or a mid-play stop: staying silent is fine.
-      });
-    },
-    setEnabled(next) {
-      enabled = next;
-      try {
-        window.localStorage.setItem(STORAGE_KEY, next ? "1" : "0");
-      } catch {
-        // Persistence is best-effort; the in-memory toggle still works.
-      }
-      if (!next) audio.pause();
-    },
-    isEnabled: () => enabled,
-  };
-}
 
 registerModule(
   defineModule({
@@ -60,30 +19,35 @@ registerModule(
 
     apply(ctx) {
       const remote = ctx.get<RendererRemoteCapabilities>("remote.capabilities");
-      const agent: RemoteConsumer<typeof agentCapability> =
-        remote.consume(agentCapability);
-      const sound = createAgentSound();
+      const agentSound: RemoteConsumer<typeof agentSoundCapability> =
+        remote.consume(agentSoundCapability);
 
-      // Track the last observed status per session so we only fire on a real
-      // running → finished transition, not on the initial snapshot or
-      // unrelated updates.
-      const lastStatus = new Map<AgentSessionId, AgentSessionStatus>();
-      const unsubscribe = agent.subscribe("sessions", ({ sessions }) => {
-        const seen = new Set<AgentSessionId>();
-        for (const session of sessions) {
-          seen.add(session.id);
-          const previous = lastStatus.get(session.id);
-          lastStatus.set(session.id, session.status);
-          if (
-            (session.status === "ready" || session.status === "failed") &&
-            previous === "running"
-          ) {
-            sound.play();
-          }
-        }
-        for (const id of [...lastStatus.keys()]) {
-          if (!seen.has(id)) lastStatus.delete(id);
-        }
+      // Cached mirror of the main-process preference; the capability's
+      // `enabled` event keeps it current if it changes elsewhere.
+      let enabled = true;
+      const listeners = new Set<() => void>();
+      const unsubscribe = agentSound.subscribe("enabled", (next) => {
+        if (enabled === next) return;
+        enabled = next;
+        for (const listener of listeners) listener();
+      });
+
+      const sound: AgentSound = {
+        isEnabled: () => enabled,
+        setEnabled(next) {
+          enabled = next;
+          for (const listener of listeners) listener();
+          void agentSound.call("setEnabled", next).catch(() => {
+            // The in-memory toggle still applies if the round-trip fails.
+          });
+        },
+      };
+      // The AgentSound interface is synchronous; the cache is seeded from
+      // the main process without blocking module mount.
+      void agentSound.call("isEnabled").then((current) => {
+        if (enabled === current) return;
+        enabled = current;
+        for (const listener of listeners) listener();
       });
 
       ctx.provide("agent.sound", sound);
