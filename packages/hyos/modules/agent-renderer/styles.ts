@@ -194,6 +194,9 @@ export const agentStyles = String.raw`
   }
   .session-status-text.running { color: #d9ff62; }
   .session-status-text.ready { color: #6ea8fe; }
+  /* Outcome already viewed (session was opened since this run finished):
+     fade to a gray subtler than the white session title. */
+  .session-status-text.ready.seen { color: #83867c; }
   .session-status-text.failed { color: #ff6f61; }
   .session-status-text.cancelled { color: #c5a46d; }
   .agent-main { min-width: 0; min-height: 0; }

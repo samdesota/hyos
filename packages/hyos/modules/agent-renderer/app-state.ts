@@ -965,6 +965,7 @@ export function createAppState({
     closeFeed();
     resetSideTabs();
     setActiveId(sessionId);
+    markSessionSeen(sessionId);
     navigateToSession(sessionId);
     setPrompt("");
     setMessages([]);
@@ -1143,6 +1144,16 @@ export function createAppState({
     } catch (value) {
       showError(value);
     }
+  };
+
+  // Opening a session marks its current outcome as seen: the host copies the
+  // row's statusDetail into seenStatusDetail, so the sidebar renders the
+  // completed status gray until the next run produces a new description.
+  // Fire-and-forget: a failure only means the status stays blue.
+  const markSessionSeen = (sessionId: string): void => {
+    void client
+      .execute({ type: "mark-session-seen", sessionId })
+      .catch(() => undefined);
   };
 
   const renameSession = async (

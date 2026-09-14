@@ -144,7 +144,16 @@ const SessionMeta: Component<{ session: AgentSessionSummary }> = (props) => (
       fallback={
         <Show when={props.session.statusDetail}>
           {(detail) => (
-            <span class={`session-status-text ${props.session.status}`}>
+            <span
+              class={`session-status-text ${props.session.status}`}
+              // Seen: the outcome's description matches the one recorded
+              // when the session was last opened — a fresh run writes a
+              // new description, which re-arms the blue.
+              classList={{
+                seen:
+                  props.session.seenStatusDetail === props.session.statusDetail,
+              }}
+            >
               {detail()}
             </span>
           )}
