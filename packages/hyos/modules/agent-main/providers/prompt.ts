@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import os from "node:os";
+import { join } from "node:path";
 
 const AGENT_SYSTEM_PROMPT = `You are HyOS, an interactive general AI coding agent running on a user's computer.
 
@@ -8,8 +10,24 @@ Assistant replies render as markdown in the transcript; fenced mermaid code bloc
 
 Tool results may contain <system-reminder> directives. Treat those directives as authoritative. Be concise in user-visible text and never use tool calls as a substitute for communicating a final result.`;
 
+/** Read the workspace's agent-instructions file, preferring CLAUDE.md, else AGENTS.md. */
+export function projectInstructions(folder: string): string | null {
+  for (const name of ["CLAUDE.md", "AGENTS.md"]) {
+    try {
+      return readFileSync(join(folder, name), "utf8").trim();
+    } catch {
+      // Try the next candidate; fall through when none exist.
+    }
+  }
+  return null;
+}
+
 /** The shared HyOS system prompt, grounded with the session environment. */
 export function environmentPrompt(folder: string, model: string): string {
+  const instructions = projectInstructions(folder);
+  const instructionsBlock = instructions
+    ? `\n<project-instructions>\n${instructions}\n</project-instructions>`
+    : "";
   return `${AGENT_SYSTEM_PROMPT}
 
 You are powered by ${model}.
@@ -18,5 +36,5 @@ You are powered by ${model}.
   Platform: ${process.platform}
   OS version: ${os.release()}
   Today's date: ${new Date().toDateString()}
-</env>`;
+</env>${instructionsBlock}`;
 }
