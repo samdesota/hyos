@@ -266,7 +266,7 @@ export const agentStyles = String.raw`
   .browser-panel-toolbar {
     display: flex; align-items: center; gap: 6px;
     min-height: 47px; padding: 8px 12px;
-    border-bottom: 1px solid #30312d;
+    border-bottom: 1px solid #30312d; background: #1d1e1b;
   }
   .browser-nav {
     flex: none; display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
@@ -465,7 +465,7 @@ export const agentStyles = String.raw`
   .side-tabs {
     display: flex; align-items: center; gap: 6px;
     min-height: 47px; padding: 6px 8px 6px 10px;
-    border-bottom: 1px solid #30312d;
+    border-bottom: 1px solid #30312d; background: #1d1e1b;
   }
   .side-tab {
     display: inline-flex; align-items: center; gap: 6px;
@@ -517,7 +517,7 @@ export const agentStyles = String.raw`
   }
   .patch-resize-handle:hover::after, .resizing-patch-panel .patch-resize-handle::after { background: #8ca43f; }
   .resizing-patch-panel, .resizing-patch-panel * { cursor: col-resize !important; user-select: none !important; }
-  .patch-list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+  .patch-list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; background: #1d1e1b; }
   .patch-empty { padding: 24px 12px; color: #72746c; font-size: 12px; line-height: 1.5; text-align: center; }
   .patch-entry {
     margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #34362f;
