@@ -42,13 +42,18 @@ export function createElectronWindows(
     minHeight: 520,
     frame: false,
     title: config.title,
-    backgroundColor: "#f5f2ec",
+    // Theme-colored (not cream) so regions where the transparent UI shows
+    // through to the window still read as the app background.
+    backgroundColor: "#171816",
     show: false,
   });
   const uiView = new WebContentsView({ webPreferences });
   // Append (no index) so the UI sits above the window's own blank contents
   // and below browser views that browser.main attaches later.
   baseWindow.contentView.addChildView(uiView);
+  // Transparent view background so the UI composites over browser views
+  // beneath it (modal overlay mode) instead of painting an opaque page.
+  uiView.setBackgroundColor("#00000000");
   const alignUi = (): void => {
     if (baseWindow.isDestroyed() || uiView.webContents.isDestroyed()) return;
     const [width, height] = baseWindow.getContentSize();

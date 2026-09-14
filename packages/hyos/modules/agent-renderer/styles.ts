@@ -3,7 +3,6 @@ export const agentStyles = String.raw`
     color-scheme: dark;
     font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     color: #eceae5;
-    background: #111210;
   }
   * { box-sizing: border-box; }
   html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
@@ -16,7 +15,6 @@ export const agentStyles = String.raw`
     position: relative;
     width: 100%;
     height: 100%;
-    background: #171816;
   }
   .window-drag-region {
     position: absolute;
@@ -176,7 +174,7 @@ export const agentStyles = String.raw`
   .session-status-text.ready { color: #6ea8fe; }
   .session-status-text.failed { color: #ff6f61; }
   .session-status-text.cancelled { color: #c5a46d; }
-  .agent-main { min-width: 0; min-height: 0; background: #171816; }
+  .agent-main { min-width: 0; min-height: 0; }
   .global-browser { display: flex; width: 100%; height: 100%; min-height: 0; }
   .welcome { display: grid; place-items: center; width: 100%; height: 100%; padding: 38px; overflow-y: auto; }
   .welcome-card { width: min(760px, 100%); }
