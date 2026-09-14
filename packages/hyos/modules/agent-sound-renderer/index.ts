@@ -12,19 +12,25 @@ import type {
   RendererRemoteCapabilities,
 } from "../../remote-capabilities.js";
 import { FINISH_SOUND_DATA_URI } from "./sound-data.js";
+import type { AgentSound } from "./types.js";
 
 const { defineModule, registerModule } = globalThis.PrototypeModules;
 
-export interface AgentSound {
-  play(): void;
-  setEnabled(enabled: boolean): void;
-  isEnabled(): boolean;
+/** The user's finish-notification preference survives reloads and restarts. */
+const STORAGE_KEY = "hyos.agent-sound.enabled";
+
+function readStoredEnabled(): boolean {
+  try {
+    return window.localStorage.getItem(STORAGE_KEY) !== "0";
+  } catch {
+    return true;
+  }
 }
 
 function createAgentSound(): AgentSound {
   const audio = new Audio(FINISH_SOUND_DATA_URI);
   audio.volume = 0.5;
-  let enabled = true;
+  let enabled = readStoredEnabled();
   return {
     play() {
       if (!enabled) return;
@@ -35,6 +41,11 @@ function createAgentSound(): AgentSound {
     },
     setEnabled(next) {
       enabled = next;
+      try {
+        window.localStorage.setItem(STORAGE_KEY, next ? "1" : "0");
+      } catch {
+        // Persistence is best-effort; the in-memory toggle still works.
+      }
       if (!next) audio.pause();
     },
     isEnabled: () => enabled,

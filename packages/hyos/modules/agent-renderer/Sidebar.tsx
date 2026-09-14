@@ -8,6 +8,7 @@ import {
   type JSX,
 } from "solid-js";
 
+import type { AgentSound } from "../agent-sound-renderer/types.js";
 import type { AgentSessionSummary } from "../../capabilities/agent.js";
 import type { AppState } from "./app-state.js";
 import { globalTabDescriptors, globalTabLabel } from "./global-tabs.js";
@@ -158,8 +159,14 @@ const SessionMeta: Component<{ session: AgentSessionSummary }> = (props) => (
   </span>
 );
 
-/** App sidebar: brand, global tab strip, session list. */
-export const Sidebar: Component<{ app: AppState }> = (props) => {
+/** App sidebar: brand, global tab strip, session list, finish-sound toggle. */
+export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
+  props,
+) => {
+  const { sound } = props;
+  // Mirror of the sound module's enabled state; the module owns the truth and
+  // persists it, the signal only keeps the switch rendering in step.
+  const [soundEnabled, setSoundEnabled] = createSignal(sound.isEnabled());
   const {
     activeId,
     activeSessions,
@@ -684,6 +691,26 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
             </SessionFolderList>
           </Show>
         </Show>
+      </div>
+      <div class="sidebar-footer">
+        <label class="sound-toggle" title="Play a sound when an agent finishes">
+          <span class="sound-toggle-label">Finish sound</span>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={soundEnabled()}
+            aria-label="Agent finish notifications"
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+            onChange={(event) => {
+              const next = event.currentTarget.checked;
+              setSoundEnabled(next);
+              sound.setEnabled(next);
+            }}
+          />
+          <i class="sound-switch" aria-hidden="true" />
+        </label>
       </div>
       <Show when={ghostSession()}>
         {(s) => (

@@ -78,14 +78,16 @@ export const applicationManifest = defineApplicationManifest({
       reload: "hot",
     },
     {
-      id: "agent.renderer",
-      file: "./modules/agent-renderer/index.tsx",
+      // Mounted before agent.renderer so the sidebar module can inject the
+      // `agent.sound` interface for its finish-notification toggle.
+      id: "agent.sound.renderer",
+      file: "./modules/agent-sound-renderer/index.ts",
       host: "renderer",
       reload: "hot",
     },
     {
-      id: "agent.sound.renderer",
-      file: "./modules/agent-sound-renderer/index.ts",
+      id: "agent.renderer",
+      file: "./modules/agent-renderer/index.tsx",
       host: "renderer",
       reload: "hot",
     },

@@ -2,6 +2,7 @@ import { Route, HashRouter } from "@solidjs/router";
 import { render } from "solid-js/web";
 
 import type { RendererRemoteCapabilities } from "../../remote-capabilities.js";
+import type { AgentSound } from "../agent-sound-renderer/types.js";
 import type { BrowserClient } from "../browser-client/types.js";
 import type { BrowserViewModule } from "../browser-view/types.js";
 import type { WhiteboardViewModule } from "../whiteboard/renderer/types.js";
@@ -20,6 +21,7 @@ registerModule(
       "browser.client",
       "browser.view",
       "whiteboard.view",
+      "agent.sound",
     ],
     provide: ["agent.ui"],
 
@@ -30,6 +32,7 @@ registerModule(
       const { BrowserView } = ctx.get<BrowserViewModule>("browser.view");
       const { WhiteboardPage } =
         ctx.get<WhiteboardViewModule>("whiteboard.view");
+      const sound = ctx.get<AgentSound>("agent.sound");
       const mount = root.querySelector<HTMLElement>("#app");
       if (!mount) throw new Error("Missing Solid application mount");
       const client = createAgentClient(remote);
@@ -48,6 +51,7 @@ registerModule(
                 browserClient={browserClient}
                 BrowserView={BrowserView}
                 WhiteboardPage={WhiteboardPage}
+                sound={sound}
               />
             )}
           >

@@ -1,6 +1,7 @@
 import { useLocation, useMatch, useNavigate } from "@solidjs/router";
 import { createEffect, Show, type Component } from "solid-js";
 
+import type { AgentSound } from "../agent-sound-renderer/types.js";
 import type { BrowserClient } from "../browser-client/types.js";
 import type { BrowserViewModule } from "../browser-view/types.js";
 import type { WhiteboardViewModule } from "../whiteboard/renderer/types.js";
@@ -21,6 +22,7 @@ type AgentAppProps = Readonly<{
   browserClient: BrowserClient;
   BrowserView: BrowserViewModule["BrowserView"];
   WhiteboardPage: WhiteboardViewModule["WhiteboardPage"];
+  sound: AgentSound;
 }>;
 
 export const AgentApp: Component<AgentAppProps> = (props) => {
@@ -100,7 +102,7 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
         <code id="main-state" hidden />
         <code id="renderer-state" hidden />
         <div class="window-drag-region" aria-hidden="true" />
-        <Sidebar app={app} />
+        <Sidebar app={app} sound={props.sound} />
 
         <main class="agent-main">
           <GlobalTabPage
