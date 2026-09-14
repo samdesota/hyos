@@ -1,6 +1,27 @@
 import { micromark } from "micromark";
 import { gfmTable, gfmTableHtml } from "micromark-extension-gfm-table";
 
+/**
+ * The absolute http(s) url a click on rendered markdown targets, or null —
+ * for non-anchor clicks, anchor-free elements, relative or non-web hrefs —
+ * when the click should keep its default behavior.
+ */
+export function httpLinkUrl(
+  event: Readonly<{ target: EventTarget | null }>,
+): string | null {
+  const anchor = (event.target as Element | null)?.closest("a[href]");
+  const raw = anchor?.getAttribute("href") ?? "";
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function renderAgentMarkdown(markdown: string): string {
   return micromark(markdown, {
     extensions: [gfmTable()],

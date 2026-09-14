@@ -21,7 +21,7 @@ import type { AgentClient } from "./client.js";
 import type { BrowserViewModule } from "../browser-view/types.js";
 import { BrowserTabContent } from "./browser-tab.js";
 import { DiffViewer } from "./DiffViewer.js";
-import { mountMarkdown } from "./markdown.js";
+import { httpLinkUrl, mountMarkdown } from "./markdown.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
 import { supportsIncremental } from "./mode-selection.js";
 import {
@@ -44,15 +44,25 @@ export type SessionPageProps = Readonly<{
   BrowserView: BrowserViewModule["BrowserView"];
 }>;
 
-const MarkdownBody: Component<{ content: string }> = (props) => {
+const MarkdownBody: Component<{ content: string; app: AppState }> = (props) => {
   let element!: HTMLDivElement;
+  // Links in agent replies open as browser tabs in the session's side panel
+  // instead of navigating the agent renderer itself.
+  const handleClick = (event: MouseEvent): void => {
+    const url = httpLinkUrl(event);
+    if (!url) return;
+    event.preventDefault();
+    props.app.openUrlSideTab(url);
+  };
   createEffect(() => {
     // Plan blocks are persisted on the session and rendered as structured
     // task lists; keep them out of the markdown body.
     const dispose = mountMarkdown(element, stripPlanBlocks(props.content));
     onCleanup(dispose);
   });
-  return <div class="message-body markdown" ref={element} />;
+  return (
+    <div class="message-body markdown" ref={element} onClick={handleClick} />
+  );
 };
 
 const PlanPanel: Component<{
@@ -108,8 +118,11 @@ const PlanPanel: Component<{
   );
 };
 
-const TimelineEntryView: Component<{ entry: TimelineEntry }> = (props) => {
-  const { entry } = props;
+const TimelineEntryView: Component<{
+  entry: TimelineEntry;
+  app: AppState;
+}> = (props) => {
+  const { entry, app } = props;
   if (entry.type === "work") {
     return (
       <details class="work-pane">
@@ -119,7 +132,7 @@ const TimelineEntryView: Component<{ entry: TimelineEntry }> = (props) => {
         </summary>
         <div class="work-pane-items">
           <For each={entry.entries}>
-            {(inner) => <TimelineEntryView entry={inner} />}
+            {(inner) => <TimelineEntryView entry={inner} app={app} />}
           </For>
         </div>
       </details>
@@ -157,7 +170,7 @@ const TimelineEntryView: Component<{ entry: TimelineEntry }> = (props) => {
     </details>
   ) : entry.message.activity?.type === "commentary" ? (
     <article class="message commentary">
-      <MarkdownBody content={entry.message.activity.text} />
+      <MarkdownBody content={entry.message.activity.text} app={app} />
       <Show when={entry.message.status === "streaming"}>
         <span class="streaming-caret" />
       </Show>
@@ -168,7 +181,7 @@ const TimelineEntryView: Component<{ entry: TimelineEntry }> = (props) => {
         when={entry.message.role === "assistant"}
         fallback={<pre class="message-body">{entry.message.content}</pre>}
       >
-        <MarkdownBody content={entry.message.content} />
+        <MarkdownBody content={entry.message.content} app={app} />
       </Show>
       <Show when={entry.message.lastError}>
         <div class="message-error">{entry.message.lastError}</div>
@@ -296,7 +309,7 @@ export const SessionPage: Component<SessionPageProps> = (props) => {
           <For each={app.timeline()}>
             {(entry, index) => (
               <>
-                <TimelineEntryView entry={entry} />
+                <TimelineEntryView entry={entry} app={app} />
                 <Show
                   when={
                     app.activePlan() &&
