@@ -136,6 +136,34 @@ test("resolved binds record entries to the host tab ids a projection found", asy
   assert.equal(saves.length, 1);
 });
 
+test("isOwnWrite recognizes the echo of each write and rejects genuinely external events", async () => {
+  // Regression: the projection subscribes to record changes; re-projecting
+  // on the echo of its own `resolved` writeback multiplied duplicate tabs
+  // whenever pages churned their urls.
+  const { recorder } = harness({
+    saved: { tabs: [entry("tab-1", "https://a.example/")], activeIndex: 0 },
+  });
+  recorder.resolved("session-1", ["tab-7" as TabId]);
+  await settle();
+  const written = {
+    tabs: [entry("tab-7", "https://a.example/")],
+    activeIndex: 0,
+  };
+  assert.equal(recorder.isOwnWrite("session-1", written), true);
+  // A different session's events are not echoes.
+  assert.equal(recorder.isOwnWrite("session-2", written), false);
+  // A genuinely external change is not an echo.
+  assert.equal(
+    recorder.isOwnWrite("session-1", {
+      tabs: [entry("tab-8", "https://c.example/")],
+      activeIndex: 0,
+    }),
+    false,
+  );
+  // Sessions this renderer never wrote to are never echoes.
+  assert.equal(recorder.isOwnWrite("session-3", null), false);
+});
+
 test("a delta composes onto the record merged with the visible strip — an empty record we did not cause cannot erase visible tabs", async () => {
   // Regression: a wiped or never-restored record (tabs=0) used to become the
   // base for the next write, dropping the session's visible tabs from

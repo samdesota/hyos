@@ -798,6 +798,16 @@ export function createAppState({
   };
   const unsubscribeSessionTabs = client.subscribeSessionTabs(
     ({ sessionId, tabs }) => {
+      // An event whose payload is exactly what this renderer last wrote is
+      // our own record write echoing back — a projection's `resolved`
+      // writeback, a merge healing a stale id, an opened/closed/focused
+      // delta the strip already reflects. Re-projecting on it turns the
+      // projection into a feedback loop that multiplies tabs when pages
+      // churn their urls; only genuinely external changes re-project.
+      if (tabsRecorder.isOwnWrite(sessionId, tabs)) {
+        tabsDebug(`strip-event: own write, skipped session=${sessionId}`);
+        return;
+      }
       tabsDebug(
         `strip-event: session=${sessionId} tabs=${tabs?.tabs.length ?? 0} active=${sessionId === activeId()}`,
       );

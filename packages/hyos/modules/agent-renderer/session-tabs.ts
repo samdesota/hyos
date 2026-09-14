@@ -36,10 +36,23 @@ export function createSessionTabsRecorder(
    * could not be resolved). Only writes when an id actually changed.
    */
   resolved(sessionId: string, tabIds: readonly (string | null)[]): void;
+  /**
+   * Whether a strip event carrying `tabs` for `sessionId` is this
+   * renderer's own write echoing back. The projection subscribes to record
+   * changes, so without this check every write the recorder makes (a
+   * projection's own `resolved` writeback, or a merge healing a stale id)
+   * re-triggers the projection — a feedback loop that multiplies tabs when
+   * pages churn their urls.
+   */
+  isOwnWrite(sessionId: string, tabs: AgentSessionTabs | null): boolean;
 }> {
   // One load-mutate-save chain per session, so concurrent deltas compose
   // in order instead of racing on the same row.
   const chains = new Map<string, Promise<void>>();
+  // The exact payload this renderer last persisted per session, for echo
+  // recognition. An external event with identical content needs no
+  // projection either — the strip already reflects it.
+  const lastSavedJson = new Map<string, string>();
 
   const describe = (sessionId: string, tabs: AgentSessionTabs | null): string =>
     `session=${sessionId} tabs=${tabs?.tabs.length ?? 0} focus=${tabs?.activeIndex}`;
@@ -82,6 +95,7 @@ export function createSessionTabsRecorder(
         mutated ?? (mergedChanged && tabs.length > 0 ? merged : null);
       if (!next) return;
       const toSave = next.tabs.length === 0 ? null : next;
+      lastSavedJson.set(sessionId, JSON.stringify(toSave));
       try {
         await options.save(sessionId, toSave);
         tabsDebug(`record: SAVED ${label} (${describe(sessionId, toSave)})`);
@@ -158,6 +172,10 @@ export function createSessionTabsRecorder(
         },
         "resolved ids",
       );
+    },
+    isOwnWrite(sessionId, tabs) {
+      const saved = lastSavedJson.get(sessionId);
+      return saved !== undefined && saved === JSON.stringify(tabs);
     },
   };
 }
