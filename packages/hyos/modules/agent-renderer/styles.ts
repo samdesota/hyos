@@ -439,7 +439,17 @@ export const agentStyles = String.raw`
   .plan-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
   .plan-head strong { color: #95978e; font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
   .plan-head span { color: #6f7268; font-size: 10px; font-variant-numeric: tabular-nums; }
+  .plan-show-all {
+    display: block; margin: 10px 0 0; padding: 4px 0; border: 0; background: none;
+    color: #6f7268; font-size: 11px; font-weight: 600; cursor: pointer; text-align: left;
+  }
+  .plan-show-all:hover { color: #b9bbb1; }
   .plan-tasks { display: grid; gap: 7px; margin: 10px 0 0; padding: 0; list-style: none; }
+  .plan-tasks.faded { position: relative; margin-top: 0; }
+  .plan-tasks.faded::before {
+    content: ""; position: absolute; inset: 0 0 auto; height: 26px; z-index: 1;
+    background: linear-gradient(#1b1c19, transparent); pointer-events: none;
+  }
   .plan-task { display: flex; gap: 9px; color: #d5d4ce; font-size: 13px; line-height: 1.5; }
   .plan-num {
     flex: none; width: 18px; text-align: right; color: #6f7268;

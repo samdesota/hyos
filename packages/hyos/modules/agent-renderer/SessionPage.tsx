@@ -71,6 +71,14 @@ const PlanPanel: Component<{
   onImplementNext: (index: number, task: AgentPlanTask) => void;
 }> = (props) => {
   const nextIndex = () => props.plan.tasks.findIndex((task) => !task.done);
+  const [expanded, setExpanded] = createSignal(false);
+  // Collapsed view keeps only the last two completed tasks visible; earlier
+  // completed tasks are hidden behind a fade-out with a "Show all" button.
+  const doneIndices = () =>
+    props.plan.tasks.flatMap((task, index) => (task.done ? [index] : []));
+  const hiddenCount = () => Math.max(0, doneIndices().length - 2);
+  const isHidden = (index: number) =>
+    !expanded() && doneIndices().slice(0, hiddenCount()).includes(index);
   return (
     <aside class="plan-panel" aria-label="Session plan">
       <div class="plan-head">
@@ -80,37 +88,53 @@ const PlanPanel: Component<{
           {props.plan.tasks.length} done
         </span>
       </div>
-      <div class="plan-tasks">
+      <Show when={hiddenCount() > 0 && !expanded()}>
+        <button
+          class="plan-show-all"
+          type="button"
+          onClick={() => setExpanded(true)}
+        >
+          Show {hiddenCount()} earlier task{hiddenCount() === 1 ? "" : "s"}
+        </button>
+      </Show>
+      <div
+        classList={{
+          "plan-tasks": true,
+          faded: hiddenCount() > 0 && !expanded(),
+        }}
+      >
         <For each={props.plan.tasks}>
           {(task, index) => (
-            <>
-              <div
-                classList={{
-                  "plan-task": true,
-                  done: task.done,
-                  next: index() === nextIndex(),
-                }}
-              >
-                <span class="plan-num" aria-hidden="true">
-                  {index() + 1}.
-                </span>
-                <span class="plan-check" aria-hidden="true">
-                  {task.done ? "✓" : ""}
-                </span>
-                <span class="plan-text">{task.text}</span>
-              </div>
-              <Show when={index() === nextIndex()}>
-                <button
-                  class="plan-next"
-                  type="button"
-                  disabled={props.disabled}
-                  title={implementNextPrompt(index(), task)}
-                  onClick={() => props.onImplementNext(index(), task)}
+            <Show when={!isHidden(index())}>
+              <>
+                <div
+                  classList={{
+                    "plan-task": true,
+                    done: task.done,
+                    next: index() === nextIndex(),
+                  }}
                 >
-                  Implement task
-                </button>
-              </Show>
-            </>
+                  <span class="plan-num" aria-hidden="true">
+                    {index() + 1}.
+                  </span>
+                  <span class="plan-check" aria-hidden="true">
+                    {task.done ? "✓" : ""}
+                  </span>
+                  <span class="plan-text">{task.text}</span>
+                </div>
+                <Show when={index() === nextIndex()}>
+                  <button
+                    class="plan-next"
+                    type="button"
+                    disabled={props.disabled}
+                    title={implementNextPrompt(index(), task)}
+                    onClick={() => props.onImplementNext(index(), task)}
+                  >
+                    Implement task
+                  </button>
+                </Show>
+              </>
+            </Show>
           )}
         </For>
       </div>
