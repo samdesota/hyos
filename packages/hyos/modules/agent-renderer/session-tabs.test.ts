@@ -1,338 +1,202 @@
 import assert from "node:assert/strict";
-import test, { mock } from "node:test";
+import test from "node:test";
 
-import {
-  createSessionTabsPersister,
-  type SessionTabsTarget,
-} from "./session-tabs.js";
-import type { BrowserState } from "../../capabilities/browser.js";
-import {
-  pinnedSideTabs,
-  reconcileSideTabs,
-  snapshotSessionTabs,
-  type SideTabScope,
-} from "./side-pane.js";
+import type {
+  AgentSessionTab,
+  AgentSessionTabs,
+} from "../../capabilities/agent.js";
+import type { TabId } from "../../capabilities/browser.js";
+import { createSessionTabsRecorder } from "./session-tabs.js";
 
-const savedTabs = (url: string): SessionTabsTarget => ({
-  sessionId: "session-1",
-  tabs: { tabs: [{ kind: "browser", url, title: url }], activeIndex: 0 },
+const entry = (tabId: string, url: string): AgentSessionTab => ({
+  kind: "browser",
+  tabId,
+  url,
 });
 
-function harness(save: (target: SessionTabsTarget) => Promise<void>) {
-  let snapshot: SessionTabsTarget | null = null;
-  const persister = createSessionTabsPersister({
-    delay: 500,
-    snapshot: () => snapshot,
-    save,
-  });
-  return {
-    persister,
-    set: (next: SessionTabsTarget | null) => {
-      snapshot = next;
+type Save = { tabs: AgentSessionTabs | null };
+
+function harness(options: {
+  saved?: AgentSessionTabs | null;
+  visible?: readonly AgentSessionTab[];
+}) {
+  const saves: Save[] = [];
+  let record = options.saved ?? null;
+  const recorder = createSessionTabsRecorder({
+    load: async () => record,
+    save: async (_sessionId, tabs) => {
+      record = tabs;
+      saves.push({ tabs });
     },
-  };
+    visibleTabs: () => options.visible ?? [],
+  });
+  return { recorder, saves, record: () => record };
 }
 
-// Drain the persister's save bookkeeping, which settles on microtasks —
-// mock timers own setTimeout, so a timer-based sleep would never fire.
 const settle = async (): Promise<void> => {
-  for (let i = 0; i < 10; i += 1) await Promise.resolve();
+  for (let i = 0; i < 20; i += 1) await Promise.resolve();
 };
 
-test("a burst of publishes coalesces into one save taken at fire time", async () => {
-  mock.timers.enable({ apis: ["setTimeout"] });
-  try {
-    const writes: SessionTabsTarget[] = [];
-    const { persister, set } = harness(async (target) => {
-      writes.push(target);
-    });
-    set(savedTabs("https://a.example/"));
-    persister.request();
-    // The pane keeps changing while the write is pending; a second publish
-    // must not stack a second timer either.
-    set(savedTabs("https://b.example/"));
-    persister.request();
-    mock.timers.tick(499);
-    assert.equal(writes.length, 0);
-    mock.timers.tick(1);
-    assert.deepEqual(writes, [savedTabs("https://b.example/")]);
-    await settle();
-  } finally {
-    mock.timers.reset();
-  }
-});
-
-test("flush persists immediately and cancels the pending write", async () => {
-  mock.timers.enable({ apis: ["setTimeout"] });
-  try {
-    const writes: SessionTabsTarget[] = [];
-    const { persister, set } = harness(async (target) => {
-      writes.push(target);
-    });
-    set(savedTabs("https://a.example/"));
-    persister.request();
-    persister.flush();
-    assert.deepEqual(writes, [savedTabs("https://a.example/")]);
-    mock.timers.tick(1_000);
-    assert.equal(writes.length, 1);
-    await settle();
-  } finally {
-    mock.timers.reset();
-  }
-});
-
-test("unchanged snapshots are skipped; a new session or content writes", async () => {
-  mock.timers.enable({ apis: ["setTimeout"] });
-  try {
-    const writes: SessionTabsTarget[] = [];
-    const { persister, set } = harness(async (target) => {
-      writes.push(target);
-    });
-    set(savedTabs("https://a.example/"));
-    persister.flush();
-    await settle();
-    persister.flush();
-    await settle();
-    assert.equal(writes.length, 1);
-
-    set({ ...savedTabs("https://a.example/"), sessionId: "session-2" });
-    persister.flush();
-    await settle();
-    set({ ...savedTabs("https://b.example/"), sessionId: "session-2" });
-    persister.flush();
-    await settle();
-    assert.deepEqual(
-      writes.map(({ sessionId, tabs }) => [sessionId, tabs?.tabs[0].url]),
-      [
-        ["session-1", "https://a.example/"],
-        ["session-2", "https://a.example/"],
-        ["session-2", "https://b.example/"],
-      ],
-    );
-  } finally {
-    mock.timers.reset();
-  }
-});
-
-test("a null snapshot writes nothing, but a cleared pane still writes null", async () => {
-  mock.timers.enable({ apis: ["setTimeout"] });
-  try {
-    const writes: SessionTabsTarget[] = [];
-    const { persister, set } = harness(async (target) => {
-      writes.push(target);
-    });
-    // No active session: nothing to persist.
-    set(null);
-    persister.request();
-    mock.timers.tick(1_000);
-    assert.equal(writes.length, 0);
-
-    // An active session whose browser tabs are all gone clears its row.
-    set({ sessionId: "session-1", tabs: null });
-    persister.flush();
-    await settle();
-    assert.deepEqual(writes, [{ sessionId: "session-1", tabs: null }]);
-  } finally {
-    mock.timers.reset();
-  }
-});
-
-test("a failed save is swallowed and retried by the next flush", async () => {
-  mock.timers.enable({ apis: ["setTimeout"] });
-  try {
-    const writes: SessionTabsTarget[] = [];
-    let down = true;
-    const { persister, set } = harness(async (target) => {
-      if (down) throw new Error("host unavailable");
-      writes.push(target);
-    });
-    set(savedTabs("https://a.example/"));
-    persister.flush();
-    await settle();
-    assert.equal(writes.length, 0);
-    down = false;
-    persister.flush();
-    await settle();
-    assert.deepEqual(writes, [savedTabs("https://a.example/")]);
-  } finally {
-    mock.timers.reset();
-  }
-});
-
-test("dispose cancels a scheduled write without firing it", () => {
-  mock.timers.enable({ apis: ["setTimeout"] });
-  try {
-    const writes: SessionTabsTarget[] = [];
-    const { persister, set } = harness(async (target) => {
-      writes.push(target);
-    });
-    set(savedTabs("https://a.example/"));
-    persister.request();
-    persister.dispose();
-    mock.timers.tick(1_000);
-    assert.equal(writes.length, 0);
-  } finally {
-    mock.timers.reset();
-  }
-});
-
-const hostTab = (id: string, url: string): BrowserState["tabs"][number] => ({
-  id: id as BrowserState["tabs"][number]["id"],
-  url,
-  title: url,
-  loading: false,
-  canGoBack: false,
-  canGoForward: false,
-  error: null,
-});
-
-/**
-/**
- * Reload regression: wiring the module pieces exactly as app-state.ts does —
- * snapshot taken at flush time from the live, reconciled strip — a window
- * reload must not wipe the saved session tabs. `browser.main` restarts first
- * (new host generation, new tab ids), the dying renderer's reconcile drops
- * the session's browser tabs, and the teardown `flush()` must NOT persist
- * the emptied strip as `null` — that would erase the DB row the remounted
- * renderer restores from. The generation guard suppresses any write taken
- * under a host generation the persister has not saved under yet.
- */
-test("reload does not wipe saved session tabs via the teardown flush", async () => {
-  const writes: SessionTabsTarget[] = [];
-  let strip: SideTabScope = {
-    tabs: [...pinnedSideTabs, { id: "tab-1", kind: "browser", tabId: "tab-1" }],
-    activeId: "tab-1",
-  };
-  let hostState: BrowserState = {
-    generation: 1,
-    sequence: 1,
-    activeTabId: "tab-1",
-    tabs: [hostTab("tab-1", "https://a.example/")],
-  };
-  const persister = createSessionTabsPersister({
-    delay: 500,
-    snapshot: () => ({
-      sessionId: "session-1",
-      tabs: snapshotSessionTabs(strip, hostState),
-    }),
-    generation: () => hostState.generation,
-    save: async (target) => {
-      writes.push(target);
-    },
-  });
-
-  // Normal operation: the strip is persisted under its urls.
-  persister.flush();
+test("opened appends the tab, focuses it, and skips an id already recorded", async () => {
+  const { recorder, saves } = harness({});
+  recorder.opened("session-1", "tab-1" as TabId, "https://a.example/");
   await settle();
-  assert.deepEqual(writes[0]?.tabs?.tabs, [
-    { kind: "browser", url: "https://a.example/", title: "https://a.example/" },
-  ]);
-
-  // Window reload: browser.main is recreated — new generation, new tab ids,
-  // and the old renderer processes the new host's first publish.
-  hostState = {
-    generation: 2,
-    sequence: 0,
-    activeTabId: "tab-9",
-    tabs: [hostTab("tab-9", "https://example.com/")],
-  };
-  strip = {
-    tabs: reconcileSideTabs(strip.tabs, hostState),
-    activeId: null,
-  };
-  assert.deepEqual(strip.tabs, pinnedSideTabs);
-
-  // The dying renderer's onCleanup calls tabsPersister.flush(): the
-  // reconciled strip must NOT be persisted — the DB keeps the saved urls
-  // for the remounted renderer's restoreSavedTabs.
-  persister.flush();
+  recorder.opened("session-1", "tab-1" as TabId, "https://a.example/");
   await settle();
-  assert.equal(writes.length, 1);
-});
-
-// The guard is keyed to the host generation, not to the wipe shape: a user
-// genuinely closing every browser tab under the same host incarnation still
-// clears the row.
-test("clearing the pane under the same generation still writes null", async () => {
-  const writes: SessionTabsTarget[] = [];
-  let strip: SideTabScope = {
-    tabs: [...pinnedSideTabs, { id: "tab-1", kind: "browser", tabId: "tab-1" }],
-    activeId: "patches",
-  };
-  const hostState: BrowserState = {
-    generation: 1,
-    sequence: 1,
-    activeTabId: "tab-1",
-    tabs: [hostTab("tab-1", "https://a.example/")],
-  };
-  const persister = createSessionTabsPersister({
-    delay: 500,
-    snapshot: () => ({
-      sessionId: "session-1",
-      tabs: snapshotSessionTabs(strip, hostState),
-    }),
-    generation: () => hostState.generation,
-    save: async (target) => {
-      writes.push(target);
-    },
-  });
-
-  persister.flush();
-  await settle();
-  strip = { tabs: pinnedSideTabs, activeId: "patches" };
-  persister.flush();
-  await settle();
-  assert.deepEqual(writes, [
+  assert.deepEqual(saves, [
     {
-      sessionId: "session-1",
+      tabs: { tabs: [entry("tab-1", "https://a.example/")], activeIndex: 0 },
+    },
+  ]);
+});
+
+test("closed removes the entry, falls focus to the next tab, and nulls an empty strip", async () => {
+  const { recorder, saves } = harness({
+    saved: {
+      tabs: [
+        entry("tab-1", "https://a.example/"),
+        entry("tab-2", "https://b.example/"),
+      ],
+      activeIndex: 0,
+    },
+  });
+  recorder.closed("session-1", "tab-1" as TabId);
+  await settle();
+  assert.deepEqual(saves, [
+    {
+      tabs: { tabs: [entry("tab-2", "https://b.example/")], activeIndex: 0 },
+    },
+  ]);
+  recorder.closed("session-1", "tab-2" as TabId);
+  await settle();
+  assert.deepEqual(saves[1], { tabs: null });
+  // Closing an unknown tab writes nothing.
+  recorder.closed("session-1", "tab-9" as TabId);
+  await settle();
+  assert.equal(saves.length, 2);
+});
+
+test("focused moves the saved focus and skips no-op or unknown focuses", async () => {
+  const { recorder, saves } = harness({
+    saved: {
+      tabs: [
+        entry("tab-1", "https://a.example/"),
+        entry("tab-2", "https://b.example/"),
+      ],
+      activeIndex: 0,
+    },
+  });
+  recorder.focused("session-1", "tab-2" as TabId);
+  await settle();
+  recorder.focused("session-1", "tab-2" as TabId);
+  await settle();
+  recorder.focused("session-1", "tab-9" as TabId);
+  await settle();
+  assert.deepEqual(saves, [
+    {
       tabs: {
         tabs: [
-          {
-            kind: "browser",
-            url: "https://a.example/",
-            title: "https://a.example/",
-          },
+          entry("tab-1", "https://a.example/"),
+          entry("tab-2", "https://b.example/"),
         ],
-        activeIndex: -1,
+        activeIndex: 1,
       },
     },
-    { sessionId: "session-1", tabs: null },
   ]);
 });
 
-// A fresh renderer instance after the reload starts a new persister whose
-// first save lands under the new generation: it must not be suppressed, or
-// the restored strip would never be persisted again.
-test("a fresh persister saves under the new generation after the reload", async () => {
-  const writes: SessionTabsTarget[] = [];
-  // Post-restore state of the remounted renderer: the restored strip is
-  // live under the new host generation.
-  const strip: SideTabScope = {
-    tabs: [...pinnedSideTabs, { id: "tab-2", kind: "browser", tabId: "tab-2" }],
-    activeId: "tab-2",
-  };
-  const hostState: BrowserState = {
-    generation: 2,
-    sequence: 3,
-    activeTabId: "tab-2",
-    tabs: [hostTab("tab-2", "https://a.example/")],
-  };
-  const persister = createSessionTabsPersister({
-    delay: 500,
-    snapshot: () => ({
-      sessionId: "session-1",
-      tabs: snapshotSessionTabs(strip, hostState),
-    }),
-    generation: () => hostState.generation,
-    save: async (target) => {
-      writes.push(target);
+test("resolved binds record entries to the host tab ids a projection found", async () => {
+  const { recorder, saves } = harness({
+    saved: {
+      tabs: [
+        entry("tab-1", "https://a.example/"),
+        entry("tab-2", "https://b.example/"),
+      ],
+      activeIndex: 0,
     },
   });
-
-  persister.flush();
+  // The projection adopted a live tab for the first entry (its persisted id
+  // was stale) and could not resolve the second.
+  recorder.resolved("session-1", ["tab-7" as TabId, null]);
   await settle();
-  assert.equal(writes.length, 1);
-  assert.deepEqual(writes[0]?.tabs?.tabs, [
-    { kind: "browser", url: "https://a.example/", title: "https://a.example/" },
+  assert.deepEqual(saves, [
+    {
+      tabs: {
+        tabs: [
+          entry("tab-7", "https://a.example/"),
+          entry("tab-2", "https://b.example/"),
+        ],
+        activeIndex: 0,
+      },
+    },
+  ]);
+  // Nothing changed: no write.
+  recorder.resolved("session-1", ["tab-7" as TabId, null]);
+  await settle();
+  assert.equal(saves.length, 1);
+});
+
+test("a delta composes onto the record merged with the visible strip — an empty record we did not cause cannot erase visible tabs", async () => {
+  // Regression: a wiped or never-restored record (tabs=0) used to become the
+  // base for the next write, dropping the session's visible tabs from
+  // durability. The visible strip is part of the base instead.
+  const { recorder, saves } = harness({
+    saved: null,
+    visible: [
+      entry("tab-1", "https://a.example/"),
+      entry("tab-2", "https://b.example/"),
+    ],
+  });
+  recorder.opened("session-1", "tab-3" as TabId, "https://c.example/");
+  await settle();
+  assert.deepEqual(saves, [
+    {
+      tabs: {
+        tabs: [
+          entry("tab-1", "https://a.example/"),
+          entry("tab-2", "https://b.example/"),
+          entry("tab-3", "https://c.example/"),
+        ],
+        activeIndex: 2,
+      },
+    },
+  ]);
+});
+
+test("a visible tab with a stale recorded id heals the record entry by url", async () => {
+  const { recorder, saves } = harness({
+    saved: { tabs: [entry("tab-1", "https://a.example/")], activeIndex: 0 },
+    visible: [entry("tab-7", "https://a.example/")],
+  });
+  recorder.focused("session-1", "tab-7" as TabId);
+  await settle();
+  assert.deepEqual(saves, [
+    { tabs: { tabs: [entry("tab-7", "https://a.example/")], activeIndex: 0 } },
+  ]);
+});
+
+test("a failed load or save swallows the delta; a failed write leaves the record untouched", async () => {
+  let down = true;
+  const saves: Save[] = [];
+  let record: AgentSessionTabs | null = null;
+  const recorder = createSessionTabsRecorder({
+    load: async () => {
+      if (down) throw new Error("host unavailable");
+      return record;
+    },
+    save: async (_sessionId, tabs) => {
+      record = tabs;
+      saves.push({ tabs });
+    },
+    visibleTabs: () => [],
+  });
+  recorder.opened("session-1", "tab-1" as TabId, "https://a.example/");
+  await settle();
+  assert.equal(saves.length, 0);
+  down = false;
+  recorder.opened("session-1", "tab-1" as TabId, "https://a.example/");
+  await settle();
+  assert.deepEqual(saves, [
+    { tabs: { tabs: [entry("tab-1", "https://a.example/")], activeIndex: 0 } },
   ]);
 });

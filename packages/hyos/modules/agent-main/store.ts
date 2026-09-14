@@ -117,7 +117,9 @@ function decodePlan(value: string | null | undefined): AgentPlan | null {
   }
 }
 
-const sessionTabsVersion = 1;
+// v2 entries persist {tabId, url} pairs (intent-delta writes); v1's
+// url+title snapshots decode as empty, dropping pre-delta records once.
+const sessionTabsVersion = 2;
 
 const globalTabDataVersion = 1;
 
@@ -188,11 +190,11 @@ function decodeSessionTabs(
     }
     const tabs = container.tabs.flatMap((entry) => {
       if (typeof entry !== "object" || entry === null) return [];
-      const tab = entry as { kind?: unknown; url?: unknown; title?: unknown };
+      const tab = entry as { kind?: unknown; tabId?: unknown; url?: unknown };
       if (tab.kind !== "browser") return [];
+      if (typeof tab.tabId !== "string" || tab.tabId.length === 0) return [];
       if (typeof tab.url !== "string" || tab.url.length === 0) return [];
-      if (typeof tab.title !== "string") return [];
-      return [{ kind: "browser" as const, url: tab.url, title: tab.title }];
+      return [{ kind: "browser" as const, tabId: tab.tabId, url: tab.url }];
     });
     if (tabs.length === 0) return null;
     // -1 survives decode: it means "no browser tab focused" — the pane's

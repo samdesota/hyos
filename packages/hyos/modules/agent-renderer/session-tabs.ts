@@ -1,97 +1,175 @@
-import type { AgentSessionTabs } from "../../capabilities/agent.js";
+import type {
+  AgentSessionTab,
+  AgentSessionTabs,
+} from "../../capabilities/agent.js";
 import { tabsDebug } from "./perf-time.js";
 
-/** A pending pane write: which session row to update, and with what. */
-export type SessionTabsTarget = Readonly<{
-  sessionId: string;
-  tabs: AgentSessionTabs | null;
-}>;
-
 /**
- * Debounced persistence for a session's side-pane tabs. The host publishes
- * browser state for every loading tick, so writes are coalesced: a burst of
- * publishes schedules one write, and the snapshot is taken when the write
- * fires — never when it is scheduled — so it always describes the pane as of
- * the flush. Unchanged snapshots are skipped, and failures are swallowed:
- * this is background pane state, not user data.
+ * Intent-delta persistence for a session's side-pane tabs. The persisted
+ * record is the only durable truth; these calls never snapshot the pane.
+ * Each delta loads the record fresh, composes the user's intent onto it,
+ * and writes the result — so writes only ever happen when the user (or an
+ * agent) opens, closes, or focuses a tab, never as a side effect of host
+ * publishes, scope swaps, or teardown. Failures are swallowed: this is
+ * background pane state, not user data.
  */
-export function createSessionTabsPersister(
+export function createSessionTabsRecorder(
   options: Readonly<{
-    delay: number;
-    snapshot: () => SessionTabsTarget | null;
-    /** The live browser host generation; enables the reload guard below. */
-    generation?: () => number;
-    save: (target: SessionTabsTarget) => Promise<void>;
+    load: (sessionId: string) => Promise<AgentSessionTabs | null>;
+    save: (sessionId: string, tabs: AgentSessionTabs | null) => Promise<void>;
+    /**
+     * Browser entries the pane currently shows for `sessionId`. Transitional
+     * (removed with the scope stash): a delta composes onto the loaded
+     * record merged with what is on screen, so an empty record this renderer
+     * did not cause — a legacy wipe, a writer we never restored from —
+     * cannot erase visible tabs from durability. Visible entries heal stale
+     * record ids by url and append genuinely new ones.
+     */
+    visibleTabs: (sessionId: string) => readonly AgentSessionTab[];
   }>,
-): Readonly<{ request(): void; flush(): void; dispose(): void }> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let savedSessionId: string | null = null;
-  let savedJson: string | null = null;
-  let savedGeneration: number | null = null;
+): Readonly<{
+  opened(sessionId: string, tabId: string, url: string): void;
+  closed(sessionId: string, tabId: string): void;
+  focused(sessionId: string, tabId: string): void;
+  /**
+   * Bind record entries to the host tab ids a projection resolved: one
+   * resolved id per record entry, in record order (null = that entry's tab
+   * could not be resolved). Only writes when an id actually changed.
+   */
+  resolved(sessionId: string, tabIds: readonly (string | null)[]): void;
+}> {
+  // One load-mutate-save chain per session, so concurrent deltas compose
+  // in order instead of racing on the same row.
+  const chains = new Map<string, Promise<void>>();
 
-  const fire = (): void => {
-    timer = undefined;
-    const target = options.snapshot();
-    const generation = options.generation?.() ?? null;
-    const describe = (): string =>
-      `session=${target?.sessionId} gen=${generation} savedGen=${savedGeneration} tabs=${target?.tabs?.tabs.length ?? 0} focus=${target?.tabs?.activeIndex}`;
-    if (!target) {
-      tabsDebug(`persist: skipped — no target (no active session)`);
-      return;
-    }
-    // Reload guard: a browser.main restart rotates the host generation, and
-    // a snapshot taken under a generation this persister has never saved
-    // under describes tabs lost to that restart — not user intent. The
-    // dying renderer's teardown flush would otherwise persist the reconciled
-    // (emptied) strip and wipe the saved record a remounted renderer
-    // restores from. Writes are suppressed until a fresh instance (the
-    // remount's persister, after its restore) saves under the new
-    // generation; without `generation`, no suppression applies.
-    if (
-      savedGeneration !== null &&
-      generation !== null &&
-      generation !== savedGeneration
-    ) {
-      tabsDebug(
-        `persist: SUPPRESSED — generation changed since last save (${describe()})`,
-      );
-      return;
-    }
-    const json = JSON.stringify(target.tabs);
-    if (target.sessionId === savedSessionId && json === savedJson) {
-      tabsDebug(`persist: deduped — unchanged snapshot (${describe()})`);
-      return;
-    }
-    tabsDebug(`persist: writing (${describe()})`);
-    // Bookkeeping only after the save resolves, so a failed write is
-    // retried by the next flush instead of being assumed persisted.
-    void options
-      .save(target)
-      .then(() => {
-        savedSessionId = target.sessionId;
-        savedJson = json;
-        savedGeneration = generation;
-        tabsDebug(`persist: SAVED (${describe()})`);
-      })
-      .catch(() => undefined);
+  const describe = (sessionId: string, tabs: AgentSessionTabs | null): string =>
+    `session=${sessionId} tabs=${tabs?.tabs.length ?? 0} focus=${tabs?.activeIndex}`;
+
+  const update = (
+    sessionId: string,
+    mutate: (base: AgentSessionTabs) => AgentSessionTabs | null,
+    label: string,
+  ): void => {
+    const run = async (): Promise<void> => {
+      let saved: AgentSessionTabs | null = null;
+      try {
+        saved = await options.load(sessionId);
+      } catch (value) {
+        tabsDebug(`record: load failed — ${label} ${String(value)}`);
+        return;
+      }
+      // Transitional merge: the on-screen tabs are part of the base a delta
+      // composes onto, so durability can never fall behind what is shown.
+      let tabs: AgentSessionTab[] = [...(saved?.tabs ?? [])];
+      let activeIndex = saved?.activeIndex ?? -1;
+      for (const entry of options.visibleTabs(sessionId)) {
+        if (tabs.some((tab) => tab.tabId === entry.tabId)) continue;
+        const stale = tabs.findIndex((tab) => tab.url === entry.url);
+        if (stale !== -1) tabs[stale] = entry;
+        else tabs = [...tabs, entry];
+      }
+      // The merge itself can repair durability (a visible tab healing a
+      // stale recorded id): even a no-op delta then writes the repaired
+      // record, so the next projection resolves by id instead of re-creating.
+      const merged = { tabs, activeIndex };
+      const mergedChanged =
+        JSON.stringify(merged) !==
+        JSON.stringify(saved ?? { tabs: [], activeIndex: -1 });
+      const mutated = mutate(merged);
+      // An emptied strip clears the row; a no-op delta on an unmerged record
+      // writes nothing.
+      const next =
+        mutated ?? (mergedChanged && tabs.length > 0 ? merged : null);
+      if (!next) {
+        if (mutated === null && !mergedChanged)
+          tabsDebug(
+            `record: deduped — ${label} (${describe(sessionId, merged)})`,
+          );
+        return;
+      }
+      const toSave = next.tabs.length === 0 ? null : next;
+      if (toSave && JSON.stringify(toSave) === JSON.stringify(saved)) {
+        tabsDebug(
+          `record: deduped — ${label} (${describe(sessionId, toSave)})`,
+        );
+        return;
+      }
+      try {
+        await options.save(sessionId, toSave);
+        tabsDebug(`record: SAVED ${label} (${describe(sessionId, toSave)})`);
+      } catch (value) {
+        tabsDebug(`record: save failed — ${label} ${String(value)}`);
+      }
+    };
+    const chained = (chains.get(sessionId) ?? Promise.resolve())
+      .then(run)
+      .catch(() => undefined)
+      .finally(() => {
+        if (chains.get(sessionId) === chained) chains.delete(sessionId);
+      });
+    chains.set(sessionId, chained);
   };
 
   return {
-    // One write per quiet window no matter how many publishes land in it;
-    // a write already scheduled picks up the latest state when it fires.
-    request() {
-      if (timer) return;
-      timer = setTimeout(fire, options.delay);
+    opened(sessionId, tabId, url) {
+      update(
+        sessionId,
+        (base) => {
+          if (base.tabs.some((tab) => tab.tabId === tabId)) return null;
+          const tabs = [...base.tabs, { kind: "browser" as const, tabId, url }];
+          // The opened page is the point of the click, so it takes focus.
+          return { tabs, activeIndex: tabs.length - 1 };
+        },
+        `opened ${url}`,
+      );
     },
-    // Persist right now — used when the pane is about to swap scopes, so
-    // the outgoing session's latest strip lands under its own id.
-    flush() {
-      if (timer) clearTimeout(timer);
-      fire();
+    closed(sessionId, tabId) {
+      update(
+        sessionId,
+        (base) => {
+          const index = base.tabs.findIndex((tab) => tab.tabId === tabId);
+          if (index === -1) return null;
+          const tabs = base.tabs.filter((tab) => tab.tabId !== tabId);
+          if (tabs.length === 0) return { tabs: [], activeIndex: -1 };
+          // The focus falls to the next tab in strip order, mirroring the
+          // pane's own close fallback; an out-of-range index reads as -1.
+          const activeIndex =
+            base.activeIndex === index
+              ? Math.min(index, tabs.length - 1)
+              : base.activeIndex > index
+                ? base.activeIndex - 1
+                : base.activeIndex;
+          return { tabs, activeIndex };
+        },
+        `closed ${tabId}`,
+      );
     },
-    dispose() {
-      if (timer) clearTimeout(timer);
-      timer = undefined;
+    focused(sessionId, tabId) {
+      update(
+        sessionId,
+        (base) => {
+          const index = base.tabs.findIndex((tab) => tab.tabId === tabId);
+          if (index === -1 || index === base.activeIndex) return null;
+          return { ...base, activeIndex: index };
+        },
+        `focused ${tabId}`,
+      );
+    },
+    resolved(sessionId, tabIds) {
+      update(
+        sessionId,
+        (base) => {
+          let changed = false;
+          const tabs = base.tabs.map((tab, index) => {
+            const resolvedId = tabIds[index];
+            if (!resolvedId || resolvedId === tab.tabId) return tab;
+            changed = true;
+            return { ...tab, tabId: resolvedId };
+          });
+          return changed ? { ...base, tabs } : null;
+        },
+        "resolved ids",
+      );
     },
   };
 }

@@ -541,7 +541,7 @@ export const SessionPage: Component<SessionPageProps> = (props) => {
                 aria-controls="agent-side-pane-content"
                 title={sideTabLabel(tab, app.browserState())}
                 onClick={() => {
-                  app.setActiveSideTabId(tab.id);
+                  app.focusSideTab(tab.id);
                   app.setSideCollapsed(false);
                 }}
               >

@@ -31,12 +31,16 @@ export type AgentPlan = Readonly<{
 }>;
 
 // A session's persisted tabs: which tabs it shows and which is focused, so
-// the pane survives app restarts. Entries are kind-discriminated so new tab
-// kinds join the same stored container without another schema change.
+// the pane survives app restarts. Each entry names the host tab it came
+// from (`tabId`, verified against `url` on restore — ids die with a host
+// generation, so the url is the fallback that re-opens the page) — the
+// record is written as user-intent deltas, never as pane snapshots. Entries
+// are kind-discriminated so new tab kinds join the same stored container
+// without another schema change.
 export type AgentSessionTab = Readonly<{
   kind: "browser";
+  tabId: string;
   url: string;
-  title: string;
 }>;
 
 export type AgentSessionTabs = Readonly<{

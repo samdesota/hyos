@@ -91,7 +91,7 @@ test("browser_open_tab appends the opened page to the session's strip, focused",
   );
   assert.match(result.output, /Opened browser tab/);
   assert.deepEqual(input.appended, [
-    { kind: "browser", url: "https://hyos.dev", title: "Page 1" },
+    { kind: "browser", tabId: "tab-1", url: "https://hyos.dev" },
   ]);
 });
 

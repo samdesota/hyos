@@ -367,11 +367,11 @@ test("session tabs persist on the session row and decode defensively", async () 
 
     const tabs: AgentSessionTabs = {
       tabs: [
-        { kind: "browser", url: "https://example.com/", title: "Example" },
+        { kind: "browser", tabId: "tab-1", url: "https://example.com/" },
         {
           kind: "browser",
+          tabId: "tab-2",
           url: "https://news.ycombinator.com/",
-          title: "Hacker News",
         },
       ],
       activeIndex: 1,
@@ -410,39 +410,46 @@ test("session tabs persist on the session row and decode defensively", async () 
     assert.equal(await store.loadSessionTabs(turn.sessionId), null);
     await writeRaw('{"version":99,"tabs":[],"activeIndex":0}');
     assert.equal(await store.loadSessionTabs(turn.sessionId), null);
-    // Unknown tab kinds belong to newer builds and are dropped; the broken
-    // entry goes too, and the focused index clamps into the survivors.
+    // A v1 snapshot record (url+title, pre-delta) decodes as empty: the
+    // {tabId, url} model reads only its own version.
     await writeRaw(
       JSON.stringify({
         version: 1,
+        tabs: [{ kind: "browser", url: "https://example.com/", title: "Old" }],
+        activeIndex: 0,
+      }),
+    );
+    assert.equal(await store.loadSessionTabs(turn.sessionId), null);
+    // Unknown tab kinds belong to newer builds and are dropped; entries
+    // without a usable tabId go too, and the focused index clamps into the
+    // survivors.
+    await writeRaw(
+      JSON.stringify({
+        version: 2,
         tabs: [
-          { kind: "browser", url: "https://example.com/", title: "Example" },
+          { kind: "browser", tabId: "tab-1", url: "https://example.com/" },
           { kind: "terminal", cwd: "/tmp/project" },
-          { kind: "browser", url: "", title: "Broken" },
+          { kind: "browser", tabId: "", url: "https://broken.example/" },
         ],
         activeIndex: 2,
       }),
     );
     assert.deepEqual(await store.loadSessionTabs(turn.sessionId), {
-      tabs: [
-        { kind: "browser", url: "https://example.com/", title: "Example" },
-      ],
+      tabs: [{ kind: "browser", tabId: "tab-1", url: "https://example.com/" }],
       activeIndex: 0,
     });
     // -1 is meaningful: no browser tab was focused (the pinned tab was).
     await writeRaw(
       JSON.stringify({
-        version: 1,
+        version: 2,
         tabs: [
-          { kind: "browser", url: "https://example.com/", title: "Example" },
+          { kind: "browser", tabId: "tab-1", url: "https://example.com/" },
         ],
         activeIndex: -1,
       }),
     );
     assert.deepEqual(await store.loadSessionTabs(turn.sessionId), {
-      tabs: [
-        { kind: "browser", url: "https://example.com/", title: "Example" },
-      ],
+      tabs: [{ kind: "browser", tabId: "tab-1", url: "https://example.com/" }],
       activeIndex: -1,
     });
   } finally {
@@ -486,7 +493,7 @@ test("watchSessionTabs fires with decoded strips as they are saved", async () =>
     // snapshot must never fire for a session with no tabs.
     const saved = nextChange();
     const tabs: AgentSessionTabs = {
-      tabs: [{ kind: "browser", url: "https://example.com/", title: "Ex" }],
+      tabs: [{ kind: "browser", tabId: "tab-1", url: "https://example.com/" }],
       activeIndex: 0,
     };
     await store.saveSessionTabs(first.sessionId, tabs);
@@ -503,7 +510,11 @@ test("watchSessionTabs fires with decoded strips as they are saved", async () =>
     // only fires when a strip actually existed: null over null is no change.
     const secondTabs: AgentSessionTabs = {
       tabs: [
-        { kind: "browser", url: "https://news.ycombinator.com/", title: "HN" },
+        {
+          kind: "browser",
+          tabId: "tab-9",
+          url: "https://news.ycombinator.com/",
+        },
       ],
       activeIndex: 0,
     };

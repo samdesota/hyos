@@ -9,6 +9,7 @@ import type {
   AgentMessageChange,
   AgentProviderSummary,
   AgentSessionSummary,
+  AgentSessionTab,
   AgentSessionTabs,
 } from "../../capabilities/agent.js";
 import type {
@@ -36,7 +37,6 @@ import {
   restoreSessionTabs,
   scopeBrowserTabIds,
   sideTabScopeKey,
-  snapshotSessionTabs,
   unadoptedHostTab,
   adoptCreatedSideTab,
   type SessionTabPlacement,
@@ -56,7 +56,7 @@ import {
   createGlobalTabsPersister,
   snapshotFromRows,
 } from "./global-tabs-persist.js";
-import { createSessionTabsPersister } from "./session-tabs.js";
+import { createSessionTabsRecorder } from "./session-tabs.js";
 import { selectedMode } from "./mode-selection.js";
 import {
   collapseWorkRuns,
@@ -302,44 +302,39 @@ export function createAppState({
     globalTabsPersister.request();
   });
 
-  // Persisted pane state: the active session's strip is snapshotted into
-  // the agent sessions DB so a restart or a renderer reload brings its
-  // browser tabs back. Host publishes arrive for every loading tick, so
-  // the write is debounced and the snapshot is taken when it fires — never
-  // when scheduled — coalescing a burst into one fresh write under the
-  // session that is active at that moment.
-  const tabsPersister = createSessionTabsPersister({
-    delay: 500,
-    snapshot: () => {
-      const sessionId = activeId();
-      if (!sessionId) return null;
-      return {
-        sessionId,
-        tabs: snapshotSessionTabs(
-          { tabs: sideTabs(), activeId: activeSideTabId() },
-          browserState(),
-        ),
-      };
-    },
-    // The live host generation arms the reload guard: after a browser.main
-    // restart the dying renderer's flush must not wipe the saved strip the
-    // remounted renderer restores from.
-    generation: () => browserState().generation,
-    save: ({ sessionId, tabs }) => client.saveSessionTabs(sessionId, tabs),
+  // Persisted pane state as intent deltas: the record is the only durable
+  // truth for a session's tabs, and it changes only when the user or an
+  // agent opens, closes, or focuses a tab — never as a side effect of host
+  // publishes, scope swaps, or teardown. Each delta composes onto the
+  // record merged with the visible strip, so an empty record this renderer
+  // did not cause cannot erase what is on screen.
+  const stripTabEntries = (): AgentSessionTab[] => {
+    const byTabId = new Map(browserState().tabs.map((tab) => [tab.id, tab]));
+    return sideTabs().flatMap((tab) => {
+      if (tab.kind !== "browser") return [];
+      const hostTab = byTabId.get(tab.tabId);
+      return hostTab
+        ? [{ kind: "browser" as const, tabId: tab.tabId, url: hostTab.url }]
+        : [];
+    });
+  };
+  const tabsRecorder = createSessionTabsRecorder({
+    load: (sessionId) => client.sessionTabs(sessionId),
+    save: (sessionId, tabs) => client.saveSessionTabs(sessionId, tabs),
+    visibleTabs: (sessionId) =>
+      sessionId === activeId() ? stripTabEntries() : [],
   });
+  const recordTabOpened = (tabId: TabId, url: string | undefined): void => {
+    const sessionId = activeId();
+    if (!sessionId || !url) return;
+    tabsRecorder.opened(sessionId, tabId, url);
+  };
 
   // Each session owns its strip: switching sessions stashes the outgoing
   // strip and adopts the incoming one, so browser tabs are private to a
   // session while their pages keep running in the host in the background.
   const sideTabScopes = new Map<string, SideTabScope>();
   const swapSideTabScope = (incomingId: string | null): void => {
-    // Flush before stashing: the outgoing session's latest strip — including
-    // focus changes that never triggered a publish — is persisted under its
-    // own id before the pane moves on.
-    tabsDebug(
-      `scope-swap: outgoing=${activeId()} incoming=${incomingId} — flushing persister`,
-    );
-    tabsPersister.flush();
     sideTabScopes.set(sideTabScopeKey(activeId()), {
       tabs: sideTabs(),
       activeId: activeSideTabId(),
@@ -446,10 +441,6 @@ export function createAppState({
       return kept;
     });
     setGlobalTabs((tabs) => reconcileGlobalTabs(tabs, next));
-    // Every accepted publish may have changed what the pane shows (tab
-    // titles drift as pages load, even when the strip does not); the
-    // persister coalesces that churn into one debounced write.
-    tabsPersister.request();
   };
   const unsubscribeBrowser = browserClient.subscribe(acceptBrowserState);
   onCleanup(() => unsubscribeBrowser());
@@ -511,6 +502,7 @@ export function createAppState({
         { id: adoptable.id, kind: "browser", tabId: adoptable.id },
       ]);
       setActiveSideTabId(adoptable.id);
+      recordTabOpened(adoptable.id, adoptable.url);
       setSideCollapsed(false);
       return;
     }
@@ -520,6 +512,7 @@ export function createAppState({
       if (!tabId) return;
       setSideTabs((tabs) => adoptCreatedSideTab(tabs, tabId));
       setActiveSideTabId(tabId);
+      recordTabOpened(tabId, next?.tabs.find(({ id }) => id === tabId)?.url);
     });
   };
 
@@ -534,6 +527,7 @@ export function createAppState({
       if (!tabId) return;
       setSideTabs((tabs) => adoptCreatedSideTab(tabs, tabId));
       setActiveSideTabId(tabId);
+      recordTabOpened(tabId, url);
     });
   };
 
@@ -547,8 +541,20 @@ export function createAppState({
     // Closing the host tab releases its presentation and, when it was the
     // last one, makes the host recreate a fresh tab for the next `+` click.
     if (tab.kind === "browser") {
+      const sessionId = activeId();
+      if (sessionId) tabsRecorder.closed(sessionId, tab.tabId);
       void runBrowser({ type: "close-tab", tabId: tab.tabId });
     }
+  };
+
+  // A user click focuses a strip tab and records the focus delta;
+  // programmatic focus (projection re-asserting the saved focus, close
+  // fallbacks) goes through setActiveSideTabId directly and never writes
+  // the record.
+  const focusSideTab = (tabId: string): void => {
+    setActiveSideTabId(tabId);
+    const sessionId = activeId();
+    if (sessionId) tabsRecorder.focused(sessionId, tabId);
   };
 
   createEffect(() => {
@@ -716,8 +722,11 @@ export function createAppState({
   // Append the resolved tabs to the strip (idempotent: a `+` click or an
   // earlier pass may have landed one already) and re-assert the saved
   // focus. Never expands a collapsed pane — what to look at is the user's
-  // call; the strip simply reflects the session's persisted state.
+  // call; the strip simply reflects the session's persisted state. The
+  // resolved host tab ids are written back to the record: a created tab
+  // (stale persisted id) must not be re-created on the next projection.
   const adoptResolvedTabs = (
+    sessionId: string,
     tabIds: readonly (TabId | null)[],
     focusedId: TabId | null,
   ): void => {
@@ -730,6 +739,7 @@ export function createAppState({
         .map((tabId) => ({ id: tabId, kind: "browser" as const, tabId }));
       return additions.length === 0 ? tabs : [...tabs, ...additions];
     });
+    tabsRecorder.resolved(sessionId, tabIds);
     if (focusedId) setActiveSideTabId(focusedId);
   };
 
@@ -779,19 +789,24 @@ export function createAppState({
     tabsDebug(
       `project: placements session=${sessionId} hostGen=${browserState().generation} ` +
         placements
-          .map((p) => (p.kind === "reuse" ? `reuse:${p.tabId}` : `create:${p.url}`))
+          .map((p) =>
+            p.kind === "reuse" ? `reuse:${p.tabId}` : `create:${p.url}`,
+          )
           .join(",") +
         ` focus=${activeIndex}`,
     );
     const tabIds = await resolvePlacements(placements, isStale);
     if (isStale()) {
-      tabsDebug(`project: abandoned after resolve — session=${sessionId} stale`);
+      tabsDebug(
+        `project: abandoned after resolve — session=${sessionId} stale`,
+      );
       return;
     }
     tabsDebug(
       `project: adopting session=${sessionId} tabIds=[${tabIds.join(",")}]`,
     );
     adoptResolvedTabs(
+      sessionId,
       tabIds,
       activeIndex >= 0 ? (tabIds[activeIndex] ?? null) : null,
     );
@@ -1148,12 +1163,10 @@ export function createAppState({
   onCleanup(() => {
     feedGeneration += 1;
     closeFeed();
-    // A teardown (window close, hot reload) gets one last best-effort write
-    // of the active session's pane before the pending timer dies with it.
-    tabsDebug(`teardown: flushing persister (active=${activeId()})`);
-    tabsPersister.flush();
     // One last best-effort write of the global strip before the pending
-    // timer dies with the renderer.
+    // timer dies with the renderer. The session record needs no teardown
+    // write: intent deltas land as they happen, so a dying renderer has
+    // nothing left to say about the session's tabs.
     globalTabsPersister.flush();
     globalTabsPersister.dispose();
     narrowSide.removeEventListener("change", collapseSideWhenNarrow);
@@ -1225,6 +1238,7 @@ export function createAppState({
     sideTabs,
     activeSideTabId,
     setActiveSideTabId,
+    focusSideTab,
     sideActive,
     activeBrowserTab,
     openBrowserSideTab,

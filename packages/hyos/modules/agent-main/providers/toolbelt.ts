@@ -119,10 +119,16 @@ function browserOpenTabTool(input: AgentRunInput): OpenCodeTool | null {
       const title = activeTab?.title || url;
       // Record the opened page in the session's persisted strip so a
       // subscribing renderer shows it without diffing host publishes.
-      // Background pane state: a failed write never fails the tool call.
-      if (input.appendSessionTab) {
+      // The record persists {tabId, url}; create-tab activates the new tab,
+      // so the active tab is the one to name. Background pane state: a
+      // failed or unidentifiable write never fails the tool call.
+      if (input.appendSessionTab && activeTab) {
         try {
-          await input.appendSessionTab({ kind: "browser", url, title });
+          await input.appendSessionTab({
+            kind: "browser",
+            tabId: activeTab.id,
+            url,
+          });
         } catch {
           // Ignore — the strip converges on the next write.
         }

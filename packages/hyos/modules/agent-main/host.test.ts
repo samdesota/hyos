@@ -697,11 +697,11 @@ test("session tabs round-trip through the agent provider", async () => {
 
     const tabs: import("../../capabilities/agent.js").AgentSessionTabs = {
       tabs: [
-        { kind: "browser", url: "https://example.com/", title: "Example" },
+        { kind: "browser", tabId: "tab-1", url: "https://example.com/" },
         {
           kind: "browser",
+          tabId: "tab-2",
           url: "https://news.ycombinator.com/",
-          title: "Hacker News",
         },
       ],
       activeIndex: 1,
