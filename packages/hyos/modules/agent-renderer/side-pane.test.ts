@@ -141,6 +141,51 @@ test("restoring adopts the persisted host tab by id, verified against its url", 
   );
 });
 
+test("a persisted id is adopted despite challenge-token url drift, but not unrelated drift", () => {
+  // A Cloudflare challenge rewrites the query with a fresh one-time token on
+  // every reload; the live tab is still "the same page", so it must be
+  // adopted by id instead of creating a duplicate. A different path or extra
+  // non-token params is a different page and must not adopt.
+  const state = hostState(["tab-1", "tab-2"]);
+  const state2 = {
+    ...state,
+    tabs: [
+      {
+        ...state.tabs[0],
+        url: "https://tab-1.example/search?q=chime&__cf_chl_rt_tk=fresh",
+      },
+      { ...state.tabs[1], url: "https://other.example/other" },
+    ],
+  };
+  assert.deepEqual(
+    restoreSessionTabs(
+      {
+        tabs: [
+          {
+            kind: "browser",
+            tabId: "tab-1",
+            url: "https://tab-1.example/search?q=chime&__cf_chl_rt_tk=old",
+          },
+          { kind: "browser", tabId: "tab-2", url: "https://other.example/" },
+        ],
+        activeIndex: 0,
+      },
+      state2,
+    ),
+    {
+      placements: [
+        {
+          kind: "reuse",
+          tabId: "tab-1",
+          url: "https://tab-1.example/search?q=chime&__cf_chl_rt_tk=old",
+        },
+        { kind: "create", url: "https://other.example/" },
+      ],
+      activeIndex: 0,
+    },
+  );
+});
+
 test("a persisted id reused by a different page falls back to the url match", () => {
   // The host was restarted: the old tab died and tab-1 was recycled for a
   // different page. The stale id must not adopt the wrong page; the recorded

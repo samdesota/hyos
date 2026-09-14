@@ -83,9 +83,38 @@ export function reconcileSideTabs(
 }
 
 /**
+ * Whether a live tab still shows "the same page" as its recorded url, up to
+ * challenge-token churn: pages behind bot protection (Cloudflare) rewrite the
+ * query string with fresh one-time tokens on every reload, so a strict
+ * equality check would permanently orphan every such tab and make each
+ * projection open a duplicate. Same origin, same path, and the same
+ * non-token query params count as the same page; `__cf`-prefixed token
+ * params are ignored on both sides.
+ */
+export function sameTabUrl(a: string, b: string): boolean {
+  if (a === b) return true;
+  try {
+    const left = new URL(a);
+    const right = new URL(b);
+    if (left.origin !== right.origin || left.pathname !== right.pathname)
+      return false;
+    const stableParams = (url: URL): string =>
+      JSON.stringify(
+        [...url.searchParams]
+          .filter(([key]) => !key.startsWith("__cf"))
+          .sort(([aKey], [bKey]) => aKey.localeCompare(bKey)),
+      );
+    return stableParams(left) === stableParams(right);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * One restored browser tab resolved against the live host state: adopt the
  * persisted host tab when it is still alive and still shows the recorded
- * url, else reuse any unclaimed live tab on that url, else open fresh.
+ * page (same url, or a challenge-token-only drift of it), else reuse any
+ * unclaimed live tab on the exact recorded url, else open fresh.
  */
 export type SessionTabPlacement =
   | Readonly<{ kind: "reuse"; tabId: TabId; url: string }>
@@ -101,8 +130,9 @@ export type SessionTabsRestore = Readonly<{
 /**
  * Resolve a session's saved tabs against the live host state. Each record
  * entry persists a {tabId, url} pair: the named host tab is adopted when it
- * is still alive and still shows the recorded url — the exact, O(1) intent —
- * while a stale id (host restart, id reuse) falls back to the first
+ * is still alive and still shows the recorded page — the exact, O(1) intent,
+ * tolerant of challenge-token url drift — while a stale id (host restart, id
+ * reuse) falls back to the first
  * unclaimed live tab on the same url, and only urls with no live match open
  * fresh. Host tabs are global and keep running while other sessions are
  * shown, so restoring after a restart must not duplicate pages still open. A
@@ -122,7 +152,7 @@ export function restoreSessionTabs(
       ({ id }) => !claimed.has(id) && id === tab.tabId,
     );
     const hostTab =
-      byId && byId.url === tab.url
+      byId && sameTabUrl(byId.url, tab.url)
         ? byId
         : state.tabs.find(({ id, url }) => !claimed.has(id) && url === tab.url);
     if (!hostTab) return { kind: "create", url: tab.url };
