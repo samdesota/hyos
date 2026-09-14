@@ -733,16 +733,21 @@ export function createAppState({
     if (focusedId) setActiveSideTabId(focusedId);
   };
 
-  // Re-open a session's persisted browser tabs on its first open: host tabs
-  // still showing a saved url are re-adopted in place, urls with no live tab
-  // are opened fresh in saved order, and the saved focus is re-applied.
-  // `generation` abandons the restore the moment another selection wins —
-  // the strip it was building belongs to a session that is no longer shown.
-  let stripRestoreInFlight = false;
-  const restoreSavedTabs = async (
-    sessionId: string,
-    generation: number,
-  ): Promise<void> => {
+  // Projection: the one path that builds the session pane's strip from the
+  // persisted record. Selecting a session and a persisted-strip change (the
+  // agent's browser_open_tab, another renderer's write, …) both land here,
+  // and it is idempotent and re-runnable: a re-select of the same session
+  // simply re-runs it instead of being latched to a one-time restore.
+  // Adoption is appending-only, so a projection can never close or reorder
+  // what the user already has up — a stale or empty record event is a
+  // no-op on the live strip. A projection is abandoned only when a newer
+  // one supersedes it or its session is no longer shown; the tabs it opened
+  // in the meantime are closed again.
+  let projectToken = 0;
+  const projectSession = async (sessionId: string): Promise<void> => {
+    const token = ++projectToken;
+    const isStale = (): boolean =>
+      token !== projectToken || sessionId !== activeId();
     let saved: AgentSessionTabs | null = null;
     try {
       saved = await timeAsync(
@@ -750,105 +755,53 @@ export function createAppState({
         () => client.sessionTabs(sessionId),
       );
     } catch (value) {
-      tabsDebug(`restore: sessionTabs fetch failed — ${String(value)}`);
+      tabsDebug(`project: sessionTabs fetch failed — ${String(value)}`);
       // Background pane state: a failed load just leaves the strip as-is.
       return;
     }
     // A renderer reload keeps the host's tabs alive, but the boot snapshot
-    // revealing them may still be in flight; restoring against it keeps a
+    // revealing them may still be in flight; projecting against it keeps a
     // fast reopen from opening duplicates for tabs that never went away.
     tabsDebug(
-      `restore: fetched session=${sessionId} savedTabs=${saved?.tabs.length ?? 0} focus=${saved?.activeIndex}`,
+      `project: fetched session=${sessionId} savedTabs=${saved?.tabs.length ?? 0} focus=${saved?.activeIndex}`,
     );
     await bootBrowserSnapshot;
-    if (generation !== feedGeneration || !saved) {
+    if (isStale() || !saved) {
       tabsDebug(
-        `restore: abandoned before resolve — session=${sessionId} staleGeneration=${generation !== feedGeneration} noSaved=${!saved}`,
+        `project: abandoned before resolve — session=${sessionId} stale=${isStale()} noSaved=${!saved}`,
       );
       return;
     }
-    stripRestoreInFlight = true;
-    try {
-      const { placements, activeIndex } = restoreSessionTabs(
-        saved,
-        browserState(),
-      );
-      tabsDebug(
-        `restore: placements session=${sessionId} hostGen=${browserState().generation} ` +
-          placements
-            .map((p) => (p.kind === "reuse" ? `reuse:${p.tabId}` : `create:${p.url}`))
-            .join(",") +
-          ` focus=${activeIndex}`,
-      );
-      const tabIds = await resolvePlacements(
-        placements,
-        () => generation !== feedGeneration,
-      );
-      if (generation !== feedGeneration) {
-        tabsDebug(`restore: abandoned after resolve — session=${sessionId} stale`);
-        return;
-      }
-      tabsDebug(
-        `restore: adopting session=${sessionId} tabIds=[${tabIds.join(",")}]`,
-      );
-      adoptResolvedTabs(
-        tabIds,
-        activeIndex >= 0 ? (tabIds[activeIndex] ?? null) : null,
-      );
-    } finally {
-      stripRestoreInFlight = false;
-    }
-  };
-
-  // Subscription-driven strip reconciliation: the session's persisted strip
-  // changed (the agent's browser_open_tab wrote it in step 2, another
-  // renderer wrote it, …). When it is the active session, adopt the tabs it
-  // names and apply its focus. Appending only: tabs the strip already shows
-  // are left in place, and a tab the user just closed — whose removal is
-  // still sitting in the persister's debounce — is not resurrected by a
-  // stale event. Unchanged writes never fire (the store suppresses them),
-  // so this runs only on real strip changes, and the echo write the apply
-  // itself triggers is swallowed there too.
-  let stripApplying = false;
-  const applySessionStrip = async (
-    sessionId: string,
-    saved: AgentSessionTabs | null,
-  ): Promise<void> => {
+    const { placements, activeIndex } = restoreSessionTabs(
+      saved,
+      browserState(),
+    );
     tabsDebug(
-      `strip-event: session=${sessionId} tabs=${saved?.tabs.length ?? 0} active=${sessionId === activeId()} inFlight=${stripRestoreInFlight} applying=${stripApplying}`,
+      `project: placements session=${sessionId} hostGen=${browserState().generation} ` +
+        placements
+          .map((p) => (p.kind === "reuse" ? `reuse:${p.tabId}` : `create:${p.url}`))
+          .join(",") +
+        ` focus=${activeIndex}`,
     );
-    if (sessionId !== activeId() || stripRestoreInFlight || stripApplying)
-      return;
-    await bootBrowserSnapshot;
-    if (sessionId !== activeId() || stripRestoreInFlight) {
-      tabsDebug(`strip-event: skipped after boot wait — session=${sessionId}`);
+    const tabIds = await resolvePlacements(placements, isStale);
+    if (isStale()) {
+      tabsDebug(`project: abandoned after resolve — session=${sessionId} stale`);
       return;
     }
-    stripApplying = true;
-    try {
-      const { placements, activeIndex } = restoreSessionTabs(
-        saved,
-        browserState(),
-      );
-      tabsDebug(
-        `strip-event: applying session=${sessionId} placements=${placements.map((p) => (p.kind === "reuse" ? `reuse:${p.tabId}` : `create:${p.url}`)).join(",")} focus=${activeIndex}`,
-      );
-      const tabIds = await resolvePlacements(placements, () => {
-        if (sessionId !== activeId() || stripRestoreInFlight) return true;
-        return false;
-      });
-      if (sessionId !== activeId()) return;
-      adoptResolvedTabs(
-        tabIds,
-        activeIndex >= 0 ? (tabIds[activeIndex] ?? null) : null,
-      );
-    } finally {
-      stripApplying = false;
-    }
+    tabsDebug(
+      `project: adopting session=${sessionId} tabIds=[${tabIds.join(",")}]`,
+    );
+    adoptResolvedTabs(
+      tabIds,
+      activeIndex >= 0 ? (tabIds[activeIndex] ?? null) : null,
+    );
   };
   const unsubscribeSessionTabs = client.subscribeSessionTabs(
     ({ sessionId, tabs }) => {
-      void applySessionStrip(sessionId, tabs);
+      tabsDebug(
+        `strip-event: session=${sessionId} tabs=${tabs?.tabs.length ?? 0} active=${sessionId === activeId()}`,
+      );
+      if (sessionId === activeId()) void projectSession(sessionId);
     },
   );
   onCleanup(() => unsubscribeSessionTabs());
@@ -925,12 +878,6 @@ export function createAppState({
     let feedOpenDone = 0;
     const generation = ++feedGeneration;
     closeFeed();
-    // Only a session's first open restores its persisted tabs: an in-memory
-    // stash is fresher than the DB, and re-selecting the active session
-    // must not resurrect tabs the user has closed since.
-    const firstOpen =
-      !sideTabScopes.has(sideTabScopeKey(sessionId)) &&
-      sessionId !== activeId();
     swapSideTabScope(sessionId);
     setActiveId(sessionId);
     navigateToSession(sessionId);
@@ -942,13 +889,15 @@ export function createAppState({
     setError(null);
     transcriptScroll.reset();
     patchScroll.reset();
+    // Every selection projects the session's strip from the persisted
+    // record — including a re-select of the session already active, which
+    // simply re-runs the (idempotent, appending-only) projection.
     tabsDebug(
-      `select: session=${sessionId} firstOpen=${firstOpen} wasActive=${sessionId === activeId()} scoped=${sideTabScopes.has(sideTabScopeKey(sessionId))}`,
+      `select: session=${sessionId} wasActive=${sessionId === activeId()} scoped=${sideTabScopes.has(sideTabScopeKey(sessionId))}`,
     );
-    if (firstOpen)
-      void timeAsync(`session-open:tab-restore(${sessionId})`, () =>
-        restoreSavedTabs(sessionId, generation),
-      );
+    void timeAsync(`session-open:tab-restore(${sessionId})`, () =>
+      projectSession(sessionId),
+    );
     try {
       const opened = await timeAsync(
         `session-open:openFeed(${sessionId})`,
