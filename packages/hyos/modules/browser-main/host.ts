@@ -34,7 +34,6 @@ export function createBrowserHost(
   const presentations = new BrowserPresentations(baseWindow, uiView, tabs);
   const generation = Date.now();
   let activeTabId: TabId | null = null;
-  let nextTabId = 1;
   let sequence = 0;
   let accepting = true;
 
@@ -55,7 +54,10 @@ export function createBrowserHost(
     publish();
   };
   const createTab = (requestedUrl = config.initialUrl): Tab => {
-    const id = `tab-${nextTabId++}` as TabId;
+    // Tab ids are UUIDs: unique across host reloads and restarts, so a
+    // persisted {tabId} pair can be re-adopted without a recycled counter id
+    // ever pointing at a different page.
+    const id = crypto.randomUUID() as TabId;
     const tab = createTabView({
       id,
       url: requestedUrl,

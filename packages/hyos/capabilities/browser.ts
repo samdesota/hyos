@@ -4,7 +4,9 @@ import {
   remoteMethod,
 } from "./contract.js";
 
-export type TabId = `tab-${number}`;
+// Tab ids are UUIDs minted by the browser host: unique across host reloads
+// and restarts, so a persisted tabId can be re-adopted without ambiguity.
+export type TabId = string;
 export type PresentationId = `presentation-${string}`;
 
 export type BrowserBounds = Readonly<{
