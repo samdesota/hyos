@@ -4,6 +4,12 @@ export const applicationManifest = defineApplicationManifest({
   version: 1,
   modules: [
     {
+      id: "log.main",
+      file: "./modules/log-main/index.ts",
+      host: "main",
+      reload: "restart",
+    },
+    {
       id: "electron.window",
       file: "./modules/electron-window/index.ts",
       host: "main",
