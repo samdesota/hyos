@@ -698,7 +698,6 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
           class="sound-toggle"
           aria-pressed={soundEnabled()}
           aria-label="Toggle agent chime"
-          title="Toggle agent chime"
           onClick={(event) => {
             event.stopPropagation();
             const next = !soundEnabled();
@@ -706,6 +705,9 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
             sound.setEnabled(next);
           }}
         >
+          <span class="sound-toggle-tip" aria-hidden="true">
+            Toggle agent chime
+          </span>
           <svg
             class="sound-toggle-icon"
             viewBox="0 0 24 24"

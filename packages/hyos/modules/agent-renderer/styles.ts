@@ -114,16 +114,26 @@ export const agentStyles = String.raw`
   .session-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 18px; }
   .sidebar-footer { flex: none; border-top: 1px solid #30312d; padding: 8px 10px; }
   .sound-toggle {
+    position: relative;
     display: grid; place-items: center;
-    width: 28px; height: 28px; margin: 0 auto; padding: 0;
+    width: 28px; height: 28px; margin: 0; padding: 0;
     border: 0; border-radius: 8px;
-    color: #b5b7ac; background: transparent; cursor: pointer;
+    color: #ffffff; background: transparent; cursor: pointer;
     transition: background .12s, color .12s;
   }
-  .sound-toggle:hover { background: #3b3d37; color: #e3e2dc; }
+  .sound-toggle:hover { background: #3b3d37; }
   .sound-toggle:focus-visible { outline: 2px solid #b2cb8c; }
-  .sound-toggle[aria-pressed="true"] { color: #d9ff62; }
   .sound-toggle-icon { width: 16px; height: 16px; }
+  .sound-toggle-tip {
+    position: absolute; bottom: calc(100% + 8px); left: 0;
+    z-index: 80; display: none;
+    padding: 4px 8px; border-radius: 6px;
+    color: #eceae5; background: #3b3d37;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+    font-size: 11px; white-space: nowrap; pointer-events: none;
+  }
+  .sound-toggle:hover .sound-toggle-tip,
+  .sound-toggle:focus-visible .sound-toggle-tip { display: block; }
   .session-folder-group + .session-folder-group { margin-top: 10px; }
   .session-folder-heading { margin: 0; padding: 8px 10px 4px; color: #b5b7ac; font-size: 12px; font-weight: 600; }
   .session-folder-name, .session-folder-parent { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
