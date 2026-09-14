@@ -13,6 +13,8 @@ export const incrementalImplementRule =
 
 export const incrementalPlanRule = `Incremental mode: maintain the session plan as a list of tasks. End every final response with the complete, updated plan in a fenced "hyos-plan" code block (info string hyos-plan), using task-list syntax "- [x] done task" and "- [ ] pending task". Rewrite the whole block each turn so it always reflects the true state of the plan, and mark a task done only after its change is verified.
 
+Plan content rules: plans are not a log of what the agent has done — they contain only concrete, actionable implementation steps. Never add placeholder tasks such as "- [ ] Investigate user question" when no plan exists yet (a conversational or investigative turn needs no plan task), and never add tasks or prefixes about waiting for approval, such as "- [ ] investigate and wait for user approval" or "- [ ] (pending approval) Build something".
+
 Example of the exact required format:
 
 \`\`\`hyos-plan
