@@ -1,6 +1,6 @@
 // Debug logging for the tabs persist/restore path: flip to false once the
 // reload wipe is diagnosed.
-export const TABS_DEBUG = false;
+export const TABS_DEBUG = true;
 export const tabsDebug = (message: string): void => {
   if (TABS_DEBUG) console.log(`[tabs-debug] ${message}`);
 };
