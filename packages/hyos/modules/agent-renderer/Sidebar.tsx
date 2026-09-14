@@ -693,24 +693,49 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
         </Show>
       </div>
       <div class="sidebar-footer">
-        <label class="sound-toggle" title="Play a sound when an agent finishes">
-          <span class="sound-toggle-label">Finish sound</span>
-          <input
-            type="checkbox"
-            role="switch"
-            checked={soundEnabled()}
-            aria-label="Agent finish notifications"
-            onClick={(event) => {
-              event.stopPropagation();
-            }}
-            onChange={(event) => {
-              const next = event.currentTarget.checked;
-              setSoundEnabled(next);
-              sound.setEnabled(next);
-            }}
-          />
-          <i class="sound-switch" aria-hidden="true" />
-        </label>
+        <button
+          type="button"
+          class="sound-toggle"
+          aria-pressed={soundEnabled()}
+          aria-label="Toggle agent chime"
+          title="Toggle agent chime"
+          onClick={(event) => {
+            event.stopPropagation();
+            const next = !soundEnabled();
+            setSoundEnabled(next);
+            sound.setEnabled(next);
+          }}
+        >
+          <svg
+            class="sound-toggle-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <Show
+              when={soundEnabled()}
+              fallback={
+                <>
+                  {/* lucide volume-x */}
+                  <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 20.298z" />
+                  <line x1="22" y1="9" x2="16" y2="15" />
+                  <line x1="16" y1="9" x2="22" y2="15" />
+                </>
+              }
+            >
+              <>
+                {/* lucide volume-2 */}
+                <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 20.298z" />
+                <path d="M16 9a5 5 0 0 1 0 6" />
+                <path d="M19.364 18.364a9 9 0 0 0 0-12.728" />
+              </>
+            </Show>
+          </svg>
+        </button>
       </div>
       <Show when={ghostSession()}>
         {(s) => (

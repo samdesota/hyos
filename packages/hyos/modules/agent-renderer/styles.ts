@@ -114,27 +114,16 @@ export const agentStyles = String.raw`
   .session-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 18px; }
   .sidebar-footer { flex: none; border-top: 1px solid #30312d; padding: 8px 10px; }
   .sound-toggle {
-    display: flex; align-items: center; gap: 10px;
-    width: 100%; padding: 6px 8px; border-radius: 8px;
-    cursor: pointer; user-select: none;
+    display: grid; place-items: center;
+    width: 28px; height: 28px; margin: 0 auto; padding: 0;
+    border: 0; border-radius: 8px;
+    color: #b5b7ac; background: transparent; cursor: pointer;
+    transition: background .12s, color .12s;
   }
-  .sound-toggle:hover { background: #292a27; }
-  .sound-toggle input { position: absolute; opacity: 0; pointer-events: none; }
-  .sound-toggle-label { flex: 1; color: #aaaca2; font-size: 12px; }
-  .sound-switch {
-    flex: none; position: relative; width: 30px; height: 17px;
-    border-radius: 9px; background: #3b3d37; transition: background .15s;
-  }
-  .sound-switch::after {
-    content: ""; position: absolute; top: 2px; left: 2px;
-    width: 13px; height: 13px; border-radius: 50%;
-    background: #b5b7ac; transition: transform .15s, background .15s;
-  }
-  .sound-toggle input:checked + .sound-switch { background: #d9ff62; }
-  .sound-toggle input:checked + .sound-switch::after {
-    transform: translateX(13px); background: #171816;
-  }
-  .sound-toggle input:focus-visible + .sound-switch { outline: 2px solid #b2cb8c; }
+  .sound-toggle:hover { background: #3b3d37; color: #e3e2dc; }
+  .sound-toggle:focus-visible { outline: 2px solid #b2cb8c; }
+  .sound-toggle[aria-pressed="true"] { color: #d9ff62; }
+  .sound-toggle-icon { width: 16px; height: 16px; }
   .session-folder-group + .session-folder-group { margin-top: 10px; }
   .session-folder-heading { margin: 0; padding: 8px 10px 4px; color: #b5b7ac; font-size: 12px; font-weight: 600; }
   .session-folder-name, .session-folder-parent { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
