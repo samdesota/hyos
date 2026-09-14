@@ -23,7 +23,7 @@ import type {
   KeybindingClient,
 } from "./client.js";
 import { createAutoScrollController } from "./auto-scroll.js";
-import { perfLog, perfNow, timeAsync } from "./perf-time.js";
+import { perfLog, perfNow, tabsDebug, timeAsync } from "./perf-time.js";
 import { emptyBrowserState } from "./browser-tab.js";
 import {
   activeSideTab,
@@ -336,6 +336,9 @@ export function createAppState({
     // Flush before stashing: the outgoing session's latest strip — including
     // focus changes that never triggered a publish — is persisted under its
     // own id before the pane moves on.
+    tabsDebug(
+      `scope-swap: outgoing=${activeId()} incoming=${incomingId} — flushing persister`,
+    );
     tabsPersister.flush();
     sideTabScopes.set(sideTabScopeKey(activeId()), {
       tabs: sideTabs(),
@@ -433,7 +436,15 @@ export function createAppState({
         `[DEBUG-boot-7f2c] agent-renderer browser-state count=${browserPublishCount} tabs=${next.tabs.length}`,
       );
     setBrowserState(next);
-    setSideTabs((tabs) => reconcileSideTabs(tabs, next));
+    setSideTabs((tabs) => {
+      const kept = reconcileSideTabs(tabs, next);
+      const dropped = tabs.length - kept.length;
+      if (dropped > 0)
+        tabsDebug(
+          `reconcile: host gen=${next.generation} dropped ${dropped} browser tab(s) from strip`,
+        );
+      return kept;
+    });
     setGlobalTabs((tabs) => reconcileGlobalTabs(tabs, next));
     // Every accepted publish may have changed what the pane shows (tab
     // titles drift as pages load, even when the strip does not); the
@@ -738,26 +749,48 @@ export function createAppState({
         `session-open:tab-restore-fetch(${sessionId})`,
         () => client.sessionTabs(sessionId),
       );
-    } catch {
+    } catch (value) {
+      tabsDebug(`restore: sessionTabs fetch failed — ${String(value)}`);
       // Background pane state: a failed load just leaves the strip as-is.
       return;
     }
     // A renderer reload keeps the host's tabs alive, but the boot snapshot
     // revealing them may still be in flight; restoring against it keeps a
     // fast reopen from opening duplicates for tabs that never went away.
+    tabsDebug(
+      `restore: fetched session=${sessionId} savedTabs=${saved?.tabs.length ?? 0} focus=${saved?.activeIndex}`,
+    );
     await bootBrowserSnapshot;
-    if (generation !== feedGeneration || !saved) return;
+    if (generation !== feedGeneration || !saved) {
+      tabsDebug(
+        `restore: abandoned before resolve — session=${sessionId} staleGeneration=${generation !== feedGeneration} noSaved=${!saved}`,
+      );
+      return;
+    }
     stripRestoreInFlight = true;
     try {
       const { placements, activeIndex } = restoreSessionTabs(
         saved,
         browserState(),
       );
+      tabsDebug(
+        `restore: placements session=${sessionId} hostGen=${browserState().generation} ` +
+          placements
+            .map((p) => (p.kind === "reuse" ? `reuse:${p.tabId}` : `create:${p.url}`))
+            .join(",") +
+          ` focus=${activeIndex}`,
+      );
       const tabIds = await resolvePlacements(
         placements,
         () => generation !== feedGeneration,
       );
-      if (generation !== feedGeneration) return;
+      if (generation !== feedGeneration) {
+        tabsDebug(`restore: abandoned after resolve — session=${sessionId} stale`);
+        return;
+      }
+      tabsDebug(
+        `restore: adopting session=${sessionId} tabIds=[${tabIds.join(",")}]`,
+      );
       adoptResolvedTabs(
         tabIds,
         activeIndex >= 0 ? (tabIds[activeIndex] ?? null) : null,
@@ -781,15 +814,24 @@ export function createAppState({
     sessionId: string,
     saved: AgentSessionTabs | null,
   ): Promise<void> => {
+    tabsDebug(
+      `strip-event: session=${sessionId} tabs=${saved?.tabs.length ?? 0} active=${sessionId === activeId()} inFlight=${stripRestoreInFlight} applying=${stripApplying}`,
+    );
     if (sessionId !== activeId() || stripRestoreInFlight || stripApplying)
       return;
     await bootBrowserSnapshot;
-    if (sessionId !== activeId() || stripRestoreInFlight) return;
+    if (sessionId !== activeId() || stripRestoreInFlight) {
+      tabsDebug(`strip-event: skipped after boot wait — session=${sessionId}`);
+      return;
+    }
     stripApplying = true;
     try {
       const { placements, activeIndex } = restoreSessionTabs(
         saved,
         browserState(),
+      );
+      tabsDebug(
+        `strip-event: applying session=${sessionId} placements=${placements.map((p) => (p.kind === "reuse" ? `reuse:${p.tabId}` : `create:${p.url}`)).join(",")} focus=${activeIndex}`,
       );
       const tabIds = await resolvePlacements(placements, () => {
         if (sessionId !== activeId() || stripRestoreInFlight) return true;
@@ -900,6 +942,9 @@ export function createAppState({
     setError(null);
     transcriptScroll.reset();
     patchScroll.reset();
+    tabsDebug(
+      `select: session=${sessionId} firstOpen=${firstOpen} wasActive=${sessionId === activeId()} scoped=${sideTabScopes.has(sideTabScopeKey(sessionId))}`,
+    );
     if (firstOpen)
       void timeAsync(`session-open:tab-restore(${sessionId})`, () =>
         restoreSavedTabs(sessionId, generation),
@@ -1156,6 +1201,7 @@ export function createAppState({
     closeFeed();
     // A teardown (window close, hot reload) gets one last best-effort write
     // of the active session's pane before the pending timer dies with it.
+    tabsDebug(`teardown: flushing persister (active=${activeId()})`);
     tabsPersister.flush();
     // One last best-effort write of the global strip before the pending
     // timer dies with the renderer.

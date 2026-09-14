@@ -1,4 +1,5 @@
 import type { AgentSessionTabs } from "../../capabilities/agent.js";
+import { tabsDebug } from "./perf-time.js";
 
 /** A pending pane write: which session row to update, and with what. */
 export type SessionTabsTarget = Readonly<{
@@ -31,8 +32,13 @@ export function createSessionTabsPersister(
   const fire = (): void => {
     timer = undefined;
     const target = options.snapshot();
-    if (!target) return;
     const generation = options.generation?.() ?? null;
+    const describe = (): string =>
+      `session=${target?.sessionId} gen=${generation} savedGen=${savedGeneration} tabs=${target?.tabs?.tabs.length ?? 0} focus=${target?.tabs?.activeIndex}`;
+    if (!target) {
+      tabsDebug(`persist: skipped — no target (no active session)`);
+      return;
+    }
     // Reload guard: a browser.main restart rotates the host generation, and
     // a snapshot taken under a generation this persister has never saved
     // under describes tabs lost to that restart — not user intent. The
@@ -46,10 +52,17 @@ export function createSessionTabsPersister(
       generation !== null &&
       generation !== savedGeneration
     ) {
+      tabsDebug(
+        `persist: SUPPRESSED — generation changed since last save (${describe()})`,
+      );
       return;
     }
     const json = JSON.stringify(target.tabs);
-    if (target.sessionId === savedSessionId && json === savedJson) return;
+    if (target.sessionId === savedSessionId && json === savedJson) {
+      tabsDebug(`persist: deduped — unchanged snapshot (${describe()})`);
+      return;
+    }
+    tabsDebug(`persist: writing (${describe()})`);
     // Bookkeeping only after the save resolves, so a failed write is
     // retried by the next flush instead of being assumed persisted.
     void options
@@ -58,6 +71,7 @@ export function createSessionTabsPersister(
         savedSessionId = target.sessionId;
         savedJson = json;
         savedGeneration = generation;
+        tabsDebug(`persist: SAVED (${describe()})`);
       })
       .catch(() => undefined);
   };

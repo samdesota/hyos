@@ -1046,6 +1046,9 @@ export function createAgentStore(database: Database): AgentStore {
       return decodeSessionTabs(row.tabs);
     },
     async saveSessionTabs(sessionId, tabs) {
+      console.log(
+        `[tabs-debug] store: saveSessionTabs session=${sessionId} tabs=${tabs?.tabs.length ?? 0} focus=${tabs?.activeIndex}`,
+      );
       await database.execute(updateSessionTabsCommand, {
         sessionId,
         tabs: encodeSessionTabs(tabs),
