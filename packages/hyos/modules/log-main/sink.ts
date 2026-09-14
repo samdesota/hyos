@@ -7,6 +7,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import path from "node:path";
+import type { WebContents } from "electron";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -76,6 +77,52 @@ export function createLogSink(options: LogSinkOptions): LogSink {
   };
 
   return { path: file, log };
+}
+
+/**
+ * Route a hyos-owned view's `console-message` events into the sink. Browser
+ * tab views must never be passed here: their page logs stay out of the file.
+ * Handles both the modern event-object signature (Electron >= 35) and the
+ * legacy positional one.
+ */
+export function attachViewConsoleLogging(
+  sink: LogSink,
+  contents: WebContents,
+  source: string,
+): () => void {
+  const onConsoleMessage = (
+    event: { level?: unknown; message?: unknown },
+    legacyLevel?: number,
+    legacyMessage?: string,
+  ): void => {
+    const rawLevel = event?.level ?? legacyLevel;
+    const message = event?.message ?? legacyMessage ?? "";
+    const level = normalizeLevel(rawLevel);
+    sink.log(
+      level,
+      source,
+      typeof message === "string" ? message : String(message),
+    );
+  };
+  contents.on("console-message", onConsoleMessage);
+  return () => {
+    contents.off("console-message", onConsoleMessage);
+  };
+}
+
+const levelNames: Record<number, LogLevel> = {
+  0: "debug",
+  1: "info",
+  2: "warn",
+  3: "error",
+};
+
+function normalizeLevel(raw: unknown): LogLevel {
+  if (typeof raw === "number") return levelNames[raw] ?? "info";
+  if (raw === "verbose" || raw === "debug") return "debug";
+  if (raw === "warning") return "warn";
+  if (raw === "error") return "error";
+  return "info";
 }
 
 const lineSize = (entry: LogEntry): number => JSON.stringify(entry).length + 1;

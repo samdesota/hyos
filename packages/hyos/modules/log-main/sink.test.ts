@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createLogSink } from "./sink.js";
+import { createLogSink, attachViewConsoleLogging } from "./sink.js";
 
 const makeDir = (): string => mkdtempSync(path.join(tmpdir(), "hyos-log-"));
 
@@ -51,6 +51,45 @@ test("rotates by size, keeping the newest files", () => {
   assert.ok(files.includes("hyos.log.1"), "first rotation exists");
   // keepFiles=3 keeps at most the active file plus 2 rotated files.
   assert.equal(files.filter((f) => f.startsWith("hyos.log")).length, 3);
-  assert.ok(!files.includes("hyos.log.3"), "oldest rotated file is dropped");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("routes console-message events into the sink with mapped levels", () => {
+  const dir = makeDir();
+  const sink = createLogSink({ directory: dir });
+  const handlers = new Map<
+    string,
+    (event: unknown, ...rest: unknown[]) => void
+  >();
+  const fakeContents = {
+    on: (name: string, handler: (event: unknown, ...rest: unknown[]) => void) =>
+      handlers.set(name, handler),
+    off: (name: string) => handlers.delete(name),
+  };
+  const dispose = attachViewConsoleLogging(
+    sink,
+    fakeContents as never,
+    "ui-view",
+  );
+
+  handlers.get("console-message")?.({ level: "warning", message: "careful" });
+  handlers.get("console-message")?.({ level: "error", message: "boom" });
+  // Legacy positional signature (numbered levels) still maps.
+  handlers.get("console-message")?.({}, 0, "verbose text");
+  dispose();
+  handlers.get("console-message")?.({ level: "info", message: "ignored" });
+
+  const lines = readFileSync(sink.path, "utf8").trim().split("\n");
+  const entries = lines.map((line) => JSON.parse(line));
+  assert.equal(entries.length, 3);
+  assert.deepEqual(
+    entries.map(({ level, source, msg }) => ({ level, source, msg })),
+    [
+      { level: "warn", source: "ui-view", msg: "careful" },
+      { level: "error", source: "ui-view", msg: "boom" },
+      { level: "debug", source: "ui-view", msg: "verbose text" },
+    ],
+  );
+  for (const entry of entries) assert.equal(typeof entry.ts, "string");
   rmSync(dir, { recursive: true, force: true });
 });

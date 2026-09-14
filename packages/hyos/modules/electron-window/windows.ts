@@ -61,9 +61,6 @@ export function createElectronWindows(
   };
   alignUi();
 
-  uiView.webContents.on("console-message", (_event, _level, message) => {
-    if (message.includes("[DEBUG-boot-7f2c]")) console.log(message);
-  });
   uiView.webContents.on("did-start-loading", () =>
     console.log("[DEBUG-boot-7f2c] renderer navigation:start"),
   );
