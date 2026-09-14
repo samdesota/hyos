@@ -25,7 +25,7 @@ import type {
 import type { AgentProvider } from "./providers/index.js";
 import type { AgentStore } from "./store.js";
 import { createCommentaryWriter } from "./commentary-writer.js";
-import { perfLog, perfNow } from "../agent-renderer/perf-time.js";
+import { perfLog, perfNow } from "./perf-time.js";
 import { parsePlanBlock } from "../../capabilities/plan.js";
 
 /**

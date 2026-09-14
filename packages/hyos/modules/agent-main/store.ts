@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { hydb, type Database } from "@hyos/hydb";
-import { perfLog, perfNow } from "../agent-renderer/perf-time.js";
+import { perfLog, perfNow } from "./perf-time.js";
 import { z } from "zod";
 
 import type {

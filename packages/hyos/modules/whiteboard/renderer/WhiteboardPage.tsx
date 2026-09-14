@@ -374,13 +374,12 @@ export function createWhiteboardPage(
         // Screen deltas divide by zoom to become world deltas. Keyed store
         // path sets touch only this row: <For> re-renders just this card and
         // the whole-list copy per frame is gone.
-        const index = cardDrag.cardIndex;
+        const index = current.cardIndex;
         if (index >= cards.length || cards[index]!.id !== card.id) return;
         const scale = viewport().scale;
         const x = current.originX + dx / scale;
         const y = current.originY + dy / scale;
-        setCards(index, "x", x);
-        setCards(index, "y", y);
+        setCards(index, { x, y });
         scheduleSave();
       };
     const onCardPointerUp = (card: WhiteboardCard) => (event: PointerEvent) => {
@@ -422,7 +421,7 @@ export function createWhiteboardPage(
               transform: `translate(${viewport().x}px, ${viewport().y}px) scale(${viewport().scale})`,
             }}
           >
-            <For each={cards()}>
+            <For each={cards}>
               {(card) => (
                 <div
                   class="whiteboard-card"
@@ -485,7 +484,7 @@ export function createWhiteboardPage(
           </div>
         </div>
         <output class="whiteboard-zoom">{percent()}</output>
-        <Show when={cards().length === 0}>
+        <Show when={cards.length === 0}>
           <p class="whiteboard-hint">
             Double-click to add a card, or paste an image
           </p>

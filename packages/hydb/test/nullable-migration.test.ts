@@ -252,3 +252,33 @@ test("added tables open existing storages and accept new rows", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("ordered table migrations resume from an intermediate schema", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hydb-table-chain-"));
+  const logs = hydb.table("chain_logs", { id: id().primaryKey() });
+  const tags = hydb.table("chain_tags", { id: id().primaryKey() });
+  const notes = hydb.table("chain_notes", { id: id().primaryKey() });
+  const intermediate = hydb.schema({ logs, tags });
+  const latest = hydb.schema({ logs, tags, notes });
+  try {
+    let storage = await openNodeStorage({ directory, schema: intermediate });
+    await storage.close();
+    storage = await openNodeStorage({
+      directory,
+      schema: latest,
+      addedTableMigrations: [["chain_tags"], ["chain_notes"]],
+    });
+    const head = await storage.head();
+    await storage.commit({
+      branch: "main",
+      expectedHead: head,
+      mutations: [storageMutation.insert(notes, { id: "resumed" })],
+    });
+    const snapshot = await storage.snapshot();
+    assert.deepEqual(await snapshot.get(notes, ["resumed"]), { id: "resumed" });
+    await snapshot.close();
+    await storage.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

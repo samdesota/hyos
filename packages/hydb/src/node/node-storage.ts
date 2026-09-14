@@ -468,10 +468,22 @@ export class NodeStorageDatabase implements StorageDatabase {
     if (options.addNullableColumns && options.nullableColumnMigrations) {
       throw new TypeError("Specify only one nullable migration configuration");
     }
-    // Table additions are the newest migration: the previous schema is the
-    // current one minus those tables, and opening seeds the new tables'
-    // manifest entries (no rows to rewrite).
-    const addedTableNames = [...(options.addedTables ?? [])].sort();
+    if (options.addedTables && options.addedTableMigrations) {
+      throw new TypeError(
+        "Specify only one added-table migration configuration",
+      );
+    }
+    // Table additions follow nullable-column migrations. Each group is one
+    // historical schema step, allowing storage already upgraded through an
+    // earlier group to resume at the next one.
+    const addedTableSteps = (
+      options.addedTableMigrations ??
+      (options.addedTables ? [options.addedTables] : [])
+    ).map((names) => [...names].sort());
+    const addedTableNames = addedTableSteps.flat();
+    if (new Set(addedTableNames).size !== addedTableNames.length) {
+      throw new TypeError("Duplicate added-table migration");
+    }
     const tablesAddedFingerprint = addedTableNames.length
       ? schemaMetadata(options.schema, {}, addedTableNames).fingerprint
       : metadata.fingerprint;
@@ -512,15 +524,26 @@ export class NodeStorageDatabase implements StorageDatabase {
         return migration;
       })
       .reverse();
-    // Newest migration last: the table addition itself, chaining the
-    // pre-addition fingerprint to the full target schema.
-    if (addedTableNames.length > 0) {
+    // Add tables one historical group at a time. The target for each group
+    // is the current schema with only its later groups omitted.
+    let tableTarget = tablesAddedFingerprint;
+    for (let index = 0; index < addedTableSteps.length; index += 1) {
+      const tables = addedTableSteps[index]!;
+      if (tables.length === 0)
+        throw new TypeError("Empty added-table migration");
+      const laterTables = addedTableSteps.slice(index + 1).flat();
+      const nextTarget = schemaMetadata(
+        options.schema,
+        {},
+        laterTables,
+      ).fingerprint;
       nullableMigrations.push({
-        from: tablesAddedFingerprint,
-        to: metadata.fingerprint,
+        from: tableTarget,
+        to: nextTarget,
         columns: {},
-        tables: addedTableNames,
+        tables,
       });
+      tableTarget = nextTarget;
     }
     const dataPath = join(options.directory, "hydb.data");
     debugBoot("checkpoint:read:start");
@@ -1507,6 +1530,9 @@ export type NodeStorageOptions = Readonly<{
   /** Tables newly added to the schema since the storage was created. Opening
    * an existing storage seeds them into the manifest; no rows are rewritten. */
   addedTables?: readonly string[];
+  /** Ordered table-addition groups, oldest first. Opens any declared
+   * intermediate schema and applies only the remaining groups. */
+  addedTableMigrations?: readonly (readonly string[])[];
   cacheBytes?: number;
   maxEntries?: number;
   memory?: MemoryManager;
