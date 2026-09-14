@@ -38,6 +38,7 @@ import {
   sideTabScopeKey,
   snapshotSessionTabs,
   unadoptedHostTab,
+  adoptCreatedSideTab,
   type SessionTabPlacement,
   type SideTab,
   type SideTabScope,
@@ -502,11 +503,21 @@ export function createAppState({
     void runBrowser({ type: "create-tab" }).then((next) => {
       const tabId = next ? createdHostTabId(before, next) : null;
       if (!tabId) return;
-      setSideTabs((tabs) =>
-        tabs.some((tab) => tab.kind === "browser" && tab.tabId === tabId)
-          ? tabs
-          : [...tabs, { id: tabId, kind: "browser", tabId }],
-      );
+      setSideTabs((tabs) => adoptCreatedSideTab(tabs, tabId));
+      setActiveSideTabId(tabId);
+    });
+  };
+
+  // Opening a link from the session's markdown creates a host tab showing
+  // that url and appends it to the session's strip, focused — same lifecycle
+  // as a `+`-created tab (host presentation, reconciliation, persistence).
+  const openUrlSideTab = (url: string): void => {
+    const before = browserState();
+    setSideCollapsed(false);
+    void runBrowser({ type: "create-tab", url }).then((next) => {
+      const tabId = next ? createdHostTabId(before, next) : null;
+      if (!tabId) return;
+      setSideTabs((tabs) => adoptCreatedSideTab(tabs, tabId));
       setActiveSideTabId(tabId);
     });
   };
@@ -1218,6 +1229,7 @@ export function createAppState({
     sideActive,
     activeBrowserTab,
     openBrowserSideTab,
+    openUrlSideTab,
     closeSideTab,
     // global tabs
     globalTabs,

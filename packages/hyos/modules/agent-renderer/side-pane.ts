@@ -216,6 +216,20 @@ export function createdHostTabId(
 }
 
 /**
+ * Adopt a freshly created host browser tab in the session strip: appended at
+ * the end and idempotent — a tab the strip already shows (or an external
+ * writer beat us to) is left in place rather than duplicated.
+ */
+export function adoptCreatedSideTab(
+  tabs: readonly SideTab[],
+  tabId: TabId,
+): readonly SideTab[] {
+  return tabs.some((tab) => tab.kind === "browser" && tab.tabId === tabId)
+    ? tabs
+    : [...tabs, { id: tabId, kind: "browser", tabId }];
+}
+
+/**
  * The side tab to focus after closing one: the next tab in strip order, else
  * the previous one — mirroring the browser host's fallback activation. Null
  * when the closed tab was unknown or nothing remains.

@@ -5,6 +5,7 @@ import type { BrowserState, TabId } from "../../capabilities/browser.js";
 import { emptyBrowserState } from "./browser-tab.js";
 import {
   activeSideTab,
+  adoptCreatedSideTab,
   createdHostTabId,
   initialSideTabScope,
   isPinnedSideTab,
@@ -293,4 +294,19 @@ test("the tab a create call opened is the one absent from the previous state", (
   assert.equal(createdHostTabId(before, before), null);
   // A tab disappearing is a close, not a creation.
   assert.equal(createdHostTabId(hostState(["tab-1", "tab-2"]), before), null);
+});
+
+test("a created host tab is appended to the strip, idempotently", () => {
+  const tabs = [...pinnedSideTabs, browserSideTab("tab-1")];
+  // A freshly created tab (a link click or a `+` create) lands at the end.
+  assert.deepEqual(adoptCreatedSideTab(tabs, "tab-2"), [
+    ...tabs,
+    browserSideTab("tab-2"),
+  ]);
+  // Appending twice keeps one entry: the create-tab promise can resolve after
+  // a publish already adopted the tab, and an external adoption must win.
+  const once = adoptCreatedSideTab(tabs, "tab-2");
+  assert.equal(adoptCreatedSideTab(once, "tab-2"), once);
+  // An existing entry for the same host tab is never duplicated.
+  assert.equal(adoptCreatedSideTab(tabs, "tab-1"), tabs);
 });
