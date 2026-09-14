@@ -38,6 +38,10 @@ export const agentSessions = hydb.table(
     providerSessionId: text(),
     status: sessionStatus().notNull(),
     statusDetail: text(),
+    // The statusDetail string the user last viewed (copied on selection).
+    // Matching the live statusDetail means the outcome has been seen; a new
+    // run's different detail re-arms the unread styling.
+    seenStatusDetail: text(),
     lastError: text(),
     plan: text(),
     tabs: text(),

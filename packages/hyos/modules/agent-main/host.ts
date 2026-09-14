@@ -784,6 +784,13 @@ export function createAgentHost(options: {
       await store.renameSession(command.sessionId, command.title);
       return { type: "accepted" };
     }
+    if (command.type === "mark-session-seen") {
+      // Reads the session (validating it exists) without a running-run guard:
+      // marking the current outcome seen is safe while a turn runs.
+      await store.getSession(command.sessionId);
+      await store.markSessionSeen(command.sessionId);
+      return { type: "accepted" };
+    }
     if (command.type === "reorder-sessions") {
       // Rank rewrite, not a per-session mutation: no running-run guard is
       // needed and the sessions publish fires through watchSessions.

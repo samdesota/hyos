@@ -39,6 +39,7 @@ function sessionSummary(
     plan: null,
     status: "ready",
     statusDetail: null,
+    seenStatusDetail: null,
     lastError: null,
     archivedAt,
     createdAt: now,

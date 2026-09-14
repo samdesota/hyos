@@ -119,6 +119,11 @@ export type AgentSessionSummary = Readonly<{
   status: AgentSessionStatus;
   /** Short (3–5 word) description of the current/last run's work. */
   statusDetail: string | null;
+  /**
+   * The statusDetail the user last viewed (persisted); equal to
+   * `statusDetail` once the current outcome has been seen.
+   */
+  seenStatusDetail: string | null;
   lastError: string | null;
   archivedAt: Date | null;
   createdAt: Date;
@@ -224,6 +229,11 @@ export type AgentCommand =
   | Readonly<{ type: "cancel"; sessionId: AgentSessionId }>
   | Readonly<{ type: "interrupt"; sessionId: AgentSessionId }>
   | Readonly<{ type: "archive-session"; sessionId: AgentSessionId }>
+  | Readonly<{
+      /** Mark the session's current outcome as viewed (persisted). */
+      type: "mark-session-seen";
+      sessionId: AgentSessionId;
+    }>
   | Readonly<{ type: "unarchive-session"; sessionId: AgentSessionId }>
   | Readonly<{
       type: "rename-session";
@@ -242,7 +252,7 @@ export type AgentCommandResult =
 
 export const agentCapability = defineRemoteCapability({
   id: "agent",
-  version: 9,
+  version: 10,
   methods: {
     execute: remoteMethod<
       readonly [command: AgentCommand],

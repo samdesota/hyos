@@ -647,6 +647,20 @@ const reorderSessionsCommand = hydb.command({
   },
 });
 
+// Deliberately does not touch updatedAt: marking an outcome seen must not
+// reorder the sidebar.
+const markSessionSeenCommand = hydb.command({
+  input: z.object({
+    sessionId: z.string(),
+    seenStatusDetail: z.string().nullable(),
+  }),
+  async handler(transaction, input) {
+    await transaction.update(agentSessions, [input.sessionId], {
+      seenStatusDetail: input.seenStatusDetail,
+    });
+  },
+});
+
 const recoverSessionCommand = hydb.command({
   input: z.object({ sessionId: z.string(), error: z.string(), now: z.date() }),
   async handler(transaction, input) {
@@ -672,6 +686,7 @@ function sessionSummary(
     modelId: string;
     status: AgentSessionStatus;
     statusDetail: string | null;
+    seenStatusDetail: string | null;
     lastError: string | null;
     plan: string | null;
     archivedAt: Date | null;
@@ -691,6 +706,7 @@ function sessionSummary(
     plan: decodePlan(row.plan),
     status: row.status,
     statusDetail: row.statusDetail,
+    seenStatusDetail: row.seenStatusDetail,
     lastError: row.lastError,
     archivedAt: row.archivedAt,
     createdAt: row.createdAt,
@@ -799,6 +815,8 @@ export interface AgentStore {
    * (null rank) still sort above manually ordered ones, newest first.
    */
   reorderSessions(orderedIds: readonly string[]): Promise<void>;
+  /** Copy the session's current statusDetail into seenStatusDetail. */
+  markSessionSeen(sessionId: string): Promise<void>;
   setStatusDetail(sessionId: string, statusDetail: string): Promise<void>;
   listSessions(): Promise<AgentSessionSummary[]>;
   pageMessages(
@@ -1153,6 +1171,18 @@ export function createAgentStore(database: Database): AgentStore {
       if (orderedIds.length === 0) return;
       await database.execute(reorderSessionsCommand, {
         orderedIds: [...orderedIds],
+      });
+    },
+    async markSessionSeen(sessionId) {
+      const row = await database.fetch(
+        hydb
+          .query(agentSessions)
+          .where((session) => session.id.eq(sessionId))
+          .require(),
+      );
+      await database.execute(markSessionSeenCommand, {
+        sessionId,
+        seenStatusDetail: row.statusDetail,
       });
     },
     async setStatusDetail(sessionId, statusDetail) {

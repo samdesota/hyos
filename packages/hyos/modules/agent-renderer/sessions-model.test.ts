@@ -16,6 +16,7 @@ const summary = (
   plan: null,
   status: "ready",
   statusDetail: null,
+  seenStatusDetail: null,
   lastError: null,
   archivedAt: null,
   createdAt: new Date(0),

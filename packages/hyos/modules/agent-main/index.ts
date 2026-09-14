@@ -73,6 +73,7 @@ export = defineModule<AgentMainConfig>({
         { hyos_agent_sessions: ["tabs"] },
         { hyos_agent_sessions: ["statusDetail"] },
         { hyos_agent_sessions: ["order"] },
+        { hyos_agent_sessions: ["seenStatusDetail"] },
       ],
     });
     bootTrace("storage:open:done");
