@@ -61,10 +61,12 @@ const REASONING_EFFORTS: readonly AgentReasoningEffort[] = [
 
 /**
  * Gateway providers serving the GLM family, preferred order first. Baseten
- * leads: live probes show it honors reasoning effort and skips thinking on
- * easy prompts, while friendli ignores effort and always reasons.
+ * leads: it honors reasoning effort and skips thinking on easy prompts at the
+ * lowest cost. Zai and fireworks follow as failover — both honor effort and
+ * think far deeper at `max` on hard prompts. Friendli is excluded: it ignores
+ * effort and always reasons.
  */
-const GLM_GATEWAY_PROVIDERS = ["baseten", "friendli", "zai"] as const;
+const GLM_GATEWAY_PROVIDERS = ["baseten", "zai", "fireworks"] as const;
 
 /** DeepSeek V4 Pro is served by baseten (preferred) and deepinfra only. */
 const DEEPSEEK_V4_PRO_GATEWAY_PROVIDERS = ["baseten", "deepinfra"] as const;

@@ -221,8 +221,8 @@ test("GLM reports per-turn context usage from stream chunks", async () => {
   assert.deepEqual(requests[0].stream_options, { include_usage: true });
   assert.deepEqual(requests[0].providerOptions, {
     gateway: {
-      order: ["baseten", "friendli", "zai"],
-      only: ["baseten", "friendli", "zai"],
+      order: ["baseten", "zai", "fireworks"],
+      only: ["baseten", "zai", "fireworks"],
     },
   });
 });
@@ -230,8 +230,8 @@ test("GLM reports per-turn context usage from stream chunks", async () => {
 test("gateway models report per-model context windows and routing", async () => {
   const glmRouting = {
     gateway: {
-      order: ["baseten", "friendli", "zai"],
-      only: ["baseten", "friendli", "zai"],
+      order: ["baseten", "zai", "fireworks"],
+      only: ["baseten", "zai", "fireworks"],
     },
   };
   const deepSeekProRouting = {
