@@ -240,7 +240,7 @@ test("migration list resumes from an intermediate table-addition schema", async 
   }
 });
 
-test("migration list cannot be combined with legacy options and rejects unsupported steps", async () => {
+test("migration list cannot be combined with legacy options", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hydb-migration-opts-"));
   try {
     const storage = await openNodeStorage({
@@ -256,25 +256,6 @@ test("migration list cannot be combined with legacy options and rejects unsuppor
         addNullableColumns: { mopen_rows: ["archivedAt"] },
       }),
       /not both/,
-    );
-    await assert.rejects(
-      openNodeStorage({
-        directory,
-        schema: latestSchema,
-        migrations: [
-          defineMigration({
-            id: "0001-data",
-            steps: [
-              ddl.addColumn("mopen_rows", "archivedAt", timestamp()),
-              {
-                kind: "data",
-                run: async () => undefined,
-              },
-            ],
-          }),
-        ],
-      }),
-      /data steps/,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

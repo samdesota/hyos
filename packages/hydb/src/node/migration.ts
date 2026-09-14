@@ -587,3 +587,67 @@ export function deriveMigrationFingerprints(
   });
   return nodes.reverse();
 }
+
+/** One executable migration step with its before/after schema fingerprints. */
+export type PlannedStep =
+  | Readonly<{
+      kind: "schema";
+      op: SchemaOp;
+      from: string;
+      to: string;
+    }>
+  | Readonly<{
+      kind: "data";
+      run: MigrationDataStep;
+      /** Schema fingerprint the data step runs against (and keeps). */
+      fingerprint: string;
+    }>;
+
+export type MigrationPlan = Readonly<{
+  /** Fingerprint of the schema the first step upgrades from. */
+  base: string;
+  /** Fingerprint of the schema after every step has been applied. */
+  final: string;
+  steps: readonly PlannedStep[];
+}>;
+
+/**
+ * Flattens an ordered migration list into executable steps, computing the
+ * schema fingerprint after every schema operation. The result drives the
+ * per-step commit loop in node storage: each step becomes exactly one commit
+ * per branch, and the recorded fingerprints let a crashed run resume at the
+ * exact step that never committed.
+ */
+export function buildMigrationPlan(
+  schema: AnySchema,
+  migrations: readonly Migration[],
+): MigrationPlan {
+  const nodes = deriveMigrationFingerprints(schema, migrations);
+  let description = nodes[0]!.description;
+  const steps: PlannedStep[] = [];
+  for (const migration of migrations) {
+    for (const step of migration.steps) {
+      if (isDataStep(step)) {
+        steps.push({
+          kind: "data",
+          run: step.run,
+          fingerprint: schemaFingerprint(description),
+        });
+        continue;
+      }
+      const next = applySchemaChanges(description, [step]);
+      steps.push({
+        kind: "schema",
+        op: step,
+        from: schemaFingerprint(description),
+        to: schemaFingerprint(next),
+      });
+      description = next;
+    }
+  }
+  return Object.freeze({
+    base: nodes[0]!.fingerprint,
+    final: nodes[nodes.length - 1]!.fingerprint,
+    steps: Object.freeze(steps),
+  });
+}
