@@ -460,7 +460,7 @@ export const agentStyles = String.raw`
   .composer .send.secondary:disabled { opacity: .55; cursor: default; }
   .side-pane {
     position: relative; grid-column: 2; grid-row: 1 / -1; display: flex; flex-direction: column; min-width: 0; min-height: 0;
-    border-left: 1px solid #30312d; background: #1d1e1b;
+    border-left: 1px solid #30312d; background: transparent;
   }
   .side-tabs {
     display: flex; align-items: center; gap: 6px;
