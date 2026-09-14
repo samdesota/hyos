@@ -76,7 +76,12 @@ const PlanPanel: Component<{
   // completed tasks are hidden behind a fade-out with a "Show all" button.
   const doneIndices = () =>
     props.plan.tasks.flatMap((task, index) => (task.done ? [index] : []));
-  const hiddenCount = () => Math.max(0, doneIndices().length - 2);
+  // Once every task is done, always show the full list.
+  const allDone = () =>
+    props.plan.tasks.length > 0 &&
+    doneIndices().length === props.plan.tasks.length;
+  const hiddenCount = () =>
+    allDone() ? 0 : Math.max(0, doneIndices().length - 2);
   const isHidden = (index: number) =>
     !expanded() && doneIndices().slice(0, hiddenCount()).includes(index);
   return (
