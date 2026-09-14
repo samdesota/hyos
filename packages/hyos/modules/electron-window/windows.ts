@@ -61,16 +61,16 @@ export function createElectronWindows(
   };
   alignUi();
 
+  const bootTrace = (message: string) => {
+    if (process.env.HYOS_BOOT_TRACE === "1")
+      console.log(`[DEBUG-boot-7f2c] renderer ${message}`);
+  };
   uiView.webContents.on("did-start-loading", () =>
-    console.log("[DEBUG-boot-7f2c] renderer navigation:start"),
+    bootTrace("navigation:start"),
   );
-  uiView.webContents.on("did-finish-load", () =>
-    console.log("[DEBUG-boot-7f2c] renderer navigation:done"),
-  );
+  uiView.webContents.on("did-finish-load", () => bootTrace("navigation:done"));
   uiView.webContents.on("render-process-gone", (_event, details) =>
-    console.log(
-      `[DEBUG-boot-7f2c] renderer process:gone ${details.reason} exit=${details.exitCode}`,
-    ),
+    bootTrace(`process:gone ${details.reason} exit=${details.exitCode}`),
   );
   void uiView.webContents.loadFile(path.join(root, "renderer/index.html"));
   if (showWindow) {

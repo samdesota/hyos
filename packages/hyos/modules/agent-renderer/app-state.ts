@@ -24,7 +24,13 @@ import type {
   KeybindingClient,
 } from "./client.js";
 import { createAutoScrollController } from "./auto-scroll.js";
-import { perfLog, perfNow, tabsDebug, timeAsync } from "./perf-time.js";
+import {
+  bootDebug,
+  perfLog,
+  perfNow,
+  tabsDebug,
+  timeAsync,
+} from "./perf-time.js";
 import { emptyBrowserState } from "./browser-tab.js";
 import {
   activeSideTab,
@@ -412,8 +418,8 @@ export function createAppState({
       browserPublishCount <= 4 ||
       (browserPublishCount & (browserPublishCount - 1)) === 0
     )
-      console.log(
-        `[DEBUG-boot-7f2c] agent-renderer browser-state count=${browserPublishCount} tabs=${next.tabs.length}`,
+      bootDebug(
+        `agent-renderer browser-state count=${browserPublishCount} tabs=${next.tabs.length}`,
       );
     setBrowserState(next);
     setSideTabs((tabs) => {
@@ -432,7 +438,7 @@ export function createAppState({
   const bootBrowserSnapshot: Promise<void> = browserClient
     .execute({ type: "snapshot" })
     .then((state) => {
-      console.log("[DEBUG-boot-7f2c] agent-renderer browser-snapshot:resolved");
+      bootDebug("agent-renderer browser-snapshot:resolved");
       acceptBrowserState(state);
     })
     // A boot-time failure (host unloading) shows up in the browser tab
@@ -681,19 +687,27 @@ export function createAppState({
           ({ id, url }) => !claimed.has(id) && url === placement.url,
         );
         if (live) {
+          tabsDebug(`resolve: url match ${placement.url} -> ${live.id}`);
           tabId = live.id;
         } else {
           const before = browserState();
+          tabsDebug(`resolve: create-tab ${placement.url}`);
           const next = await runBrowser({
             type: "create-tab",
             url: placement.url,
           });
           tabId = next ? createdHostTabId(before, next) : null;
+          tabsDebug(
+            `resolve: created ${placement.url} -> ${tabId ?? "FAILED"}`,
+          );
           if (tabId) created.push(tabId);
         }
       }
       if (tabId) claimed.add(tabId);
       if (isStale()) {
+        tabsDebug(
+          `resolve: stale mid-loop, closing orphans [${created.join(",")}]`,
+        );
         for (const orphan of created) {
           void runBrowser({ type: "close-tab", tabId: orphan });
         }
@@ -722,9 +736,15 @@ export function createAppState({
       const additions = tabIds
         .filter((tabId): tabId is TabId => tabId !== null && !shown.has(tabId))
         .map((tabId) => ({ id: tabId, kind: "browser" as const, tabId }));
+      tabsDebug(
+        `adopt: shown=[${[...shown].join(",")}] additions=[${additions
+          .map((a) => a.tabId)
+          .join(",")}] focus=${focusedId}`,
+      );
       return additions.length === 0 ? tabs : [...tabs, ...additions];
     });
     tabsRecorder.resolved(sessionId, tabIds);
+    tabsDebug(`adopt: resolved writeback [${tabIds.join(",")}]`);
     if (focusedId) setActiveSideTabId(focusedId);
   };
 
@@ -810,6 +830,9 @@ export function createAppState({
   const projectSession = (sessionId: string): Promise<void> => {
     const inFlight = projectInFlight.get(sessionId);
     if (inFlight) {
+      tabsDebug(
+        `project: re-entry while in flight session=${sessionId} queued=${projectQueued.has(sessionId)}`,
+      );
       if (!projectQueued.has(sessionId)) {
         projectQueued.add(sessionId);
         void inFlight
@@ -1188,8 +1211,8 @@ export function createAppState({
 
   void Promise.all([client.providers(), client.sessions()])
     .then(([nextProviders, state]) => {
-      console.log(
-        `[DEBUG-boot-7f2c] agent-renderer sessions:resolved providers=${nextProviders.length} sessions=${state.sessions.length}`,
+      bootDebug(
+        `agent-renderer sessions:resolved providers=${nextProviders.length} sessions=${state.sessions.length}`,
       );
       setProviders(nextProviders);
       acceptSessions(state);

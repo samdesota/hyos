@@ -878,14 +878,18 @@ export function createAgentHost(options: {
     replaceGlobalTabs: (tabs) => store.replaceGlobalTabs(tabs),
   };
 
+  const BOOT_TRACE = process.env.HYOS_BOOT_TRACE === "1";
+  const bootTrace = (event: string) => {
+    if (BOOT_TRACE) console.log(`[DEBUG-boot-7f2c] agent-host ${event}`);
+  };
   return {
     provider,
     async start() {
-      console.log("[DEBUG-boot-7f2c] agent-host recover:start");
+      bootTrace("recover:start");
       await store.recoverInterruptedSessions();
-      console.log("[DEBUG-boot-7f2c] agent-host recover:done");
+      bootTrace("recover:done");
       unsubscribeSessions = store.watchSessions(publishSessions);
-      console.log("[DEBUG-boot-7f2c] agent-host subscription:installed");
+      bootTrace("subscription:installed");
       // Forward persisted strip changes as capability events — the
       // intent-carrying signal (an agent opened a tab) the renderer
       // subscribes to instead of diffing browser publishes.
@@ -900,7 +904,7 @@ export function createAgentHost(options: {
         remote.publish(agentCapability, "globalTabs", undefined);
       });
       publishSessions();
-      console.log("[DEBUG-boot-7f2c] agent-host initial-publish:scheduled");
+      bootTrace("initial-publish:scheduled");
     },
     async dispose() {
       accepting = false;

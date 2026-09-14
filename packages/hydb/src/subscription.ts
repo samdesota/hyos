@@ -47,13 +47,16 @@ type BufferedCommit = Readonly<{
   reject: (error: unknown) => void;
 }>;
 
-// Always-on bootstrap instrumentation: identifies which subscription is
-// bootstrapping, how long each scope load takes, and how many rows each
-// read — the composition behind a slow post-restart first write.
+// Bootstrap instrumentation: identifies which subscription is bootstrapping,
+// how long each scope load takes, and how many rows each read — the
+// composition behind a slow post-restart first write. Gated by
+// HYOS_BOOT_TRACE=1.
+const BOOT_TRACE = process.env.HYOS_BOOT_TRACE === "1";
 let subscriptionCounter = 0;
 const bootstrapTraceNow = (): number =>
   globalThis.performance?.now?.() ?? Date.now();
 const bootstrapTrace = (message: string): void => {
+  if (!BOOT_TRACE) return;
   console.log(`[hydb-bootstrap] ${message}`);
 };
 
@@ -407,9 +410,7 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
         `sub#${this.#id} apply(${commit.sequence}): ${Math.round(
           bootstrapTraceNow() - applyStartedAt,
         )}ms [${scopeTimings.join(", ")}]` +
-          (demandsMs > 0
-            ? ` settle-demands: ${Math.round(demandsMs)}ms`
-            : ""),
+          (demandsMs > 0 ? ` settle-demands: ${Math.round(demandsMs)}ms` : ""),
       );
     }
     this.#lastSequence = commit.sequence;

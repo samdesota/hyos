@@ -6,6 +6,7 @@ import type { BrowserViewModule } from "../browser-view/types.js";
 import type { WhiteboardViewModule } from "../whiteboard/renderer/types.js";
 import type { AgentClient, KeybindingClient } from "./client.js";
 import { agentStyles } from "./styles.js";
+import { bootDebug } from "./perf-time.js";
 import { createAppState } from "./app-state.js";
 import { GlobalTabPage } from "./GlobalTabPage.js";
 import { NewSessionPage } from "./NewSessionPage.js";
@@ -23,7 +24,7 @@ type AgentAppProps = Readonly<{
 }>;
 
 export const AgentApp: Component<AgentAppProps> = (props) => {
-  console.log("[DEBUG-boot-7f2c] agent-renderer component:construct");
+  bootDebug("agent-renderer component:construct");
   const navigate = useNavigate();
   const location = useLocation();
   let app!: ReturnType<typeof createAppState>;
