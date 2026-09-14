@@ -29,19 +29,15 @@ import { emptyBrowserState } from "./browser-tab.js";
 import {
   activeSideTab,
   createdHostTabId,
-  initialSideTabScope,
   isPinnedSideTab,
   neighborSideTabId,
   pinnedSideTabs,
   reconcileSideTabs,
   restoreSessionTabs,
-  scopeBrowserTabIds,
-  sideTabScopeKey,
   unadoptedHostTab,
   adoptCreatedSideTab,
   type SessionTabPlacement,
   type SideTab,
-  type SideTabScope,
 } from "./side-pane.js";
 import {
   activeGlobalTab,
@@ -330,25 +326,14 @@ export function createAppState({
     tabsRecorder.opened(sessionId, tabId, url);
   };
 
-  // Each session owns its strip: switching sessions stashes the outgoing
-  // strip and adopts the incoming one, so browser tabs are private to a
-  // session while their pages keep running in the host in the background.
-  const sideTabScopes = new Map<string, SideTabScope>();
-  const swapSideTabScope = (incomingId: string | null): void => {
-    sideTabScopes.set(sideTabScopeKey(activeId()), {
-      tabs: sideTabs(),
-      activeId: activeSideTabId(),
-    });
-    const stashed = sideTabScopes.get(sideTabScopeKey(incomingId));
-    sideTabScopes.delete(sideTabScopeKey(incomingId));
-    // Host tabs may have closed while this session was inactive; dropping
-    // them here keeps a re-adopted strip from showing dead tabs.
-    const tabs = reconcileSideTabs(
-      stashed?.tabs ?? initialSideTabScope().tabs,
-      browserState(),
-    );
-    setSideTabs(tabs);
-    setActiveSideTabId(stashed?.activeId ?? "patches");
+  // Selecting a session (or the new-session view) resets the pane to its
+  // pinned tab; the projection then rebuilds the strip from the session's
+  // persisted record — the record replaces the old in-memory scope stash,
+  // while the session's host pages keep running in the background and are
+  // re-adopted by id on the next projection.
+  const resetSideTabs = (): void => {
+    setSideTabs(pinnedSideTabs);
+    setActiveSideTabId("patches");
   };
 
   // Scroll containers live in the view layer; the feed registers them so
@@ -893,7 +878,7 @@ export function createAppState({
     let feedOpenDone = 0;
     const generation = ++feedGeneration;
     closeFeed();
-    swapSideTabScope(sessionId);
+    resetSideTabs();
     setActiveId(sessionId);
     navigateToSession(sessionId);
     setPrompt("");
@@ -908,7 +893,7 @@ export function createAppState({
     // record — including a re-select of the session already active, which
     // simply re-runs the (idempotent, appending-only) projection.
     tabsDebug(
-      `select: session=${sessionId} wasActive=${sessionId === activeId()} scoped=${sideTabScopes.has(sideTabScopeKey(sessionId))}`,
+      `select: session=${sessionId} wasActive=${sessionId === activeId()}`,
     );
     void timeAsync(`session-open:tab-restore(${sessionId})`, () =>
       projectSession(sessionId),
@@ -942,7 +927,7 @@ export function createAppState({
   const newSession = (): void => {
     feedGeneration += 1;
     closeFeed();
-    swapSideTabScope(null);
+    resetSideTabs();
     setActiveId(null);
     navigateToSession(null);
     setMessages([]);
@@ -1027,18 +1012,28 @@ export function createAppState({
   // Archiving a session retires its browser tabs for real: the host pages
   // close (the strip × stays for closing tabs one at a time while the
   // session is active), and an unarchive later starts from a clean strip.
-  const closeSessionBrowserTabs = (sessionId: string): void => {
-    const active = activeId() === sessionId;
-    const scope = active
-      ? { tabs: sideTabs(), activeId: activeSideTabId() }
-      : sideTabScopes.get(sideTabScopeKey(sessionId));
-    sideTabScopes.delete(sideTabScopeKey(sessionId));
-    if (!scope) return;
-    if (active) {
+  const closeSessionBrowserTabs = async (sessionId: string): Promise<void> => {
+    let tabIds: readonly TabId[] = [];
+    if (activeId() === sessionId) {
+      tabIds = sideTabs().flatMap((tab) =>
+        tab.kind === "browser" ? [tab.tabId] : [],
+      );
       setSideTabs(pinnedSideTabs);
       setActiveSideTabId("patches");
+    } else {
+      // The session is not shown, so its strip lives only in the persisted
+      // record; close the host tabs its entries still name.
+      try {
+        const saved = await client.sessionTabs(sessionId);
+        const known = new Set(browserState().tabs.map(({ id }) => id));
+        tabIds = (saved?.tabs ?? []).flatMap((tab) =>
+          known.has(tab.tabId as TabId) ? [tab.tabId as TabId] : [],
+        );
+      } catch {
+        return; // background pane state; leave the pages untouched
+      }
     }
-    for (const tabId of scopeBrowserTabIds(scope)) {
+    for (const tabId of tabIds) {
       void runBrowser({ type: "close-tab", tabId });
     }
     // Archived sessions start from a clean strip after unarchive, so the
@@ -1059,7 +1054,7 @@ export function createAppState({
       });
       // Only after the archive succeeded, so a failed request leaves the
       // session and its pages untouched.
-      if (archived) closeSessionBrowserTabs(sessionId);
+      if (archived) void closeSessionBrowserTabs(sessionId);
     } catch (value) {
       showError(value);
     }

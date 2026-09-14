@@ -83,37 +83,6 @@ export function reconcileSideTabs(
 }
 
 /**
- * A session's private side-pane state: the strip's tabs and the focused tab
- * id. Host browser tabs are global, but each session's strip only shows the
- * host tabs it adopted, so switching sessions swaps the pane — releasing the
- * outgoing session's presentations — while its pages keep running in the
- * host for the session to re-adopt later.
- */
-export type SideTabScope = Readonly<{
-  tabs: readonly SideTab[];
-  activeId: string | null;
-}>;
-
-/** Pane scope key while no session exists yet (the new-session view). */
-export const NEW_SESSION_SCOPE_KEY = "~new-session";
-
-export function sideTabScopeKey(sessionId: string | null): string {
-  return sessionId ?? NEW_SESSION_SCOPE_KEY;
-}
-
-/** The strip a session starts with: only the pinned Patches tab. */
-export function initialSideTabScope(): SideTabScope {
-  return { tabs: pinnedSideTabs, activeId: "patches" };
-}
-
-/** The host browser tab ids a scope's strip adopted. */
-export function scopeBrowserTabIds(scope: SideTabScope): TabId[] {
-  return scope.tabs.flatMap((tab) =>
-    tab.kind === "browser" ? [tab.tabId] : [],
-  );
-}
-
-/**
  * One restored browser tab resolved against the live host state: adopt the
  * persisted host tab when it is still alive and still shows the recorded
  * url, else reuse any unclaimed live tab on that url, else open fresh.
@@ -135,8 +104,8 @@ export type SessionTabsRestore = Readonly<{
  * is still alive and still shows the recorded url — the exact, O(1) intent —
  * while a stale id (host restart, id reuse) falls back to the first
  * unclaimed live tab on the same url, and only urls with no live match open
- * fresh. Host tabs are global and keep running across scope swaps, so
- * restoring after a restart must not duplicate pages that are still open. A
+ * fresh. Host tabs are global and keep running while other sessions are
+ * shown, so restoring after a restart must not duplicate pages still open. A
  * focus that cannot be honored — no saved tabs, or an index out of range —
  * restores as -1, letting the pane fall back to its pinned tab instead of
  * inventing a selection.

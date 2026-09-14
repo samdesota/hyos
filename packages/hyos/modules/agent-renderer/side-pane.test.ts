@@ -7,20 +7,15 @@ import {
   activeSideTab,
   adoptCreatedSideTab,
   createdHostTabId,
-  initialSideTabScope,
   isPinnedSideTab,
   neighborSideTabId,
-  NEW_SESSION_SCOPE_KEY,
   pinnedSideTabs,
   reconcileSideTabs,
   restoreSessionTabs,
-  scopeBrowserTabIds,
   sideTabDescriptors,
   sideTabLabel,
-  sideTabScopeKey,
   unadoptedHostTab,
   type SideTab,
-  type SideTabScope,
 } from "./side-pane.js";
 
 const browserSideTab = (tabId: TabId): SideTab => ({
@@ -121,39 +116,6 @@ test("browser strip tabs are labelled by their page title, with a fallback", () 
     "tab-1",
   );
   assert.equal(sideTabLabel(browserSideTab("tab-9"), hostState([])), "Browser");
-});
-
-test("a session scope keys off its id, with a key for the new-session view", () => {
-  assert.equal(sideTabScopeKey("session-1"), "session-1");
-  assert.equal(sideTabScopeKey(null), NEW_SESSION_SCOPE_KEY);
-});
-
-test("a fresh scope shows only the pinned patches tab", () => {
-  const scope = initialSideTabScope();
-  assert.deepEqual(scope, { tabs: pinnedSideTabs, activeId: "patches" });
-  assert.deepEqual(scopeBrowserTabIds(scope), []);
-});
-
-test("a scope's adopted host tab ids are exactly its browser tabs", () => {
-  const scope: SideTabScope = {
-    tabs: [...pinnedSideTabs, browserSideTab("tab-1"), browserSideTab("tab-2")],
-    activeId: "tab-2",
-  };
-  assert.deepEqual(scopeBrowserTabIds(scope), ["tab-1", "tab-2"]);
-});
-
-test("adopting a stashed scope drops host tabs closed while the session was inactive", () => {
-  const stashed: SideTabScope = {
-    tabs: [...pinnedSideTabs, browserSideTab("tab-1"), browserSideTab("tab-2")],
-    activeId: "tab-2",
-  };
-  // tab-2 was closed from another session while this one was inactive.
-  const tabs = reconcileSideTabs(stashed.tabs, hostState(["tab-1"]));
-  // The stale focused id falls back to the pinned tab instead of blanking.
-  assert.equal(activeSideTab(tabs, stashed.activeId)?.id, "patches");
-  assert.deepEqual(scopeBrowserTabIds({ tabs, activeId: stashed.activeId }), [
-    "tab-1",
-  ]);
 });
 
 test("restoring adopts the persisted host tab by id, verified against its url", () => {

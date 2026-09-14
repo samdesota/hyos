@@ -18,12 +18,11 @@ export function createSessionTabsRecorder(
     load: (sessionId: string) => Promise<AgentSessionTabs | null>;
     save: (sessionId: string, tabs: AgentSessionTabs | null) => Promise<void>;
     /**
-     * Browser entries the pane currently shows for `sessionId`. Transitional
-     * (removed with the scope stash): a delta composes onto the loaded
-     * record merged with what is on screen, so an empty record this renderer
-     * did not cause — a legacy wipe, a writer we never restored from —
-     * cannot erase visible tabs from durability. Visible entries heal stale
-     * record ids by url and append genuinely new ones.
+     * Browser entries the pane currently shows for `sessionId`. A delta
+     * composes onto the loaded record merged with what is on screen, so an
+     * empty record this renderer did not cause — a legacy wipe, a writer we
+     * never restored from — cannot erase visible tabs from durability.
+     * Visible entries heal stale record ids by url and append new ones.
      */
     visibleTabs: (sessionId: string) => readonly AgentSessionTab[];
   }>,
@@ -76,24 +75,13 @@ export function createSessionTabsRecorder(
         JSON.stringify(merged) !==
         JSON.stringify(saved ?? { tabs: [], activeIndex: -1 });
       const mutated = mutate(merged);
-      // An emptied strip clears the row; a no-op delta on an unmerged record
-      // writes nothing.
+      // An emptied strip clears the row; a no-op delta writes nothing (the
+      // store also suppresses unchanged writes, so our own writes echo back
+      // as nothing rather than as strip events to fight).
       const next =
         mutated ?? (mergedChanged && tabs.length > 0 ? merged : null);
-      if (!next) {
-        if (mutated === null && !mergedChanged)
-          tabsDebug(
-            `record: deduped — ${label} (${describe(sessionId, merged)})`,
-          );
-        return;
-      }
+      if (!next) return;
       const toSave = next.tabs.length === 0 ? null : next;
-      if (toSave && JSON.stringify(toSave) === JSON.stringify(saved)) {
-        tabsDebug(
-          `record: deduped — ${label} (${describe(sessionId, toSave)})`,
-        );
-        return;
-      }
       try {
         await options.save(sessionId, toSave);
         tabsDebug(`record: SAVED ${label} (${describe(sessionId, toSave)})`);
