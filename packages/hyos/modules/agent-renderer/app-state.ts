@@ -739,7 +739,7 @@ export function createAppState({
   // one supersedes it or its session is no longer shown; the tabs it opened
   // in the meantime are closed again.
   let projectToken = 0;
-  const projectSession = async (sessionId: string): Promise<void> => {
+  const runProject = async (sessionId: string): Promise<void> => {
     const token = ++projectToken;
     const isStale = (): boolean =>
       token !== projectToken || sessionId !== activeId();
@@ -795,6 +795,37 @@ export function createAppState({
       tabIds,
       activeIndex >= 0 ? (tabIds[activeIndex] ?? null) : null,
     );
+  };
+  // Concurrent re-entry guard, per session: a selection and an external
+  // strip event can both ask for the same session while its projection is
+  // still mid-flight (between record fetch and tab creation). Two
+  // overlapping projections would each see the persisted ids missing and
+  // both open the tabs — a duplicate burst. A re-entrant call therefore
+  // never starts a second concurrent run: if one is in flight it queues
+  // exactly one trailing re-run, so the (idempotent) projection still
+  // executes once more against whatever the record looks like after the
+  // in-flight pass settles.
+  const projectInFlight = new Map<string, Promise<void>>();
+  const projectQueued = new Set<string>();
+  const projectSession = (sessionId: string): Promise<void> => {
+    const inFlight = projectInFlight.get(sessionId);
+    if (inFlight) {
+      if (!projectQueued.has(sessionId)) {
+        projectQueued.add(sessionId);
+        void inFlight
+          .catch(() => undefined)
+          .then(() => {
+            projectQueued.delete(sessionId);
+            if (sessionId === activeId()) return projectSession(sessionId);
+          });
+      }
+      return inFlight;
+    }
+    const run = runProject(sessionId).finally(() =>
+      projectInFlight.delete(sessionId),
+    );
+    projectInFlight.set(sessionId, run);
+    return run;
   };
   const unsubscribeSessionTabs = client.subscribeSessionTabs(
     ({ sessionId, tabs }) => {
