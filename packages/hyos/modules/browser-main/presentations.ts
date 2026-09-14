@@ -30,13 +30,20 @@ export class BrowserPresentations {
   private modalOverlay = false;
 
   private applyUiOrder(): void {
-    if (this.baseWindow.isDestroyed() || this.uiView.webContents.isDestroyed()) {
+    if (
+      this.baseWindow.isDestroyed() ||
+      this.uiView.webContents.isDestroyed()
+    ) {
       return;
     }
     const contentView = this.baseWindow.contentView;
+    // Removing a view that holds keyboard focus drops it to the topmost
+    // remaining view (a browser tab); re-apply it to the UI view afterwards.
+    const uiHadFocus = this.uiView.webContents.isFocused();
     contentView.removeChildView(this.uiView);
     if (this.modalOverlay) contentView.addChildView(this.uiView);
     else contentView.addChildView(this.uiView, 0);
+    if (uiHadFocus) this.uiView.webContents.focus();
   }
 
   visibleBounds(): BrowserBounds[] {
