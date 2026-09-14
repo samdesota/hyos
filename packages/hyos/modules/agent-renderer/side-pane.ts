@@ -83,6 +83,83 @@ export function reconcileSideTabs(
 }
 
 /**
+ * Identity-safe form of a tab url: origin + path plus every query param
+ * except the per-navigation Cloudflare-challenge tokens (`__cf_chl_*`),
+ * which change on every challenged navigation. Two urls equal under this
+ * normalization are the same page even when one is mid-challenge.
+ */
+export function normalizeTabUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.forEach((value, key) => {
+      if (key.startsWith("__cf_chl")) parsed.searchParams.delete(key);
+    });
+    const query = parsed.searchParams.toString();
+    return `${parsed.origin}${parsed.pathname}${query ? `?${query}` : ""}`;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Cross-projection create ledger for session restore. A `create-tab` is
+ * async, and a projection re-run (or another session's projection) can
+ * start while one is in flight; without a ledger each runner sees "no live
+ * tab for this url" and opens the page again — the duplicate burst. The
+ * ledger makes creation single-flight per normalized url and remembers the
+ * tab each create produced, so a later projection adopts the tab we already
+ * opened instead of creating its own copy.
+ */
+/** Whether two urls name the same page once challenge tokens are stripped. */
+export const urlMatches = (a: string, b: string): boolean =>
+  normalizeTabUrl(a) === normalizeTabUrl(b);
+
+export class TabCreateLedger {
+  private readonly inFlight = new Map<string, Promise<TabId | null>>();
+  private readonly created = new Map<string, TabId>();
+
+  /**
+   * The tab this ledger already produced for the url, if any. Cleared
+   * externally when the host tab is closed (a later create must then open
+   * the page fresh).
+   */
+  createdFor(url: string): TabId | null {
+    return this.created.get(normalizeTabUrl(url)) ?? null;
+  }
+
+  /** Forget a tab the ledger created — its host tab is gone. */
+  forget(tabId: TabId): void {
+    for (const [key, created] of this.created) {
+      if (created === tabId) this.created.delete(key);
+    }
+  }
+
+  /**
+   * Run a create for the url at most once at a time: a concurrent call for
+   * the same page joins the in-flight promise instead of issuing its own
+   * `create-tab`, and the produced tab id is remembered for later lookups.
+   */
+  createOnce(
+    url: string,
+    create: () => Promise<TabId | null>,
+  ): Promise<TabId | null> {
+    const key = normalizeTabUrl(url);
+    const running = this.inFlight.get(key);
+    if (running) return running;
+    const promise = create()
+      .then((tabId) => {
+        if (tabId) this.created.set(key, tabId);
+        return tabId;
+      })
+      .finally(() => {
+        if (this.inFlight.get(key) === promise) this.inFlight.delete(key);
+      });
+    this.inFlight.set(key, promise);
+    return promise;
+  }
+}
+
+/**
  * One restored browser tab resolved against the live host state: adopt the
  * persisted host tab whenever its id is still alive (ids are UUIDs, unique
  * across host restarts, so a live id is the recorded page's tab whatever url
@@ -125,7 +202,9 @@ export function restoreSessionTabs(
     );
     const hostTab =
       byId ??
-      state.tabs.find(({ id, url }) => !claimed.has(id) && url === tab.url);
+      state.tabs.find(
+        ({ id, url }) => !claimed.has(id) && urlMatches(url, tab.url),
+      );
     if (!hostTab) return { kind: "create", url: tab.url };
     claimed.add(hostTab.id);
     return { kind: "reuse", tabId: hostTab.id, url: tab.url };

@@ -34,7 +34,9 @@ import {
 import { emptyBrowserState } from "./browser-tab.js";
 import {
   activeSideTab,
+  TabCreateLedger,
   createdHostTabId,
+  urlMatches,
   isPinnedSideTab,
   neighborSideTabId,
   pinnedSideTabs,
@@ -534,6 +536,7 @@ export function createAppState({
     if (tab.kind === "browser") {
       const sessionId = activeId();
       if (sessionId) tabsRecorder.closed(sessionId, tab.tabId);
+      createLedger.forget(tab.tabId);
       void runBrowser({ type: "close-tab", tabId: tab.tabId });
     }
   };
@@ -665,6 +668,12 @@ export function createAppState({
     feed = undefined;
   };
 
+  // Cross-projection create ledger: a create-tab is async and projections
+  // re-run on record events, so without this each overlapping pass would
+  // open the same page again. Single-flight per normalized url, and the
+  // produced tab is remembered so later passes adopt it instead of copying.
+  const createLedger = new TabCreateLedger();
+
   // Resolve saved strip placements against the live host state: reuse tabs
   // that already show the url — another surface (the agent's own create-tab,
   // or an earlier placement) may have opened it after the placements were
@@ -683,20 +692,32 @@ export function createAppState({
       if (placement.kind === "reuse") {
         tabId = placement.tabId;
       } else {
+        const remembered = createLedger.createdFor(placement.url);
         const live = browserState().tabs.find(
-          ({ id, url }) => !claimed.has(id) && url === placement.url,
+          ({ id, url }) =>
+            !claimed.has(id) &&
+            (id === remembered || urlMatches(url, placement.url)),
         );
         if (live) {
           tabsDebug(`resolve: url match ${placement.url} -> ${live.id}`);
           tabId = live.id;
+        } else if (remembered) {
+          // A previous pass already created this page and its tab has not
+          // surfaced in the host snapshot yet — pending, not missing.
+          tabsDebug(
+            `resolve: pending create ${placement.url} -> ${remembered}`,
+          );
+          tabId = remembered;
         } else {
-          const before = browserState();
           tabsDebug(`resolve: create-tab ${placement.url}`);
-          const next = await runBrowser({
-            type: "create-tab",
-            url: placement.url,
+          tabId = await createLedger.createOnce(placement.url, async () => {
+            const before = browserState();
+            const next = await runBrowser({
+              type: "create-tab",
+              url: placement.url,
+            });
+            return next ? createdHostTabId(before, next) : null;
           });
-          tabId = next ? createdHostTabId(before, next) : null;
           tabsDebug(
             `resolve: created ${placement.url} -> ${tabId ?? "FAILED"}`,
           );

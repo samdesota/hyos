@@ -4,6 +4,7 @@ import test from "node:test";
 import type { BrowserState, TabId } from "../../capabilities/browser.js";
 import { emptyBrowserState } from "./browser-tab.js";
 import {
+  TabCreateLedger,
   activeSideTab,
   adoptCreatedSideTab,
   createdHostTabId,
@@ -11,8 +12,10 @@ import {
   neighborSideTabId,
   pinnedSideTabs,
   reconcileSideTabs,
+  normalizeTabUrl,
   restoreSessionTabs,
   sideTabDescriptors,
+  urlMatches,
   sideTabLabel,
   unadoptedHostTab,
   type SideTab,
@@ -24,20 +27,23 @@ const browserSideTab = (tabId: TabId): SideTab => ({
   tabId,
 });
 
-function hostState(tabIds: TabId[]): BrowserState {
+function hostState(
+  tabIds: TabId[],
+  tabs: BrowserState["tabs"] = tabIds.map((id) => ({
+    id,
+    url: `https://${id}.example/`,
+    title: id,
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    error: null,
+  })),
+): BrowserState {
   return {
     generation: 1,
     sequence: 1,
     activeTabId: tabIds[0] ?? null,
-    tabs: tabIds.map((id) => ({
-      id,
-      url: `https://${id}.example/`,
-      title: id,
-      loading: false,
-      canGoBack: false,
-      canGoForward: false,
-      error: null,
-    })),
+    tabs,
   };
 }
 
@@ -299,4 +305,123 @@ test("a created host tab is appended to the strip, idempotently", () => {
   assert.equal(adoptCreatedSideTab(once, "tab-2"), once);
   // An existing entry for the same host tab is never duplicated.
   assert.equal(adoptCreatedSideTab(tabs, "tab-1"), tabs);
+});
+
+test("normalizeTabUrl strips Cloudflare challenge tokens but keeps the page", () => {
+  const challenged =
+    "https://pixabay.com/sound-effects/search/chime/?__cf_chl_rt_tk=abc-123&keep=1";
+  assert.equal(
+    normalizeTabUrl(challenged),
+    "https://pixabay.com/sound-effects/search/chime/?keep=1",
+  );
+  assert.equal(
+    normalizeTabUrl(
+      "https://pixabay.com/sound-effects/search/chime?__cf_chl_tk=x",
+    ),
+    "https://pixabay.com/sound-effects/search/chime",
+  );
+  assert.equal(
+    normalizeTabUrl("https://pixabay.com/sound-effects/search/chime/?keep=1"),
+    normalizeTabUrl(challenged),
+  );
+  // Non-url junk passes through untouched.
+  assert.equal(normalizeTabUrl("not a url"), "not a url");
+});
+
+test("urlMatches ignores challenge-token churn on either side", () => {
+  assert.equal(
+    urlMatches(
+      "https://example.com/page?__cf_chl_rt_tk=one",
+      "https://example.com/page?__cf_chl_rt_tk=two",
+    ),
+    true,
+  );
+  assert.equal(
+    urlMatches("https://example.com/page", "https://example.com/other"),
+    false,
+  );
+});
+
+test("a live tab mid-challenge matches the recorded url token-for-token stripped", () => {
+  // Recorded url is clean; live tab was re-navigated with a challenge token.
+  const state = hostState(
+    ["tab-7"],
+    [
+      {
+        id: "tab-7",
+        url: "https://page.example/doc?__cf_chl_rt_tk=fresh",
+        title: "Doc",
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        error: null,
+      },
+    ],
+  );
+  const restored = restoreSessionTabs(
+    {
+      tabs: [
+        { kind: "browser", tabId: "tab-1", url: "https://page.example/doc" },
+      ],
+      activeIndex: 0,
+    },
+    state,
+  );
+  assert.deepEqual(restored, {
+    placements: [
+      {
+        kind: "reuse",
+        tabId: "tab-7",
+        url: "https://page.example/doc",
+      },
+    ],
+    activeIndex: 0,
+  });
+});
+
+test("TabCreateLedger: createOnce is single-flight per normalized url", async () => {
+  const ledger = new TabCreateLedger();
+  let calls = 0;
+  const first = ledger.createOnce(
+    "https://x.example/a?__cf_chl_rt_tk=1",
+    async () => {
+      calls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return "tab-a";
+    },
+  );
+  const second = ledger.createOnce(
+    "https://x.example/a?__cf_chl_rt_tk=2",
+    async () => {
+      calls += 1;
+      return "tab-dup";
+    },
+  );
+  assert.equal(await first, "tab-a");
+  assert.equal(await second, "tab-a");
+  assert.equal(calls, 1);
+  // Settled: a later create for a different page runs its own create.
+  assert.equal(
+    await ledger.createOnce("https://x.example/b", async () => {
+      calls += 1;
+      return "tab-b";
+    }),
+    "tab-b",
+  );
+  assert.equal(calls, 2);
+});
+
+test("TabCreateLedger: createdFor remembers the produced tab and forget retires it", async () => {
+  const ledger = new TabCreateLedger();
+  await ledger.createOnce(
+    "https://x.example/a?__cf_chl_tk=z",
+    async () => "tab-a",
+  );
+  assert.equal(ledger.createdFor("https://x.example/a"), "tab-a");
+  assert.equal(
+    ledger.createdFor("https://x.example/a?__cf_chl_rt_tk=new"),
+    "tab-a",
+  );
+  ledger.forget("tab-a");
+  assert.equal(ledger.createdFor("https://x.example/a"), null);
 });
