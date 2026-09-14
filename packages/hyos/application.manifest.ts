@@ -84,6 +84,12 @@ export const applicationManifest = defineApplicationManifest({
       reload: "hot",
     },
     {
+      id: "agent.sound.renderer",
+      file: "./modules/agent-sound-renderer/index.ts",
+      host: "renderer",
+      reload: "hot",
+    },
+    {
       id: "browser.main",
       file: "./modules/browser-main/index.ts",
       host: "main",
