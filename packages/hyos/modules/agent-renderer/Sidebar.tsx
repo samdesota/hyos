@@ -479,6 +479,7 @@ export const Sidebar: Component<{ app: AppState }> = (props) => {
         open={createOpen()}
         onClose={() => setCreateOpen(false)}
         label="Create new"
+        overBrowser
       >
         <div
           onKeyDown={(e) => {

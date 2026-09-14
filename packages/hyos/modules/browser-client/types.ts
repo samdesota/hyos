@@ -12,5 +12,6 @@ export interface BrowserClient {
   present(presentation: BrowserPresentation): Promise<void>;
   release(presentationId: PresentationId): Promise<void>;
   setOverlayRegions(regions: readonly BrowserBounds[]): Promise<void>;
+  setModalOverlay(active: boolean): Promise<void>;
   subscribe(listener: (state: BrowserState) => void): () => void;
 }

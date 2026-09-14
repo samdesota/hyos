@@ -345,6 +345,8 @@ export function createAgentHost(options: {
       browser.call("release", presentationId) as Promise<void>,
     setOverlayRegions: (regions) =>
       browser.call("setOverlayRegions", regions) as Promise<void>,
+    setModalOverlay: (active) =>
+      browser.call("setModalOverlay", active) as Promise<void>,
     subscribe: (_listener) => {
       // Main process consumers don't support subscriptions yet
       return () => {};

@@ -31,7 +31,7 @@ export function createBrowserHost(
   // contentView after the UI view, so they composite above it and receive
   // clicks within their presentation bounds; the UI receives input
   // everywhere else. No pass-through arbiter is needed.
-  const presentations = new BrowserPresentations(baseWindow, tabs);
+  const presentations = new BrowserPresentations(baseWindow, uiView, tabs);
   const generation = Date.now();
   let activeTabId: TabId | null = null;
   let nextTabId = 1;
@@ -118,9 +118,10 @@ export function createBrowserHost(
     release(presentationId) {
       presentations.release(presentationId);
     },
-    // Obsolete pass-through bookkeeping; kept as a no-op until the
-    // capability is pruned in a follow-up.
     setOverlayRegions() {},
+    setModalOverlay(active) {
+      presentations.setModalOverlay(active);
+    },
   };
 
   return {

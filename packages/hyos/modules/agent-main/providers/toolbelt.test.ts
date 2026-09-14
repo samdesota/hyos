@@ -39,6 +39,7 @@ function fakeBrowserClient(): BrowserClient & { states: BrowserState[] } {
     async present() {},
     async release() {},
     async setOverlayRegions() {},
+    async setModalOverlay() {},
     subscribe() {
       return () => undefined;
     },

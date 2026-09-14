@@ -50,7 +50,7 @@ export type BrowserPresentation = Readonly<{
 
 export const browserCapability = defineRemoteCapability({
   id: "browser",
-  version: 2,
+  version: 3,
   methods: {
     execute: remoteMethod<readonly [command: BrowserCommand], BrowserState>(),
     present: remoteMethod<readonly [presentation: BrowserPresentation], void>(),
@@ -59,6 +59,7 @@ export const browserCapability = defineRemoteCapability({
       readonly [regions: readonly BrowserBounds[]],
       void
     >(),
+    setModalOverlay: remoteMethod<readonly [active: boolean], void>(),
   },
   events: {
     state: remoteEvent<BrowserState>(),

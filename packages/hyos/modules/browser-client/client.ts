@@ -23,6 +23,7 @@ export function createBrowserClient(
     release: (presentationId: PresentationId) =>
       browser.call("release", presentationId),
     setOverlayRegions: (regions) => browser.call("setOverlayRegions", regions),
+    setModalOverlay: (active: boolean) => browser.call("setModalOverlay", active),
     subscribe: (listener) => browser.subscribe("state", listener),
   };
 }

@@ -6,6 +6,7 @@ import type {
 } from "../../capabilities/browser.js";
 import type { BrowserClient } from "../browser-client/types.js";
 import { boundsOf, isElementVisible, sameBounds } from "./geometry.js";
+import { modalOverlayActive } from "./modal-overlay.js";
 import type { BrowserViewProps } from "./types.js";
 
 let nextPresentationId = 1;
@@ -22,6 +23,7 @@ export function createBrowserView(
     let previousTabId: TabId | undefined;
     let previousVisible: boolean | undefined;
     let previousOverlayRegions: BrowserBounds[] = [];
+    let previousModalOverlay: boolean | undefined;
 
     const measure = (): void => {
       const bounds = boundsOf(element);
@@ -56,6 +58,14 @@ export function createBrowserView(
       if (overlaysChanged) {
         previousOverlayRegions = overlayRegions;
         void client.setOverlayRegions(overlayRegions);
+      }
+
+      // Forward modal overlay mode changes; the main process raises/lowers
+      // the UI view so this modal composites above embedded web content.
+      const modalOverlay = modalOverlayActive();
+      if (modalOverlay !== previousModalOverlay) {
+        previousModalOverlay = modalOverlay;
+        void client.setModalOverlay(modalOverlay);
       }
       frame = requestAnimationFrame(measure);
     };
