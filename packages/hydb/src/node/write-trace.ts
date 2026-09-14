@@ -6,5 +6,6 @@ export const writeTraceNow = (): number =>
   globalThis.performance?.now?.() ?? Date.now();
 
 export const writeTrace = (event: string, ms: number): void => {
+  if (process.env.HYOS_BOOT_TRACE !== "1") return;
   console.log(`[hydb-write] ${event}: ${Math.round(ms)}ms`);
 };

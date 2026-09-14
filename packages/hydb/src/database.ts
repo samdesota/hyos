@@ -23,12 +23,14 @@ import {
 
 const databaseSchemas = new WeakMap<Database, AnySchema>();
 
-// Stage-level timing for database.execute/transact. Always-on: the commit
-// path already traces at 4–56ms while callers still observe multi-second
-// stalls, so the remaining stages (queue, snapshot, command invoke, and the
-// post-commit waitForSequence) need numbers to attribute the difference.
+// Stage-level timing for database.execute/transact. Gated behind
+// HYOS_BOOT_TRACE=1: the commit path traces at 4–56ms while callers still
+// observe multi-second stalls, so the remaining stages (queue, snapshot,
+// command invoke, and the post-commit waitForSequence) can attribute the
+// difference when tracing is enabled.
 const traceNow = (): number => globalThis.performance?.now?.() ?? Date.now();
 const traceExecute = (event: string, ms: number): void => {
+  if (process.env.HYOS_BOOT_TRACE !== "1") return;
   console.log(`[hydb-execute] ${event}: ${Math.round(ms)}ms`);
 };
 
@@ -263,7 +265,7 @@ class QueryDatabase implements Database {
         after,
         signal: this.#abortController.signal,
       })) {
-        console.log(`[hydb-execute] change-delivered(${commit.sequence})`);
+        traceExecute(`change-delivered(${commit.sequence})`, 0);
         await this.applyCommit(commit);
       }
     } catch (error) {
@@ -284,15 +286,14 @@ class QueryDatabase implements Database {
         return { subscription, ms: traceNow() - acceptStartedAt };
       }),
     );
-    console.log(
-      `[hydb-execute] apply-commit(${commit.sequence}): ${Math.round(
-        traceNow() - applyStartedAt,
-      )}ms [${accepts
+    traceExecute(
+      `apply-commit(${commit.sequence}) [${accepts
         .map(
           (accept) =>
             `sub#${accept.subscription.id}=${Math.round(accept.ms)}ms`,
         )
         .join(", ")}]`,
+      traceNow() - applyStartedAt,
     );
     this.#sequence = commit.sequence;
     for (const [sequence, waiters] of this.#sequenceWaiters) {
@@ -307,15 +308,19 @@ class QueryDatabase implements Database {
     if (this.#changeFailure !== undefined) {
       return Promise.reject(this.#changeFailure);
     }
-    console.log(
-      `[hydb-execute] wait-for-sequence(${sequence}): parked — ${this.describeSubscriptions()}`,
-    );
     const waitStartedAt = traceNow();
+    traceExecute(
+      `wait-for-sequence(${sequence}): parked — ${this.describeSubscriptions()}`,
+      0,
+    );
+    // Watchdog fires every second while a write is parked — useful for
+    // diagnosing multi-second stalls, but only emit when tracing is on.
     const watchdog = setInterval(() => {
-      console.log(
-        `[hydb-execute] wait-for-sequence(${sequence}): ${Math.round(
+      traceExecute(
+        `wait-for-sequence(${sequence}): ${Math.round(
           traceNow() - waitStartedAt,
         )}ms elapsed — ${this.describeSubscriptions()}`,
+        0,
       );
     }, 1000);
     return new Promise<void>((resolve, reject) => {
