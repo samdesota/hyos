@@ -2,6 +2,15 @@ require("tsx/cjs");
 
 const path = require("node:path");
 const { app, ipcMain } = require("electron");
+
+// DevTools/CDP for every HyOS webContents (UI view, browser tab views) —
+// must be set before app ready. Opt in with HYOS_DEVTOOLS_PORT=<port>,
+// then list targets at http://localhost:<port>/json or chrome://inspect.
+const devtoolsPort = Number(process.env.HYOS_DEVTOOLS_PORT ?? "");
+if (Number.isInteger(devtoolsPort) && devtoolsPort > 0) {
+  app.commandLine.appendSwitch("remote-debugging-port", String(devtoolsPort));
+  console.log(`[devtools] CDP listening on http://localhost:${devtoolsPort}`);
+}
 const { ModuleHost } = require("./runtime");
 const { MainApplicationLoader, readManifest } = require("./application-loader");
 const { buildRendererArtifacts } = require("./isomorphic-compiler");
@@ -16,10 +25,13 @@ const projectDirectory = __dirname;
 const rendererOutputDirectory = path.join(__dirname, "renderer/generated");
 const initialManifest = readManifest(manifestPath);
 const bootStartedAt = performance.now();
-const bootTrace = (event, detail = "") =>
+const BOOT_TRACE = process.env.HYOS_BOOT_TRACE === "1";
+const bootTrace = (event, detail = "") => {
+  if (!BOOT_TRACE) return;
   console.log(
     `[DEBUG-boot-7f2c] +${Math.round(performance.now() - bootStartedAt)}ms main ${event}${detail ? ` ${detail}` : ""}`,
   );
+};
 const { applicationCapabilities } = require(capabilitiesPath);
 const remoteCapabilities = new MainRemoteCapabilities({
   definitions: applicationCapabilities,

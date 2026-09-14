@@ -37,10 +37,13 @@ export = defineModule<AgentMainConfig>({
 
   async apply(ctx, config) {
     const bootStartedAt = performance.now();
-    const bootTrace = (event: string) =>
+    const BOOT_TRACE = process.env.HYOS_BOOT_TRACE === "1";
+    const bootTrace = (event: string) => {
+      if (!BOOT_TRACE) return;
       console.log(
         `[DEBUG-boot-7f2c] +${Math.round(performance.now() - bootStartedAt)}ms agent-main ${event}`,
       );
+    };
     const root = ctx.get<string>("application.root");
     const window = ctx.get<BrowserWindow>("electron.base-window");
     const remote = ctx.get<MainRemoteCapabilities>("remote.capabilities");

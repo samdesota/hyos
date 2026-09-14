@@ -1,10 +1,13 @@
 // PROTOTYPE: a tiny Cordis-shaped lifecycle host, not a Cordis implementation.
 (function exposeRuntime(globalObject) {
   const bootStartedAt = globalObject.performance?.now?.() ?? Date.now();
-  const bootTrace = (host, event, detail = "") =>
+  const BOOT_TRACE = globalObject.process?.env?.HYOS_BOOT_TRACE === "1";
+  const bootTrace = (host, event, detail = "") => {
+    if (!BOOT_TRACE) return;
     console.log(
       `[DEBUG-boot-7f2c] +${Math.round((globalObject.performance?.now?.() ?? Date.now()) - bootStartedAt)}ms ${host} ${event}${detail ? ` ${detail}` : ""}`,
     );
+  };
   const definitions = new Map();
 
   function defineModule(definition) {
@@ -78,7 +81,11 @@
         const dispose = await definition.apply(context, placement.config ?? {});
         if (typeof dispose === "function") disposers.push(dispose);
       } catch (error) {
-        bootTrace(this.hostName, "module:mount:failed", `${placement.id} ${error?.stack ?? error}`);
+        bootTrace(
+          this.hostName,
+          "module:mount:failed",
+          `${placement.id} ${error?.stack ?? error}`,
+        );
         while (disposers.length > 0) await disposers.pop()();
         throw error;
       }

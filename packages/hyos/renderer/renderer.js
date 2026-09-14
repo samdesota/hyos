@@ -7,12 +7,21 @@ let entries = [];
 let operation = Promise.resolve();
 const bootStartedAt = performance.now();
 let bootStage = "script-loaded";
+const BOOT_TRACE =
+  new URLSearchParams(window.location.search).get("bootTrace") === "1";
 const bootTrace = (event, detail = "") => {
   bootStage = event;
-  console.log(`[DEBUG-boot-7f2c] +${Math.round(performance.now() - bootStartedAt)}ms renderer ${event}${detail ? ` ${detail}` : ""}`);
+  if (!BOOT_TRACE) return;
+  console.log(
+    `[DEBUG-boot-7f2c] +${Math.round(performance.now() - bootStartedAt)}ms renderer ${event}${detail ? ` ${detail}` : ""}`,
+  );
 };
 setTimeout(() => {
-  if (bootStage !== "start:done") bootTrace("watchdog:boot-stalled", `stage=${bootStage} readyState=${document.readyState} mounts=${rendererHost?.mounts?.map(({ placement }) => placement.id).join(",") ?? "none"}`);
+  if (bootStage !== "start:done")
+    bootTrace(
+      "watchdog:boot-stalled",
+      `stage=${bootStage} readyState=${document.readyState} mounts=${rendererHost?.mounts?.map(({ placement }) => placement.id).join(",") ?? "none"}`,
+    );
 }, 10_000);
 
 function renderSnapshot() {
