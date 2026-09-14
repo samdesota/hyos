@@ -1,25 +1,29 @@
 import path from "node:path";
-import { BrowserWindow, type WebPreferences } from "electron";
+import { BrowserWindow, WebContentsView, type WebPreferences } from "electron";
 import { remoteChannels } from "../../remote-capabilities.js";
 
 export type ElectronWindowConfig = Readonly<{
   title: string;
   width: number;
   height: number;
-  rendererSurface?: "base" | "overlay";
 }>;
 
 export type ElectronWindows = Readonly<{
   baseWindow: BrowserWindow;
-  overlayWindow: BrowserWindow;
-  alignOverlay(): void;
+  uiView: WebContentsView;
+  alignUi(): void;
 }>;
 
+/**
+ * Single-window shell: the app UI renders in its own `WebContentsView`
+ * layered inside the base window. Browser tab views are appended to the
+ * same `contentView` afterwards, so they composite above the UI; a modal
+ * overlay mode can re-raise the UI view when UI must cover browser content.
+ */
 export function createElectronWindows(
   root: string,
   config: ElectronWindowConfig,
 ): ElectronWindows {
-  const rendererSurface = config.rendererSurface ?? "overlay";
   const showWindow = !process.argv.includes("--smoke-test");
   const webPreferences: WebPreferences = {
     preload: path.join(root, "preload.js"),
@@ -40,44 +44,40 @@ export function createElectronWindows(
     title: config.title,
     backgroundColor: "#f5f2ec",
     show: false,
-    ...(rendererSurface === "base" ? { webPreferences } : {}),
   });
-  if (rendererSurface === "base") {
-    const alignOverlay = (): void => {};
-    baseWindow.webContents.on("console-message", (_event, _level, message) => {
-      if (message.includes("[DEBUG-boot-7f2c]")) console.log(message);
-    });
-    baseWindow.webContents.on("did-start-loading", () => console.log("[DEBUG-boot-7f2c] renderer navigation:start"));
-    baseWindow.webContents.on("did-finish-load", () => console.log("[DEBUG-boot-7f2c] renderer navigation:done"));
-    baseWindow.webContents.on("render-process-gone", (_event, details) => console.log(`[DEBUG-boot-7f2c] renderer process:gone ${details.reason} exit=${details.exitCode}`));
-    void baseWindow.loadFile(path.join(root, "renderer/index.html"));
-    if (showWindow) baseWindow.once("ready-to-show", () => baseWindow.show());
-    return { baseWindow, overlayWindow: baseWindow, alignOverlay };
-  }
-  const overlayWindow = new BrowserWindow({
-    ...baseWindow.getContentBounds(),
-    parent: baseWindow,
-    frame: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    resizable: false,
-    movable: false,
-    hasShadow: false,
-    show: false,
-    webPreferences,
-  });
-  const alignOverlay = (): void => {
-    if (baseWindow.isDestroyed() || overlayWindow.isDestroyed()) return;
-    overlayWindow.setBounds(baseWindow.getContentBounds());
+  const uiView = new WebContentsView({ webPreferences });
+  // Append (no index) so the UI sits above the window's own blank contents
+  // and below browser views that browser.main attaches later.
+  baseWindow.contentView.addChildView(uiView);
+  const alignUi = (): void => {
+    if (baseWindow.isDestroyed() || uiView.webContents.isDestroyed()) return;
+    const [width, height] = baseWindow.getContentSize();
+    uiView.setBounds({ x: 0, y: 0, width, height });
   };
+  alignUi();
 
-  void baseWindow.loadFile(path.join(root, "renderer/base.html"));
-  if (showWindow) baseWindow.once("ready-to-show", () => baseWindow.show());
-  void overlayWindow.loadFile(path.join(root, "renderer/index.html"));
-  if (showWindow)
-    overlayWindow.once("ready-to-show", () => {
-      alignOverlay();
-      overlayWindow.show();
+  uiView.webContents.on("console-message", (_event, _level, message) => {
+    if (message.includes("[DEBUG-boot-7f2c]")) console.log(message);
+  });
+  uiView.webContents.on("did-start-loading", () =>
+    console.log("[DEBUG-boot-7f2c] renderer navigation:start"),
+  );
+  uiView.webContents.on("did-finish-load", () =>
+    console.log("[DEBUG-boot-7f2c] renderer navigation:done"),
+  );
+  uiView.webContents.on("render-process-gone", (_event, details) =>
+    console.log(
+      `[DEBUG-boot-7f2c] renderer process:gone ${details.reason} exit=${details.exitCode}`,
+    ),
+  );
+  void uiView.webContents.loadFile(path.join(root, "renderer/index.html"));
+  if (showWindow) {
+    // The base window itself loads nothing, so gate the reveal on the UI
+    // view's contents having finished their first load.
+    uiView.webContents.once("did-finish-load", () => {
+      alignUi();
+      baseWindow.show();
     });
-  return { baseWindow, overlayWindow, alignOverlay };
+  }
+  return { baseWindow, uiView, alignUi };
 }

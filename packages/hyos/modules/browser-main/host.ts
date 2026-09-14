@@ -1,4 +1,4 @@
-import type { BrowserWindow } from "electron";
+import type { BrowserWindow, WebContentsView } from "electron";
 import {
   browserCapability,
   type BrowserCommand,
@@ -9,7 +9,6 @@ import type {
   MainRemoteCapabilities,
   RemoteProvider,
 } from "../../remote-capabilities.js";
-import { BrowserInputArbiter } from "./input-arbiter.js";
 import { BrowserPresentations } from "./presentations.js";
 import { createTabView, disposeTabView, tabState } from "./tab.js";
 import type { BrowserMainConfig, Tab } from "./types.js";
@@ -23,25 +22,16 @@ export type BrowserHost = Readonly<{
 
 export function createBrowserHost(
   baseWindow: BrowserWindow,
-  overlayWindow: BrowserWindow,
+  uiView: WebContentsView,
   remote: MainRemoteCapabilities,
   config: BrowserMainConfig,
 ): BrowserHost {
   const tabs = new Map<TabId, Tab>();
+  // Single-window layering: browser views are appended to the window's
+  // contentView after the UI view, so they composite above it and receive
+  // clicks within their presentation bounds; the UI receives input
+  // everywhere else. No pass-through arbiter is needed.
   const presentations = new BrowserPresentations(baseWindow, tabs);
-  // In the overlay stacking model the renderer DOM lives in a separate
-  // transparent window above the browser views, so the arbiter must toggle
-  // pass-through for the browser rectangles to receive clicks. When the
-  // renderer shares the base window (rendererSurface: "base"), the native
-  // view already wins hit-testing above the DOM and toggling
-  // setIgnoreMouseEvents would instead make the whole window click-through,
-  // so the arbiter stays off.
-  const input =
-    overlayWindow === baseWindow
-      ? null
-      : new BrowserInputArbiter(overlayWindow, () =>
-          presentations.visibleBounds(),
-        );
   const generation = Date.now();
   let activeTabId: TabId | null = null;
   let nextTabId = 1;
@@ -55,7 +45,7 @@ export function createBrowserHost(
     tabs: [...tabs.values()].map(tabState),
   });
   const publish = (): void => {
-    if (overlayWindow.isDestroyed()) return;
+    if (uiView.webContents.isDestroyed()) return;
     sequence += 1;
     remote.publish(browserCapability, "state", state());
   };
@@ -81,7 +71,6 @@ export function createBrowserHost(
     tabs.delete(tab.id);
     disposeTabView(tab);
     if (activeTabId === tab.id) activeTabId = null;
-    input?.sync();
   };
   const closeTab = (tabId: TabId): void => {
     const tab = tabs.get(tabId);
@@ -125,15 +114,13 @@ export function createBrowserHost(
     execute,
     present(presentation) {
       presentations.present(presentation);
-      input?.sync();
     },
     release(presentationId) {
       presentations.release(presentationId);
-      input?.sync();
     },
-    setOverlayRegions(regions) {
-      input?.setOverlayRegions(regions);
-    },
+    // Obsolete pass-through bookkeeping; kept as a no-op until the
+    // capability is pruned in a follow-up.
+    setOverlayRegions() {},
   };
 
   return {
@@ -143,7 +130,6 @@ export function createBrowserHost(
     },
     dispose() {
       accepting = false;
-      input?.dispose();
       for (const tab of [...tabs.values()]) disposeTab(tab);
     },
   };

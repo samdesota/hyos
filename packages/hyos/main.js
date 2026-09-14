@@ -17,7 +17,9 @@ const rendererOutputDirectory = path.join(__dirname, "renderer/generated");
 const initialManifest = readManifest(manifestPath);
 const bootStartedAt = performance.now();
 const bootTrace = (event, detail = "") =>
-  console.log(`[DEBUG-boot-7f2c] +${Math.round(performance.now() - bootStartedAt)}ms main ${event}${detail ? ` ${detail}` : ""}`);
+  console.log(
+    `[DEBUG-boot-7f2c] +${Math.round(performance.now() - bootStartedAt)}ms main ${event}${detail ? ` ${detail}` : ""}`,
+  );
 const { applicationCapabilities } = require(capabilitiesPath);
 const remoteCapabilities = new MainRemoteCapabilities({
   definitions: applicationCapabilities,
@@ -34,25 +36,26 @@ let loader;
 let reloading = false;
 let reloadQueue = Promise.resolve();
 
-function currentWindow() {
-  return mainHost.services.get("electron.overlay-window");
+function rendererContents() {
+  const view = mainHost.services.get("electron.ui-view");
+  return view && !view.webContents.isDestroyed() ? view.webContents : null;
 }
 
 function assertRenderer(event) {
-  const window = currentWindow();
-  if (!window || window.isDestroyed() || event.sender !== window.webContents) {
+  const contents = rendererContents();
+  if (!contents || event.sender !== contents) {
     throw new Error("Unknown renderer");
   }
 }
 
 function sendWhenReady(channel, payload) {
-  const window = currentWindow();
-  if (!window || window.isDestroyed()) return;
+  const contents = rendererContents();
+  if (!contents) return;
   const send = () => {
-    if (!window.isDestroyed()) window.webContents.send(channel, payload);
+    if (!contents.isDestroyed()) contents.send(channel, payload);
   };
-  if (window.webContents.isLoadingMainFrame()) {
-    window.webContents.once("did-finish-load", send);
+  if (contents.isLoadingMainFrame()) {
+    contents.once("did-finish-load", send);
   } else {
     send();
   }
@@ -163,20 +166,18 @@ async function reloadChangedFile(filename) {
 }
 
 async function runSmokeTest() {
-  const window = currentWindow();
-  if (window.webContents.isLoadingMainFrame()) {
-    await new Promise((resolve) =>
-      window.webContents.once("did-finish-load", resolve),
-    );
+  const contents = rendererContents();
+  if (contents.isLoadingMainFrame()) {
+    await new Promise((resolve) => contents.once("did-finish-load", resolve));
   }
-  const providersBefore = await window.webContents.executeJavaScript(
+  const providersBefore = await contents.executeJavaScript(
     'window.hyosRemote.invoke("agent", "providers", [])',
   );
-  const sessionsBefore = await window.webContents.executeJavaScript(
+  const sessionsBefore = await contents.executeJavaScript(
     'window.hyosRemote.invoke("agent", "sessions", [])',
   );
   const mainBefore = mainHost.snapshot();
-  const rendererBefore = await window.webContents.executeJavaScript(`
+  const rendererBefore = await contents.executeJavaScript(`
     new Promise((resolve, reject) => {
       const deadline = Date.now() + 3000;
       const poll = () => {
@@ -189,11 +190,11 @@ async function runSmokeTest() {
     })
   `);
   await reloadHot("smoke test");
-  const providersAfter = await window.webContents.executeJavaScript(
+  const providersAfter = await contents.executeJavaScript(
     'window.hyosRemote.invoke("agent", "providers", [])',
   );
   const mainAfter = mainHost.snapshot();
-  const rendererAfter = await window.webContents.executeJavaScript(`
+  const rendererAfter = await contents.executeJavaScript(`
     new Promise((resolve, reject) => {
       const previous = ${JSON.stringify(rendererBefore)};
       const deadline = Date.now() + 3000;
@@ -206,13 +207,13 @@ async function runSmokeTest() {
       poll();
     })
   `);
-  const appDisplay = await window.webContents.executeJavaScript(
+  const appDisplay = await contents.executeJavaScript(
     'getComputedStyle(document.querySelector("#agent-app")).display',
   );
   if (appDisplay !== "grid") {
     throw new Error(`agent styles did not apply: display=${appDisplay}`);
   }
-  const contractRejected = await window.webContents.executeJavaScript(
+  const contractRejected = await contents.executeJavaScript(
     'window.hyosRemote.invoke("agent", "not-declared", []).then(() => false, () => true)',
   );
   if (!contractRejected) {
@@ -225,11 +226,11 @@ async function runSmokeTest() {
   if (providerIds !== "claude,codex,glm") {
     throw new Error(`agent providers unavailable: ${providerIds}`);
   }
-  const welcomeReady = await window.webContents.executeJavaScript(
+  const welcomeReady = await contents.executeJavaScript(
     `Boolean(document.querySelector("#agent-start-prompt") && document.querySelector("#agent-session-list") && document.querySelector("#agent-model-picker"))`,
   );
   if (!welcomeReady) throw new Error("agent welcome screen did not render");
-  const modelPickerState = await window.webContents.executeJavaScript(
+  const modelPickerState = await contents.executeJavaScript(
     `(() => {
       const trigger = document.querySelector("#agent-model-picker");
       const height = getComputedStyle(trigger).height;
@@ -249,10 +250,10 @@ async function runSmokeTest() {
       `compact model picker is unavailable: ${JSON.stringify(modelPickerState)}`,
     );
   }
-  const uiAgentConnection = await window.webContents.executeJavaScript(
+  const uiAgentConnection = await contents.executeJavaScript(
     'window.hyosRemote.invoke("ui-agent", "connection", [])',
   );
-  const uiAgentReady = await window.webContents.executeJavaScript(`
+  const uiAgentReady = await contents.executeJavaScript(`
     new Promise((resolve, reject) => {
       const deadline = Date.now() + 5000;
       const poll = () => {
@@ -268,7 +269,7 @@ async function runSmokeTest() {
     })
   `);
   await new Promise((resolve) => setTimeout(resolve, 1_500));
-  const visualState = await window.webContents.executeJavaScript(`
+  const visualState = await contents.executeJavaScript(`
     (() => {
       const app = document.querySelector("#agent-app");
       const frame = document.querySelector("#hyedit-overlay");
@@ -285,7 +286,7 @@ async function runSmokeTest() {
       };
     })()
   `);
-  const rendered = await window.webContents.capturePage();
+  const rendered = await contents.capturePage();
   const pixels = rendered.toBitmap();
   let whitePixels = 0;
   for (let index = 0; index < pixels.length; index += 4) {
@@ -303,11 +304,11 @@ async function runSmokeTest() {
       `renderer became white: ratio=${whiteRatio.toFixed(3)} state=${JSON.stringify(visualState)}`,
     );
   }
-  await window.webContents.executeJavaScript(
+  await contents.executeJavaScript(
     'document.querySelector("#hyedit-launcher").click()',
   );
   await new Promise((resolve) => setTimeout(resolve, 500));
-  const activeFrameState = await window.webContents.executeJavaScript(`
+  const activeFrameState = await contents.executeJavaScript(`
     (() => {
       const frame = document.querySelector("#hyedit-overlay");
       const style = frame ? getComputedStyle(frame) : null;
@@ -319,10 +320,10 @@ async function runSmokeTest() {
       };
     })()
   `);
-  const overlayFrame = window.webContents.mainFrame.frames.find((frame) =>
+  const overlayFrame = contents.mainFrame.frames.find((frame) =>
     frame.url.startsWith(`${uiAgentConnection.serverUrl}/overlay`),
   );
-  const embeddedOverlayState = await window.webContents.executeJavaScript(`
+  const embeddedOverlayState = await contents.executeJavaScript(`
     (() => {
       const host = document.querySelector("#hyedit-overlay");
       const shadow = host?.shadowRoot;
@@ -361,7 +362,7 @@ async function runSmokeTest() {
         })()
       `)
       : null);
-  const activeRendered = await window.webContents.capturePage();
+  const activeRendered = await contents.capturePage();
   const activePixels = activeRendered.toBitmap();
   let activeWhitePixels = 0;
   for (let index = 0; index < activePixels.length; index += 4) {
@@ -390,7 +391,7 @@ async function runSmokeTest() {
       `active UI agent became white: ratio=${activeWhiteRatio.toFixed(3)} state=${JSON.stringify(activeFrameState)} overlay=${JSON.stringify(overlayDocumentState)}`,
     );
   }
-  const selectionBounds = await window.webContents.executeJavaScript(`
+  const selectionBounds = await contents.executeJavaScript(`
     (async () => {
       const host = document.querySelector("#hyedit-overlay");
       const surface = host?.shadowRoot?.querySelector(".selection-surface");
@@ -428,7 +429,7 @@ async function runSmokeTest() {
       `Quick edit drag did not create a selection: ${JSON.stringify(selectionBounds)}`,
     );
   }
-  await window.webContents.executeJavaScript(`
+  await contents.executeJavaScript(`
     (() => {
       const surface = document
         .querySelector("#hyedit-overlay")
@@ -444,7 +445,7 @@ async function runSmokeTest() {
     })()
   `);
   await new Promise((resolve) => setTimeout(resolve, 100));
-  const promptVisible = await window.webContents.executeJavaScript(`
+  const promptVisible = await contents.executeJavaScript(`
     Boolean(
       document.querySelector("#hyedit-overlay")
         ?.shadowRoot
@@ -459,7 +460,7 @@ async function runSmokeTest() {
   console.log(
     `smoke: remoteCapability=agent providers=${providerIds} persistedSessions=${sessionsBefore.sessions.length} welcome=${welcomeReady} uiAgent=${uiAgentReady}@${uiAgentConnection.serverUrl} whiteRatio=${whiteRatio.toFixed(3)} activeWhiteRatio=${activeWhiteRatio.toFixed(3)} activeOverlay=${overlayDocumentState.topClass} drag=${Math.round(selectionBounds.width)}x${Math.round(selectionBounds.height)} prompt=${promptVisible} mainReload=${mainReload} rendererReload=${rendererBefore !== rendererAfter} contractRejected=${contractRejected} appLayout=${appDisplay}`,
   );
-  await window.webContents.executeJavaScript(
+  await contents.executeJavaScript(
     'window.dispatchEvent(new Event("beforeunload"))',
   );
   await new Promise((resolve) => setTimeout(resolve, 50));
@@ -491,13 +492,19 @@ async function start() {
 
   bootTrace("module-loader:start");
   await loader.start();
-  bootTrace("module-loader:done", JSON.stringify(mainHost.snapshot().modules.map(({ id }) => id)));
+  bootTrace(
+    "module-loader:done",
+    JSON.stringify(mainHost.snapshot().modules.map(({ id }) => id)),
+  );
   if (process.argv.includes("--smoke-test")) await runSmokeTest();
 }
 
 app
   .whenReady()
-  .then(() => { bootTrace("electron:ready"); return start(); })
+  .then(() => {
+    bootTrace("electron:ready");
+    return start();
+  })
   .catch((error) => {
     console.error(error);
     app.exitCode = 1;

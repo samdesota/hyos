@@ -12,7 +12,6 @@ export const applicationManifest = defineApplicationManifest({
         title: "HyOS Agent",
         width: 1120,
         height: 760,
-        rendererSurface: "base",
       },
     },
     {

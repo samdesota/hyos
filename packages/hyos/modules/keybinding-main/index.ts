@@ -1,8 +1,8 @@
 import {
   app,
-  type BrowserWindow,
   type Event as ElectronEvent,
   type WebContents,
+  type WebContentsView,
 } from "electron";
 
 import {
@@ -93,16 +93,11 @@ function matchesAccelerator(
 
 export = defineModule({
   id: "keybinding.main",
-  inject: [
-    "electron.base-window",
-    "electron.overlay-window",
-    "remote.capabilities",
-  ],
+  inject: ["electron.ui-view", "remote.capabilities"],
   provide: ["keybinding.control"],
 
   apply(ctx) {
-    const baseWindow = ctx.get<BrowserWindow>("electron.base-window");
-    const overlayWindow = ctx.get<BrowserWindow>("electron.overlay-window");
+    const uiView = ctx.get<WebContentsView>("electron.ui-view");
     const remote = ctx.get<MainRemoteCapabilities>("remote.capabilities");
 
     const bindings = new Map<string, ParsedAccelerator>();
@@ -131,8 +126,7 @@ export = defineModule({
       contents.on("before-input-event", onBeforeInput);
     };
 
-    attach(baseWindow.webContents);
-    if (overlayWindow !== baseWindow) attach(overlayWindow.webContents);
+    attach(uiView.webContents);
     // Browser tabs are WebContentsViews created (and destroyed) on demand;
     // catch every new webContents so their keystrokes are covered too.
     const onWebContentsCreated = (

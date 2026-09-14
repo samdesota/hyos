@@ -32,11 +32,7 @@ type AgentMainConfig = Readonly<{
 
 export = defineModule<AgentMainConfig>({
   id: "agent.main",
-  inject: [
-    "application.root",
-    "electron.overlay-window",
-    "remote.capabilities",
-  ],
+  inject: ["application.root", "electron.base-window", "remote.capabilities"],
   provide: ["agent.sessions"],
 
   async apply(ctx, config) {
@@ -46,17 +42,20 @@ export = defineModule<AgentMainConfig>({
         `[DEBUG-boot-7f2c] +${Math.round(performance.now() - bootStartedAt)}ms agent-main ${event}`,
       );
     const root = ctx.get<string>("application.root");
-    const window = ctx.get<BrowserWindow>("electron.overlay-window");
+    const window = ctx.get<BrowserWindow>("electron.base-window");
     const remote = ctx.get<MainRemoteCapabilities>("remote.capabilities");
     const browser = remote.consume(browserCapability);
     bootTrace("storage:open:start");
     const storage = await openNodeStorage({
       directory: path.resolve(root, config.storagePath),
       schema: agentSchema,
-      addedTables: [
-        "hyos_agent_boards",
-        "hyos_agent_board_cards",
-        "hyos_agent_board_media",
+      addedTableMigrations: [
+        [
+          "hyos_agent_boards",
+          "hyos_agent_board_cards",
+          "hyos_agent_board_media",
+        ],
+        ["hyos_agent_global_tabs"],
       ],
       nullableColumnMigrations: [
         { hyos_agent_sessions: ["archivedAt"] },
