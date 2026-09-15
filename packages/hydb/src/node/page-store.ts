@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { open, type FileHandle } from "node:fs/promises";
+import type { PageId, TreePageStore } from "./tree-page-store.js";
 
 export type RecordId = number;
 export type RecordType = "page" | "commit" | "ref" | "meta";
@@ -89,7 +90,7 @@ async function writeAll(
   }
 }
 
-export class AppendOnlyPageStore {
+export class AppendOnlyPageStore implements TreePageStore {
   #end = 0;
   #closed = false;
 
@@ -111,6 +112,14 @@ export class AppendOnlyPageStore {
 
   get endOffset(): number {
     return this.#end;
+  }
+
+  async readPage(id: PageId): Promise<Uint8Array> {
+    return (await this.read(id, "page")).payload;
+  }
+
+  writePage(payload: Uint8Array): Promise<PageId> {
+    return this.append("page", payload);
   }
 
   async append(type: RecordType, payload: Uint8Array): Promise<RecordId> {

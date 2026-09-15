@@ -1,8 +1,8 @@
 import { ByteLruCache, type PageCacheStats } from "./page-cache.js";
-import { AppendOnlyPageStore, type RecordId } from "./page-store.js";
+import type { PageId, TreePageStore } from "./tree-page-store.js";
 import type { MemoryManager } from "../memory.js";
 
-export type TreeRoot = RecordId | null;
+export type TreeRoot = PageId | null;
 
 export type TreeMutation =
   | Readonly<{ type: "put"; key: Uint8Array; value: Uint8Array }>
@@ -29,16 +29,16 @@ export type TreeCopyResult = Readonly<{
 
 type EncodedEntry = { key: string; value: string };
 type LeafPage = { kind: "leaf"; entries: EncodedEntry[] };
-type InternalPage = { kind: "internal"; keys: string[]; children: RecordId[] };
+type InternalPage = { kind: "internal"; keys: string[]; children: PageId[] };
 type Page = LeafPage | InternalPage;
 
 type InsertResult = Readonly<{
-  page: RecordId;
-  split?: Readonly<{ separator: Uint8Array; right: RecordId }>;
+  page: PageId;
+  split?: Readonly<{ separator: Uint8Array; right: PageId }>;
 }>;
 
 type DeleteResult = Readonly<{
-  page: RecordId;
+  page: PageId;
   changed: boolean;
   underflow: boolean;
   firstKey?: Uint8Array;
@@ -81,10 +81,10 @@ function inRange(key: Uint8Array, range: TreeRange): boolean {
 }
 
 export class ImmutableBPlusTree {
-  readonly #cache: ByteLruCache<RecordId, Page>;
+  readonly #cache: ByteLruCache<PageId, Page>;
 
   constructor(
-    private readonly store: AppendOnlyPageStore,
+    private readonly store: TreePageStore,
     options: {
       cacheBytes?: number;
       maxEntries?: number;
@@ -96,8 +96,7 @@ export class ImmutableBPlusTree {
       throw new TypeError("maxEntries must be at least 4");
     this.#cache = new ByteLruCache(
       options.cacheBytes ?? 16 * 1024 * 1024,
-      async (id) =>
-        this.decodePage((await this.store.read(id, "page")).payload),
+      async (id) => this.decodePage(await this.store.readPage(id)),
       // Decoded strings, arrays, and object headers occupy more heap than
       // their serialized bytes. Keep accounting deliberately conservative.
       (page) => Buffer.byteLength(JSON.stringify(page)) * 2 + 128,
@@ -186,8 +185,8 @@ export class ImmutableBPlusTree {
     roots: readonly TreeRoot[],
     target: ImmutableBPlusTree,
   ): Promise<TreeCopyResult> {
-    const relocated = new Map<RecordId, Promise<RecordId>>();
-    const copy = (id: RecordId): Promise<RecordId> => {
+    const relocated = new Map<PageId, Promise<PageId>>();
+    const copy = (id: PageId): Promise<PageId> => {
       const existing = relocated.get(id);
       if (existing !== undefined) return existing;
       const pending = (async () => {
@@ -198,7 +197,7 @@ export class ImmutableBPlusTree {
             entries: page.entries.map((entry) => ({ ...entry })),
           });
         }
-        const children: RecordId[] = [];
+        const children: PageId[] = [];
         for (const child of page.children) children.push(await copy(child));
         return target.writePage({
           kind: "internal",
@@ -291,7 +290,7 @@ export class ImmutableBPlusTree {
   }
 
   private async remove(
-    id: RecordId,
+    id: PageId,
     key: Uint8Array,
     root: boolean,
   ): Promise<DeleteResult> {
@@ -352,7 +351,7 @@ export class ImmutableBPlusTree {
 
   private async rebalanceChildren(
     parentKeys: string[],
-    children: RecordId[],
+    children: PageId[],
     childPosition: number,
   ): Promise<void> {
     const leftPosition = childPosition > 0 ? childPosition - 1 : childPosition;
@@ -421,7 +420,7 @@ export class ImmutableBPlusTree {
     }
   }
 
-  private async firstKey(id: RecordId): Promise<Uint8Array> {
+  private async firstKey(id: PageId): Promise<Uint8Array> {
     let current = id;
     while (true) {
       const page = await this.#cache.get(current);
@@ -435,10 +434,7 @@ export class ImmutableBPlusTree {
     }
   }
 
-  private async *walk(
-    id: RecordId,
-    reverse: boolean,
-  ): AsyncIterable<TreeEntry> {
+  private async *walk(id: PageId, reverse: boolean): AsyncIterable<TreeEntry> {
     const page = await this.#cache.get(id);
     if (page.kind === "leaf") {
       const entries = reverse ? [...page.entries].reverse() : page.entries;
@@ -463,8 +459,8 @@ export class ImmutableBPlusTree {
     for (const child of children) yield* this.walk(child, reverse);
   }
 
-  private async writePage(page: Page): Promise<RecordId> {
-    return this.store.append("page", Buffer.from(JSON.stringify(page)));
+  private async writePage(page: Page): Promise<PageId> {
+    return this.store.writePage(Buffer.from(JSON.stringify(page)));
   }
 
   private decodePage(payload: Uint8Array): Page {

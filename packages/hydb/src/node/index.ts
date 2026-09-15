@@ -1,4 +1,5 @@
 export { ImmutableBPlusTree } from "./bplus-tree.js";
+export type { PageId, TreePageStore } from "./tree-page-store.js";
 export type {
   TreeEntry,
   TreeMutation,
