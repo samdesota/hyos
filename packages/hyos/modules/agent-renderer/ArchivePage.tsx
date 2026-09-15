@@ -79,6 +79,10 @@ const PAGE_SIZE = 50;
 export const ArchivePage: Component<ArchivePageProps> = (props) => {
   const [query, setQuery] = createSignal("");
   const [renderLimit, setRenderLimit] = createSignal(PAGE_SIZE);
+  // True once the page is scrolled enough for the sticky header to sit over
+  // list rows; gates the header's fade gradient so it doesn't tint the first
+  // row while the list is at rest.
+  const [scrolled, setScrolled] = createSignal(false);
   let searchInput: HTMLInputElement | undefined;
   let sentinel: HTMLDivElement | undefined;
 
@@ -128,9 +132,15 @@ export const ArchivePage: Component<ArchivePageProps> = (props) => {
   });
 
   return (
-    <section class="archive-page">
+    <section
+      class="archive-page"
+      onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 4)}
+    >
       <div class="archive-column">
-        <header class="archive-header">
+        <header
+          class="archive-header"
+          classList={{ "header-scrolled": scrolled() }}
+        >
           <h2 class="archive-title">Archived sessions</h2>
           <input
             ref={searchInput}

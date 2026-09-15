@@ -233,9 +233,22 @@ export const agentStyles = String.raw`
   .global-browser { display: flex; width: 100%; height: 100%; min-height: 0; }
   .welcome { display: grid; place-items: center; width: 100%; height: 100%; padding: 38px; overflow-y: auto; }
   .welcome-card { width: min(760px, 100%); }
-  .archive-page { display: flex; justify-content: center; width: 100%; height: 100%; min-height: 0; padding: 22px 26px; overflow-y: auto; }
+  .archive-page { display: flex; justify-content: center; width: 100%; height: 100%; min-height: 0; padding: 0 26px 22px; overflow-y: auto; }
   .archive-column { display: flex; flex-direction: column; width: 100%; max-width: 880px; min-height: 0; }
-  .archive-header { display: flex; align-items: center; gap: 12px; padding: 0 10px 18px; }
+  /* Sticky header: the page's former top padding lives inside the header so
+     it keeps the same inset when pinned, and the opaque window-colored
+     background lets rows scroll underneath; the fade gradient below it only
+     appears once the page is scrolled. */
+  .archive-header {
+    position: sticky; top: 0; z-index: 2;
+    display: flex; align-items: center; gap: 12px;
+    padding: 22px 10px 18px; background: #171816;
+  }
+  .archive-header.header-scrolled::after {
+    content: ""; position: absolute; top: 100%; left: -26px; right: -26px;
+    height: 26px; pointer-events: none;
+    background: linear-gradient(to bottom, #171816, rgba(23, 24, 22, 0));
+  }
   .archive-title { margin: 0; font-size: 15px; font-weight: 600; color: #eceae5; }
   .archive-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .archive-search {
