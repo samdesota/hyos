@@ -2,6 +2,8 @@ import {
   browserCapability,
   type BrowserCommand,
   type BrowserPresentation,
+  type CdpEndpoint,
+  type CdpTargetRequest,
   type PresentationId,
 } from "../../capabilities/browser.js";
 import type {
@@ -18,11 +20,16 @@ export function createBrowserClient(
   return {
     protocol: { name: browser.id, version: browser.version },
     execute: (command: BrowserCommand) => browser.call("execute", command),
+    inspectCdp: (endpoint: CdpEndpoint) => browser.call("inspectCdp", endpoint),
+    openCdpTarget: (request: CdpTargetRequest) =>
+      browser.call("openCdpTarget", request),
     present: (presentation: BrowserPresentation) =>
       browser.call("present", presentation),
     release: (presentationId: PresentationId) =>
       browser.call("release", presentationId),
     setOverlayRegions: (regions) => browser.call("setOverlayRegions", regions),
+    setModalOverlay: (active: boolean) =>
+      browser.call("setModalOverlay", active),
     subscribe: (listener) => browser.subscribe("state", listener),
   };
 }

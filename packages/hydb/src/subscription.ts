@@ -47,6 +47,31 @@ type BufferedCommit = Readonly<{
   reject: (error: unknown) => void;
 }>;
 
+// Bootstrap instrumentation: identifies which subscription is bootstrapping,
+// how long each scope load takes, and how many rows each read — the
+// composition behind a slow post-restart first write. Gated by
+// HYOS_BOOT_TRACE=1.
+const BOOT_TRACE = process.env.HYOS_BOOT_TRACE === "1";
+let subscriptionCounter = 0;
+const bootstrapTraceNow = (): number =>
+  globalThis.performance?.now?.() ?? Date.now();
+const bootstrapTrace = (message: string): void => {
+  if (!BOOT_TRACE) return;
+  console.log(`[hydb-bootstrap] ${message}`);
+};
+
+function describeAccess(access: PhysicalAccess): string {
+  const table = getTableDefinition(access.table).name;
+  switch (access.kind) {
+    case "table-scan":
+      return `${table}:table-scan`;
+    case "primary-key":
+      return `${table}:primary-key`;
+    default:
+      return `${table}:${access.index}`;
+  }
+}
+
 function keyForRow(table: AnyTable, row: StoredRow): StorageKey {
   return Object.entries(getTableDefinition(table).columns)
     .filter(([, column]) => getColumnDefinition(column).primaryKey)
@@ -162,6 +187,7 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
   readonly #rowsBySource = new Map<QuerySource, Map<string, StoredRow>>();
   readonly #rowBytesBySource = new Map<QuerySource, Map<string, number>>();
   readonly #memory: MemoryHandle;
+  readonly #id = ++subscriptionCounter;
   #rowBytes = 0;
   #query?: DifferentialQuery<QueryValue>;
   #snapshot?: StorageSnapshot;
@@ -228,11 +254,42 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
     return this.#disposePromise;
   }
 
+  get id(): number {
+    return this.#id;
+  }
+
+  /** Identity + readiness for the wait-for-sequence stall diagnostics. */
+  get label(): string {
+    return `sub#${this.#id} (${this.#scopes
+      .map((scope) => describeAccess(scope.plan.access))
+      .join(" + ")})`;
+  }
+
+  get live(): boolean {
+    return this.#live;
+  }
+
+  /** Compact liveness snapshot for the wait-for-sequence watchdog. */
+  get state(): string {
+    return `sub#${this.#id}${this.#live ? " live" : " BOOT"} buffered=${
+      this.#buffer.length
+    }`;
+  }
+
   private async bootstrap(): Promise<void> {
+    const bootstrapId = this.#id;
+    const description = this.#scopes
+      .map((scope) => `${describeAccess(scope.plan.access)}[${scope.mode}]`)
+      .join(" + ");
+    const bootstrapStartedAt = bootstrapTraceNow();
+    bootstrapTrace(
+      `sub#${bootstrapId} start (${description}) at ${new Date().toISOString()}`,
+    );
     const snapshot = await this.storage.snapshot();
     this.#snapshot = snapshot;
     try {
       const fallbackRows = new Map<string, Map<string, StoredRow>>();
+      const scopeTraces: string[] = [];
       for (const scope of this.#scopes) {
         if (this.#disposed) return;
         if (scope.mode === "demand") continue;
@@ -240,10 +297,19 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
         let rows =
           scope.mode === "fallback" ? fallbackRows.get(table) : undefined;
         if (rows === undefined) {
+          const scopeStartedAt = bootstrapTraceNow();
           rows = await loadRows(snapshot, scope.plan.access);
+          scopeTraces.push(
+            `${describeAccess(scope.plan.access)}: ${Math.round(
+              bootstrapTraceNow() - scopeStartedAt,
+            )}ms/${rows.size}rows`,
+          );
           if (scope.mode === "fallback") fallbackRows.set(table, rows);
         }
         this.mergeRows(scope, rows);
+      }
+      if (scopeTraces.length > 0) {
+        bootstrapTrace(`sub#${bootstrapId} scopes ${scopeTraces.join(", ")}`);
       }
 
       if (this.#disposed) return;
@@ -257,8 +323,23 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
       );
       this.#query = query;
       this.#lastSequence = snapshot.sequence;
+      let queryStartedAt = bootstrapTraceNow();
       await query.bootstrap();
+      bootstrapTrace(
+        `sub#${bootstrapId} query-bootstrap: ${Math.round(
+          bootstrapTraceNow() - queryStartedAt,
+        )}ms`,
+      );
+      queryStartedAt = bootstrapTraceNow();
       await this.settleDemands(snapshot);
+      const demandsMs = Math.round(bootstrapTraceNow() - queryStartedAt);
+      if (demandsMs > 0) {
+        bootstrapTrace(
+          `sub#${bootstrapId} settle-demands: ${demandsMs}ms [${
+            this.#pendingDemands.length
+          } pending demands]`,
+        );
+      }
       query.publishInitial();
 
       while (this.#buffer.length > 0 && !this.#disposed) {
@@ -272,6 +353,11 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
         }
       }
       this.#live = !this.#disposed;
+      bootstrapTrace(
+        `sub#${bootstrapId} done: ${Math.round(
+          bootstrapTraceNow() - bootstrapStartedAt,
+        )}ms total${this.#buffer.length > 0 ? "" : " (no buffered commits)"}`,
+      );
     } finally {
       await this.releaseSnapshot();
     }
@@ -285,6 +371,7 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
 
   private async apply(commit: CommitBatch): Promise<void> {
     if (this.#disposed || commit.sequence <= this.#lastSequence) return;
+    const applyStartedAt = bootstrapTraceNow();
     const relevant = commit.changes.some((change) => {
       const table = getTableDefinition(change.table).name;
       return this.#scopes.some((scope) => scope.plan.source.table === table);
@@ -292,11 +379,20 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
     if (relevant) {
       const query = this.#query!;
       query.begin();
+      const scopeTimings: string[] = [];
       for (const scope of this.#scopes) {
+        const scopeStartedAt = bootstrapTraceNow();
         const changes = this.filterChanges(scope, commit);
         await query.apply(scope.plan.source, changes);
+        scopeTimings.push(
+          `${describeAccess(scope.plan.access)}: ${Math.round(
+            bootstrapTraceNow() - scopeStartedAt,
+          )}ms`,
+        );
       }
+      let demandsMs = 0;
       if (this.#pendingDemands.length > 0) {
+        const demandsStartedAt = bootstrapTraceNow();
         const snapshot = await this.storage.snapshot({ commit: commit.commit });
         this.#snapshot = snapshot;
         try {
@@ -307,8 +403,15 @@ export class SubscriptionRuntime<QueryValue extends Query<any>> {
         } finally {
           await this.releaseSnapshot();
         }
+        demandsMs = bootstrapTraceNow() - demandsStartedAt;
       }
       query.flush();
+      bootstrapTrace(
+        `sub#${this.#id} apply(${commit.sequence}): ${Math.round(
+          bootstrapTraceNow() - applyStartedAt,
+        )}ms [${scopeTimings.join(", ")}]` +
+          (demandsMs > 0 ? ` settle-demands: ${Math.round(demandsMs)}ms` : ""),
+      );
     }
     this.#lastSequence = commit.sequence;
   }

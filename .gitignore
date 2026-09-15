@@ -1,10 +1,12 @@
 node_modules
 dist
+dist-cjs
 .env
 .DS_Store
 *.local
+*.local.*
 .playwright-data
 .data
 playwright-report
 test-results
-.hy-ui-agent
+.hyedit

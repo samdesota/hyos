@@ -34,6 +34,24 @@ function checksum(payload: Uint8Array): Buffer {
     .subarray(0, checksumBytes);
 }
 
+// Reads up to this many bytes in one shot hoping to capture header + payload.
+const readProbeBytes = 64 * 1024;
+
+function parseHeader(
+  header: Buffer,
+  position: number,
+  fileSize: number,
+): { type: RecordType; length: number; checksum: Uint8Array } | undefined {
+  if (!header.subarray(0, 4).equals(magic) || header[4] !== formatVersion) {
+    return undefined;
+  }
+  const type = codeType.get(header[5]!);
+  if (type === undefined) return undefined;
+  const length = header.readUInt32BE(6);
+  if (position + headerBytes + length > fileSize) return undefined;
+  return { type, length, checksum: header.subarray(10) };
+}
+
 async function readInto(
   file: FileHandle,
   buffer: Buffer,
@@ -77,10 +95,18 @@ export class AppendOnlyPageStore {
 
   private constructor(private readonly file: FileHandle) {}
 
-  static async open(path: string): Promise<AppendOnlyPageStore> {
+  static async open(
+    path: string,
+    recoveredOffset = 0,
+  ): Promise<AppendOnlyPageStore> {
     const store = new AppendOnlyPageStore(await open(path, "a+"));
-    await store.recover();
-    return store;
+    try {
+      await store.recover(recoveredOffset);
+      return store;
+    } catch (error) {
+      await store.close();
+      throw error;
+    }
   }
 
   get endOffset(): number {
@@ -118,9 +144,12 @@ export class AppendOnlyPageStore {
     return record;
   }
 
-  async *records(types?: ReadonlySet<RecordType>): AsyncIterable<StoredRecord> {
+  async *records(
+    types?: ReadonlySet<RecordType>,
+    start = 0,
+  ): AsyncIterable<StoredRecord> {
     this.assertOpen();
-    let position = 0;
+    let position = start;
     while (position < this.#end) {
       const header = await this.readHeader(position, this.#end);
       if (header === undefined) break;
@@ -145,9 +174,12 @@ export class AppendOnlyPageStore {
     await this.file.close();
   }
 
-  private async recover(): Promise<void> {
+  private async recover(start: number): Promise<void> {
     const size = Number((await this.file.stat()).size);
-    let position = 0;
+    if (!Number.isSafeInteger(start) || start < 0 || start > size) {
+      throw new RangeError("Invalid recovered offset");
+    }
+    let position = start;
     while (position < size) {
       const header = await this.readHeader(position, size);
       if (header === undefined) break;
@@ -161,17 +193,40 @@ export class AppendOnlyPageStore {
     position: number,
     fileSize = this.#end,
   ): Promise<StoredRecord | undefined> {
+    // Most records are small; a single read of header + payload prefix avoids
+    // one syscall and await round-trip per record on every cold scan.
+    const probeBytes = Math.min(readProbeBytes, fileSize - position);
+    if (probeBytes >= headerBytes) {
+      const probe = Buffer.allocUnsafe(probeBytes);
+      const read = await readInto(this.file, probe, position);
+      if (read >= headerBytes) {
+        const parsed = parseHeader(
+          probe.subarray(0, headerBytes),
+          position,
+          fileSize,
+        );
+        if (parsed !== undefined && read >= headerBytes + parsed.length) {
+          const payload = probe.subarray(
+            headerBytes,
+            headerBytes + parsed.length,
+          );
+          if (!checksum(payload).equals(parsed.checksum)) return undefined;
+          return Object.freeze({ id: position, type: parsed.type, payload });
+        }
+      }
+    }
+    // Fallback for large or truncated-at-edge records: header, then payload.
     const parsed = await this.readHeader(position, fileSize);
     if (parsed === undefined) return undefined;
-    const { type, length, checksum: expectedChecksum } = parsed;
-    const payload = Buffer.allocUnsafe(length);
+    const payload = Buffer.allocUnsafe(parsed.length);
     if (
-      (await readInto(this.file, payload, position + headerBytes)) !== length
+      (await readInto(this.file, payload, position + headerBytes)) !==
+      parsed.length
     ) {
       return undefined;
     }
-    if (!checksum(payload).equals(expectedChecksum)) return undefined;
-    return Object.freeze({ id: position, type, payload });
+    if (!checksum(payload).equals(parsed.checksum)) return undefined;
+    return Object.freeze({ id: position, type: parsed.type, payload });
   }
 
   private async readHeader(
@@ -185,14 +240,7 @@ export class AppendOnlyPageStore {
     if ((await readInto(this.file, header, position)) !== headerBytes) {
       return undefined;
     }
-    if (!header.subarray(0, 4).equals(magic) || header[4] !== formatVersion) {
-      return undefined;
-    }
-    const type = codeType.get(header[5]!);
-    if (type === undefined) return undefined;
-    const length = header.readUInt32BE(6);
-    if (position + headerBytes + length > fileSize) return undefined;
-    return { type, length, checksum: header.subarray(10) };
+    return parseHeader(header, position, fileSize);
   }
 
   private assertOpen(): void {

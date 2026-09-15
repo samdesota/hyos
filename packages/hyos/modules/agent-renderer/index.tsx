@@ -1,0 +1,81 @@
+import { Route, HashRouter } from "@solidjs/router";
+import { render } from "solid-js/web";
+
+import type { RendererRemoteCapabilities } from "../../remote-capabilities.js";
+import type { AgentSound } from "../agent-sound-renderer/types.js";
+import type { BrowserClient } from "../browser-client/types.js";
+import type { BrowserViewModule } from "../browser-view/types.js";
+import type { WhiteboardViewModule } from "../whiteboard/renderer/types.js";
+import { AgentApp } from "./AgentApp.js";
+import {
+  createAgentClient,
+  createKeybindingClient,
+  createWindowControlsClient,
+} from "./client.js";
+import { ROUTE_PATHS } from "./session-route.js";
+
+const { defineModule, registerModule } = globalThis.PrototypeModules;
+
+registerModule(
+  defineModule({
+    id: "agent.renderer",
+    inject: [
+      "dom.root",
+      "remote.capabilities",
+      "browser.client",
+      "browser.view",
+      "whiteboard.view",
+      "agent.sound",
+    ],
+    provide: ["agent.ui"],
+
+    apply(ctx) {
+      const root = ctx.get<Document>("dom.root");
+      const remote = ctx.get<RendererRemoteCapabilities>("remote.capabilities");
+      const browserClient = ctx.get<BrowserClient>("browser.client");
+      const { BrowserView } = ctx.get<BrowserViewModule>("browser.view");
+      const { WhiteboardPage } =
+        ctx.get<WhiteboardViewModule>("whiteboard.view");
+      const sound = ctx.get<AgentSound>("agent.sound");
+      const mount = root.querySelector<HTMLElement>("#app");
+      if (!mount) throw new Error("Missing Solid application mount");
+      const client = createAgentClient(remote);
+      const keybindingClient = createKeybindingClient(remote);
+      const windowControls = createWindowControlsClient(remote);
+      const dispose = render(
+        () => (
+          // Hash-mode router shell. Routes mirror the AppRoute model
+          // (`/`, `/session/:id`, `/tabs/:id`, `/archive`); the URL is authoritative —
+          // AgentApp derives its open view from the matched route.
+          <HashRouter
+            root={() => (
+              <AgentApp
+                root={root}
+                client={client}
+                keybindingClient={keybindingClient}
+                windowControls={windowControls}
+                browserClient={browserClient}
+                BrowserView={BrowserView}
+                WhiteboardPage={WhiteboardPage}
+                sound={sound}
+              />
+            )}
+          >
+            <Route path={ROUTE_PATHS.new} />
+            <Route path={ROUTE_PATHS.session} />
+            <Route path={ROUTE_PATHS.globalTabs} />
+            <Route path={ROUTE_PATHS.archive} />
+            {/* Unrecognized hashes land here and read as `/`. */}
+            <Route path="*" />
+          </HashRouter>
+        ),
+        mount,
+      );
+
+      ctx.provide("agent.ui", { client });
+      ctx.effect(() => () => client.dispose());
+      ctx.effect(() => () => keybindingClient.dispose());
+      ctx.effect(() => dispose);
+    },
+  }),
+);

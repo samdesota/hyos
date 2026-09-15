@@ -23,6 +23,17 @@ import {
 
 const databaseSchemas = new WeakMap<Database, AnySchema>();
 
+// Stage-level timing for database.execute/transact. Gated behind
+// HYOS_BOOT_TRACE=1: the commit path traces at 4–56ms while callers still
+// observe multi-second stalls, so the remaining stages (queue, snapshot,
+// command invoke, and the post-commit waitForSequence) can attribute the
+// difference when tracing is enabled.
+const traceNow = (): number => globalThis.performance?.now?.() ?? Date.now();
+const traceExecute = (event: string, ms: number): void => {
+  if (process.env.HYOS_BOOT_TRACE !== "1") return;
+  console.log(`[hydb-execute] ${event}: ${Math.round(ms)}ms`);
+};
+
 export interface Database {
   fetch<QueryValue extends Query<any>>(
     query: QueryValue,
@@ -104,6 +115,10 @@ class QueryDatabase implements Database {
       this.spill,
     );
     this.#subscriptions.add(subscription);
+    if (process.env.HYOS_BOOT_TRACE === "1")
+      console.log(
+        `[hydb-bootstrap] subscriptions active: ${this.#subscriptions.size}`,
+      );
     void subscription.ready.catch(() => {
       this.disposeSubscription(subscription);
     });
@@ -120,9 +135,14 @@ class QueryDatabase implements Database {
     command: CommandValue,
     input: InferCommandInput<CommandValue>,
   ): Promise<InferCommandResult<CommandValue>> {
+    const startedAt = traceNow();
     const execution = this.#commandQueue.then(async () => {
+      const queueMs = traceNow() - startedAt;
+      const snapshotStartedAt = traceNow();
       const snapshot = await this.storage.snapshot();
+      const snapshotMs = traceNow() - snapshotStartedAt;
       try {
+        const invokeStartedAt = traceNow();
         const invocation = await invokeCommand(
           command,
           input,
@@ -130,13 +150,26 @@ class QueryDatabase implements Database {
           snapshot,
           this.memory,
         );
+        const invokeMs = traceNow() - invokeStartedAt;
         try {
           if (invocation.mutations.length === 0) return invocation.result;
           const commit = await this.storage.commit({
             expectedHead: snapshot.commit,
             mutations: invocation.mutations,
           });
+          const waitStartedAt = traceNow();
           await this.waitForSequence(commit.sequence);
+          const waitMs = traceNow() - waitStartedAt;
+          traceExecute("execute:queue-wait", queueMs);
+          traceExecute("execute:snapshot", snapshotMs);
+          traceExecute("execute:invoke", invokeMs);
+          if (waitMs >= 1) traceExecute("execute:wait-for-sequence", waitMs);
+          if (queueMs + snapshotMs + invokeMs + waitMs >= 500) {
+            traceExecute(
+              `execute:total(${commit.sequence})`,
+              traceNow() - startedAt,
+            );
+          }
           return invocation.result;
         } finally {
           invocation.releaseMemory();
@@ -232,6 +265,7 @@ class QueryDatabase implements Database {
         after,
         signal: this.#abortController.signal,
       })) {
+        traceExecute(`change-delivered(${commit.sequence})`, 0);
         await this.applyCommit(commit);
       }
     } catch (error) {
@@ -244,10 +278,22 @@ class QueryDatabase implements Database {
 
   private async applyCommit(commit: CommitBatch): Promise<void> {
     if (commit.sequence <= this.#sequence) return;
-    await Promise.all(
-      [...this.#subscriptions].map((subscription) =>
-        subscription.accept(commit),
-      ),
+    const applyStartedAt = traceNow();
+    const accepts = await Promise.all(
+      [...this.#subscriptions].map(async (subscription) => {
+        const acceptStartedAt = traceNow();
+        await subscription.accept(commit);
+        return { subscription, ms: traceNow() - acceptStartedAt };
+      }),
+    );
+    traceExecute(
+      `apply-commit(${commit.sequence}) [${accepts
+        .map(
+          (accept) =>
+            `sub#${accept.subscription.id}=${Math.round(accept.ms)}ms`,
+        )
+        .join(", ")}]`,
+      traceNow() - applyStartedAt,
     );
     this.#sequence = commit.sequence;
     for (const [sequence, waiters] of this.#sequenceWaiters) {
@@ -262,11 +308,46 @@ class QueryDatabase implements Database {
     if (this.#changeFailure !== undefined) {
       return Promise.reject(this.#changeFailure);
     }
+    const waitStartedAt = traceNow();
+    traceExecute(
+      `wait-for-sequence(${sequence}): parked — ${this.describeSubscriptions()}`,
+      0,
+    );
+    // Watchdog fires every second while a write is parked — useful for
+    // diagnosing multi-second stalls, but only emit when tracing is on.
+    const watchdog = setInterval(() => {
+      traceExecute(
+        `wait-for-sequence(${sequence}): ${Math.round(
+          traceNow() - waitStartedAt,
+        )}ms elapsed — ${this.describeSubscriptions()}`,
+        0,
+      );
+    }, 1000);
     return new Promise<void>((resolve, reject) => {
       const waiters = this.#sequenceWaiters.get(sequence) ?? [];
-      waiters.push({ resolve, reject });
+      waiters.push({
+        resolve: () => {
+          clearInterval(watchdog);
+          traceExecute(
+            `wait-for-sequence(${sequence})`,
+            traceNow() - waitStartedAt,
+          );
+          resolve();
+        },
+        reject: (error) => {
+          clearInterval(watchdog);
+          reject(error);
+        },
+      });
       this.#sequenceWaiters.set(sequence, waiters);
     });
+  }
+
+  private describeSubscriptions(): string {
+    if (this.#subscriptions.size === 0) return "no subscriptions";
+    return [...this.#subscriptions]
+      .map((subscription) => subscription.state)
+      .join(", ");
   }
 
   private rejectSequenceWaiters(error: unknown): void {

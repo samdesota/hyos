@@ -1,5 +1,5 @@
 import path from "node:path";
-import { BrowserWindow } from "electron";
+import { BrowserWindow, WebContentsView, type WebPreferences } from "electron";
 import { remoteChannels } from "../../remote-capabilities.js";
 
 export type ElectronWindowConfig = Readonly<{
@@ -10,53 +10,155 @@ export type ElectronWindowConfig = Readonly<{
 
 export type ElectronWindows = Readonly<{
   baseWindow: BrowserWindow;
-  overlayWindow: BrowserWindow;
-  alignOverlay(): void;
+  uiView: WebContentsView;
+  alignUi(): void;
 }>;
 
+/**
+ * Where the native macOS traffic lights sit when revealed. Re-applied after
+ * every reveal because Electron resets the buttons to the default position
+ * in various states (visibility changes, restores, module reloads).
+ */
+export const TRAFFIC_LIGHT_POSITION = { x: 16, y: 22 };
+
+/**
+ * Off-window position where the lights are parked while concealed. The
+ * buttons stay *visible* to AppKit at all times — concealment moves them
+ * outside the window instead of hiding them, so AppKit never redraws its
+ * titlebar chrome (which visibly shifted the window's top border on every
+ * `setWindowButtonVisibility` toggle). Off-window buttons cannot receive
+ * clicks.
+ */
+export const PARKED_BUTTON_POSITION = { x: -100, y: 0 };
+
+/**
+ * Single-window shell: the app UI renders in its own `WebContentsView`
+ * layered inside the base window. Browser tab views are appended to the
+ * same `contentView` afterwards, so they composite above the UI; a modal
+ * overlay mode can re-raise the UI view when UI must cover browser content.
+ */
 export function createElectronWindows(
   root: string,
   config: ElectronWindowConfig,
 ): ElectronWindows {
+  const showWindow = !process.argv.includes("--smoke-test");
+  const webPreferences: WebPreferences = {
+    preload: path.join(root, "preload.js"),
+    additionalArguments: [
+      `--remote-invoke-channel=${remoteChannels.invoke}`,
+      `--remote-event-channel=${remoteChannels.event}`,
+    ],
+    contextIsolation: true,
+    nodeIntegration: false,
+    sandbox: true,
+  };
   const baseWindow = new BrowserWindow({
     width: config.width,
     height: config.height,
     minWidth: 720,
     minHeight: 520,
+    // Frameless with native traffic lights, positioned to sit centered on
+    // the ghost dots' animated position (dots center at y≈28).
+    titleBarStyle: "hidden",
+    trafficLightPosition: TRAFFIC_LIGHT_POSITION,
     title: config.title,
-    backgroundColor: "#f5f2ec",
-  });
-  const overlayWindow = new BrowserWindow({
-    ...baseWindow.getContentBounds(),
-    parent: baseWindow,
-    frame: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    resizable: false,
-    movable: false,
-    hasShadow: false,
+    // Theme-colored (not cream) so regions where the transparent UI shows
+    // through to the window still read as the app background.
+    backgroundColor: "#171816",
     show: false,
-    webPreferences: {
-      preload: path.join(root, "preload.js"),
-      additionalArguments: [
-        `--remote-invoke-channel=${remoteChannels.invoke}`,
-        `--remote-event-channel=${remoteChannels.event}`,
-      ],
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
   });
-  const alignOverlay = (): void => {
-    if (baseWindow.isDestroyed() || overlayWindow.isDestroyed()) return;
-    overlayWindow.setBounds(baseWindow.getContentBounds());
+  // The sidebar renders its own Arc-style collapsible controls; the native
+  // traffic lights are parked off-window underneath (macOS only) so AppKit
+  // never toggles its titlebar chrome.
+  if (process.platform === "darwin")
+    baseWindow.setWindowButtonPosition({ ...PARKED_BUTTON_POSITION });
+  const uiView = new WebContentsView({ webPreferences });
+  // Append (no index) so the UI sits above the window's own blank contents
+  // and below browser views that browser.main attaches later.
+  baseWindow.contentView.addChildView(uiView);
+  // Transparent view background so the UI composites over browser views
+  // beneath it (modal overlay mode) instead of painting an opaque page.
+  uiView.setBackgroundColor("#00000000");
+  const alignUi = (): void => {
+    if (baseWindow.isDestroyed() || uiView.webContents.isDestroyed()) return;
+    const [width, height] = baseWindow.getContentSize();
+    uiView.setBounds({ x: 0, y: 0, width, height });
   };
+  alignUi();
 
-  void baseWindow.loadFile(path.join(root, "renderer/base.html"));
-  void overlayWindow.loadFile(path.join(root, "renderer/index.html"));
-  overlayWindow.once("ready-to-show", () => {
-    alignOverlay();
-    overlayWindow.show();
-  });
-  return { baseWindow, overlayWindow, alignOverlay };
+  const bootTrace = (message: string) => {
+    if (process.env.HYOS_BOOT_TRACE === "1")
+      console.log(`[DEBUG-boot-7f2c] renderer ${message}`);
+  };
+  uiView.webContents.on("did-start-loading", () =>
+    bootTrace("navigation:start"),
+  );
+  uiView.webContents.on("did-finish-load", () => bootTrace("navigation:done"));
+  uiView.webContents.on("render-process-gone", (_event, details) =>
+    bootTrace(`process:gone ${details.reason} exit=${details.exitCode}`),
+  );
+  void uiView.webContents.loadFile(path.join(root, "renderer/index.html"));
+  if (showWindow) {
+    // The base window itself loads nothing, so gate the reveal on the UI
+    // view's contents having finished their first load.
+    uiView.webContents.once("did-finish-load", () => {
+      alignUi();
+      baseWindow.show();
+    });
+  }
+  return { baseWindow, uiView, alignUi };
+}
+
+/** Shape of the base window the controls implementation needs. */
+export type WindowControlsTarget = Pick<
+  BrowserWindow,
+  | "isDestroyed"
+  | "minimize"
+  | "maximize"
+  | "unmaximize"
+  | "isMaximized"
+  | "close"
+  | "setWindowButtonVisibility"
+  | "setWindowButtonPosition"
+>;
+
+/**
+ * Implementation of the `window-controls` remote capability against the base
+ * window. Each guard checks `isDestroyed` so a late renderer invocation after
+ * teardown is a no-op rather than an Electron throw.
+ */
+export function windowControlsImplementation(
+  baseWindow: WindowControlsTarget,
+): {
+  minimize(): void;
+  toggleMaximize(): void;
+  close(): void;
+  setButtonsVisible(visible: boolean): void;
+} {
+  return {
+    minimize: () => {
+      if (!baseWindow.isDestroyed()) baseWindow.minimize();
+    },
+    toggleMaximize: () => {
+      if (baseWindow.isDestroyed()) return;
+      if (baseWindow.isMaximized()) baseWindow.unmaximize();
+      else baseWindow.maximize();
+    },
+    close: () => {
+      if (!baseWindow.isDestroyed()) baseWindow.close();
+    },
+    // Conceals/reveals the real macOS traffic lights (with their native
+    // long-press menus) for the sidebar's hover-expanded controls. The
+    // buttons are always left *visible* to AppKit: concealment parks them
+    // off-window, so the top border (AppKit titlebar chrome) never redraws.
+    // The custom position is re-applied on reveal because Electron resets
+    // the button position in various states.
+    setButtonsVisible: (visible) => {
+      if (baseWindow.isDestroyed()) return;
+      if (process.platform !== "darwin") return;
+      baseWindow.setWindowButtonPosition(
+        visible ? { ...TRAFFIC_LIGHT_POSITION } : { ...PARKED_BUTTON_POSITION },
+      );
+    },
+  };
 }

@@ -4,10 +4,10 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+      content="default-src 'self'; script-src 'self' http://127.0.0.1:*; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; frame-src http://127.0.0.1:*; img-src 'self' data: blob: file:; media-src 'self' data:; style-src 'self' 'unsafe-inline' http://127.0.0.1:*"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HyOS Browser Prototype</title>
+    <title>HyOS Agent</title>
   </head>
   <body>
     <div id="app"></div>

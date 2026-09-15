@@ -5,6 +5,24 @@ let rendererHost;
 let remoteCapabilities;
 let entries = [];
 let operation = Promise.resolve();
+const bootStartedAt = performance.now();
+let bootStage = "script-loaded";
+const BOOT_TRACE =
+  new URLSearchParams(window.location.search).get("bootTrace") === "1";
+const bootTrace = (event, detail = "") => {
+  bootStage = event;
+  if (!BOOT_TRACE) return;
+  console.log(
+    `[DEBUG-boot-7f2c] +${Math.round(performance.now() - bootStartedAt)}ms renderer ${event}${detail ? ` ${detail}` : ""}`,
+  );
+};
+setTimeout(() => {
+  if (bootStage !== "start:done")
+    bootTrace(
+      "watchdog:boot-stalled",
+      `stage=${bootStage} readyState=${document.readyState} mounts=${rendererHost?.mounts?.map(({ placement }) => placement.id).join(",") ?? "none"}`,
+    );
+}, 10_000);
 
 function renderSnapshot() {
   const output = document.querySelector("#renderer-state");
@@ -12,9 +30,12 @@ function renderSnapshot() {
 }
 
 async function importGenerated(filename) {
+  bootTrace("import:start", filename);
   const source = new URL(filename, generatedBase);
   source.searchParams.set("revision", `${Date.now()}-${Math.random()}`);
-  return await import(source.href);
+  const loaded = await import(source.href);
+  bootTrace("import:done", filename);
+  return loaded;
 }
 
 async function loadDefinition(entry) {
@@ -33,7 +54,9 @@ async function readEntries() {
 
 async function mountFrom(index) {
   for (const entry of entries.slice(index)) {
+    bootTrace("module:mount:start", entry.id);
     await rendererHost.mount(await loadDefinition(entry), entry);
+    bootTrace("module:mount:done", entry.id);
   }
   renderSnapshot();
 }
@@ -60,6 +83,7 @@ function enqueue(action) {
 }
 
 async function start() {
+  bootTrace("start:entered");
   const capabilities = await importGenerated("capabilities.js");
   remoteCapabilities = new RendererRemoteCapabilities({
     definitions: capabilities.applicationCapabilities,
@@ -78,10 +102,13 @@ async function start() {
     enqueue(() => reloadFrom(fromId));
   });
   await readEntries();
+  bootTrace("manifest:ready", entries.map(({ id }) => id).join(","));
   await mountFrom(0);
+  bootTrace("start:done");
 }
 
 start().catch((error) => {
+  bootTrace("start:failed", error?.stack ?? String(error));
   document.querySelector("#app").textContent = error.message;
 });
 

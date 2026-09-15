@@ -5,9 +5,14 @@
   "description": "HyOS Electron shell with typed process-split modules",
   "main": "main.js",
   "scripts": {
+    "build:hydb": "npm run build --workspace @hyos/hydb",
+    "build:hyedit": "npm run build --workspace @hyos/hyedit",
+    "predev": "npm run build:hyedit",
     "dev": "electron .",
+    "presmoke": "npm run build:hyedit",
     "smoke": "electron . --smoke-test",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test *.test.js && npm run build:hydb && tsx --test capabilities/*.test.ts modules/agent-main/*.test.ts modules/agent-main/providers/*.test.ts modules/agent-renderer/*.test.ts modules/browser-main/*.test.ts modules/log-main/*.test.ts modules/whiteboard/main/*.test.ts modules/whiteboard/renderer/*.test.ts modules/reload-main/*.test.ts",
+    "typecheck": "npm run build:hydb && tsc --noEmit -p tsconfig.json",
     "check": "node --check main.js && node --check application-loader.js && node --check isomorphic-compiler.js && node --check runtime.js && node --check remote-capabilities.js && node --check preload.js && node --check renderer/renderer.js && npm run typecheck"
   },
   "devDependencies": {
@@ -19,6 +24,15 @@
     "typescript": "^5.9.0"
   },
   "dependencies": {
-    "solid-js": "^1.9.15"
+    "@anthropic-ai/claude-agent-sdk": "^0.3.258",
+    "@hyos/hydb": "^0.0.0",
+    "@hyos/hyedit": "0.0.0",
+    "@solidjs/router": "^0.15.4",
+    "@vscode/ripgrep": "^1.18.0",
+    "mermaid": "^11.17.2",
+    "micromark": "^4.0.2",
+    "micromark-extension-gfm-table": "^2.1.1",
+    "solid-js": "^1.9.15",
+    "zod": "^4.4.3"
   }
 }

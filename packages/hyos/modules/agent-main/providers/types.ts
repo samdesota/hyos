@@ -1,0 +1,111 @@
+import type {
+  AgentActivity,
+  AgentMode,
+  AgentMessageStatus,
+  AgentPlan,
+  AgentProviderSummary,
+  AgentReasoningEffort,
+  AgentSessionTab,
+} from "../../../capabilities/agent.js";
+import type { BrowserClient } from "../../browser-client/types.js";
+
+/**
+ * One composer image attached to this turn, read from the media store by the
+ * host and delivered as base64 so each provider can build its native image
+ * part.
+ */
+export type AgentRunImage = Readonly<{
+  mimeType: string;
+  base64: string;
+}>;
+
+export type AgentRunInput = Readonly<{
+  prompt: string;
+  /**
+   * Images attached to the current turn's user message, in composer order.
+   * Only the opening message carries them; provider follow-up rounds do not.
+   */
+  images?: readonly AgentRunImage[];
+  /** The session the run belongs to, when the run is session-backed. */
+  sessionId?: string;
+  mode?: AgentMode;
+  intent?: "implement" | "investigate" | "summary";
+  firstTurn?: boolean;
+  /** The session's persisted plan, sent at the start of every user response. */
+  plan?: AgentPlan | null;
+  folder: string;
+  modelId: string;
+  reasoningEffort: AgentReasoningEffort | null;
+  providerSessionId: string | null;
+  /**
+   * Returns the full transcript of an earlier turn (thinking and tool
+   * responses included), selected by the turn's id — the id of its opening
+   * user message, as shown in the persisted transcript. Resolves to null for
+   * unknown ids or the current turn.
+   */
+  sessionTranscript?: (turnId: string) => Promise<string | null>;
+  /** Browser client for opening tabs and other browser operations. */
+  browserClient?: BrowserClient;
+  /**
+   * Appends one opened page to the run's session's persisted tab strip and
+   * focuses it — the durable record a subscribing renderer reconciles its
+   * strip against. Absent when the run has no session-backed tab store.
+   */
+  appendSessionTab?: (tab: AgentSessionTab) => Promise<void>;
+}>;
+
+export type AgentTokenUsage = Readonly<{
+  promptTokens: number;
+  completionTokens: number | null;
+  contextWindow: number;
+}>;
+
+export type AgentRunResult = Readonly<{
+  providerSessionId: string | null;
+  usage?: AgentTokenUsage;
+}>;
+
+export type AgentRunSink = Readonly<{
+  session(providerSessionId: string): void | Promise<void>;
+  /** Context usage from the most recent model round, reported as it lands. */
+  usage?(usage: AgentTokenUsage): void | Promise<void>;
+  response(content: string): void | Promise<void>;
+  activity(
+    providerItemId: string,
+    activity: AgentActivity,
+    status: AgentMessageStatus,
+  ): void | Promise<void>;
+}>;
+
+export interface AgentProvider {
+  readonly summary: AgentProviderSummary;
+  prepare?(): Promise<void>;
+  /**
+   * Generates a short 3-5 word session title from the user's first prompt.
+   * Best-effort: resolves to null on any failure (no key, request error,
+   * empty reply) so the caller keeps the placeholder title. Absent on
+   * providers that cannot make cheap one-shot calls.
+   */
+  generateTitle?(prompt: string, signal?: AbortSignal): Promise<string | null>;
+  /**
+   * Generates a short 3-5 word description of what the starting turn will
+   * do, from the user's prompt and — for bare continuations like "continue"
+   * — the tail of the previous assistant response. Best-effort: resolves to
+   * null on any failure so the caller keeps the deterministic placeholder.
+   */
+  generateStatusDetail?(
+    prompt: string,
+    previousResponse: string | null,
+    signal?: AbortSignal,
+  ): Promise<string | null>;
+  run(
+    input: AgentRunInput,
+    sink: AgentRunSink,
+    signal: AbortSignal,
+  ): Promise<AgentRunResult>;
+}
+
+export function novelSuffix(previous: string, next: string): string {
+  if (next.startsWith(previous)) return next.slice(previous.length);
+  return next;
+}

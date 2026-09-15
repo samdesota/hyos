@@ -66,6 +66,13 @@ export function getColumnDefinition<ColumnValue extends AnyColumn>(
   return value[columnDefinition];
 }
 
+/** Reads the config of an unbound column builder (before `table()` binds it). */
+export function getColumnBuilderDefinition<Builder extends AnyColumnBuilder>(
+  value: Builder,
+): Builder[typeof columnBuilderDefinition] {
+  return value[columnBuilderDefinition];
+}
+
 function createColumnBuilder<
   Data,
   NotNull extends boolean,

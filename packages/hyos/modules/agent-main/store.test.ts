@@ -1,0 +1,879 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { z } from "zod";
+
+import type { AgentSessionTabs } from "../../capabilities/agent.js";
+import { hydb, memoryStorage } from "@hyos/hydb";
+
+import { agentGlobalTabs, agentSchema, agentSessions } from "./model.js";
+import { createAgentStore } from "./store.js";
+
+test("agent sessions persist chunked messages and publish HyDB changes", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Build the first pass",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+      reasoningEffort: "medium",
+      mode: "incremental",
+    });
+
+    let observedChange = false;
+    const changed = new Promise<void>((resolve) => {
+      let unsubscribe: () => void = () => undefined;
+      unsubscribe = store.watchMessages(turn.sessionId, () => {
+        if (!observedChange) return;
+        unsubscribe();
+        resolve();
+      });
+    });
+
+    observedChange = true;
+    const activityId = await store.upsertActivity(
+      turn.sessionId,
+      null,
+      {
+        type: "tool",
+        category: "read",
+        label: "Read files",
+        detail: "rg --files",
+      },
+      "streaming",
+    );
+    await store.upsertActivity(
+      turn.sessionId,
+      activityId,
+      {
+        type: "tool",
+        category: "read",
+        label: "Read files",
+        detail: "rg --files\npackages/hyos/main.js",
+      },
+      "complete",
+    );
+    await store.appendAssistantChunk(
+      turn.sessionId,
+      turn.assistantMessageId,
+      0,
+      "First ",
+    );
+    await store.appendAssistantChunk(
+      turn.sessionId,
+      turn.assistantMessageId,
+      1,
+      "response",
+    );
+    await changed;
+    await store.finishRun(turn.sessionId, turn.assistantMessageId, "thread-1");
+
+    const sessions = await store.listSessions();
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0].status, "ready");
+    assert.equal(sessions[0].reasoningEffort, "medium");
+    assert.equal(sessions[0].mode, "incremental");
+
+    const page = await store.pageMessages(turn.sessionId, null, 20);
+    assert.equal(page.messages.length, 3);
+    assert.equal(page.messages[0].role, "user");
+    assert.equal(page.messages[0].content, "Build the first pass");
+    assert.equal(page.messages[1].activity?.type, "tool");
+    assert.equal(
+      page.messages[1].activity?.type === "tool" &&
+        page.messages[1].activity.detail,
+      "rg --files\npackages/hyos/main.js",
+    );
+    assert.equal(page.messages[2].role, "assistant");
+    assert.equal(page.messages[2].content, "First response");
+    assert.equal(page.messages[2].status, "complete");
+    assert.equal(page.hasOlder, false);
+  } finally {
+    await database.close();
+  }
+});
+
+test("sessions persist their origin folder for worktree grouping", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    // Worktree session: folder is the worktree cwd, originFolder the folder
+    // the composer pointed at.
+    const worktreeTurn = await store.createSession({
+      prompt: "Worktree session",
+      folder: "/Users/sam/.hyos/worktrees/hyos",
+      originFolder: "/Users/sam/projects/hyos",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+    const worktreeSession = await store.getSession(worktreeTurn.sessionId);
+    assert.equal(worktreeSession.folder, "/Users/sam/.hyos/worktrees/hyos");
+    assert.equal(worktreeSession.originFolder, "/Users/sam/projects/hyos");
+
+    // Plain session: no origin folder.
+    const plainTurn = await store.createSession({
+      prompt: "Plain session",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+    const plainSession = await store.getSession(plainTurn.sessionId);
+    assert.equal(plainSession.originFolder, null);
+    assert.equal((await store.listSessions()).length, 2);
+  } finally {
+    await database.close();
+  }
+});
+
+test("renameSession updates the title and publishes the change", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Investigate the failing test",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+    const session = await store.getSession(turn.sessionId);
+    assert.equal(session.title, "Investigate the failing test");
+
+    let observedChange = false;
+    const changed = new Promise<void>((resolve) => {
+      let unsubscribe: () => void = () => undefined;
+      unsubscribe = store.watchSessions(() => {
+        if (!observedChange) return;
+        unsubscribe();
+        resolve();
+      });
+    });
+
+    observedChange = true;
+    await store.renameSession(turn.sessionId, "Fix flaky gateway test");
+    await changed;
+
+    const renamed = await store.getSession(turn.sessionId);
+    assert.equal(renamed.title, "Fix flaky gateway test");
+    const sessions = await store.listSessions();
+    assert.equal(sessions[0].title, "Fix flaky gateway test");
+  } finally {
+    await database.close();
+  }
+});
+
+test("renameSession trims and clamps long or multi-line titles", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Prompt",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+    await store.renameSession(
+      turn.sessionId,
+      "  Generated title line\n  second line ignored  ",
+    );
+    const session = await store.getSession(turn.sessionId);
+    assert.equal(session.title, "Generated title line");
+
+    const long = "x".repeat(120);
+    await store.renameSession(turn.sessionId, long);
+    const clamped = await store.getSession(turn.sessionId);
+    // titleFromPrompt keeps 69 characters plus the ellipsis.
+    assert.equal(clamped.title.length, 70);
+    assert.ok(clamped.title.startsWith("x".repeat(69)));
+    assert.ok(clamped.title.endsWith("…"));
+  } finally {
+    await database.close();
+  }
+});
+
+test("provider session checkpoints survive an interrupted run", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Build the dataflow engine",
+      folder: "/tmp/project",
+      providerId: "claude",
+      modelId: "sonnet",
+    });
+    await store.checkpointProviderSession(turn.sessionId, "claude-session-1");
+    await store.endRun(
+      turn.sessionId,
+      turn.assistantMessageId,
+      "cancelled",
+      "failed",
+      "Interrupted",
+    );
+
+    const recovered = await store.getSession(turn.sessionId);
+    assert.equal(recovered.providerSessionId, "claude-session-1");
+    assert.equal(recovered.mode, "standard");
+  } finally {
+    await database.close();
+  }
+});
+
+test("sessions can be archived and unarchived", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Archive me",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+    assert.equal((await store.getSession(turn.sessionId)).archivedAt, null);
+
+    await store.setSessionArchived(turn.sessionId, true);
+    const archived = await store.getSession(turn.sessionId);
+    assert.ok(archived.archivedAt instanceof Date);
+
+    await store.setSessionArchived(turn.sessionId, false);
+    assert.equal((await store.getSession(turn.sessionId)).archivedAt, null);
+
+    const sessions = await store.listSessions();
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0].archivedAt, null);
+  } finally {
+    await database.close();
+  }
+});
+
+test("a follow-up turn atomically persists a mode change", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Plan the work",
+      folder: "/tmp/project",
+      providerId: "glm",
+      modelId: "zai/glm-5.3-flash",
+      reasoningEffort: "medium",
+    });
+    assert.equal((await store.getSession(turn.sessionId)).mode, "standard");
+
+    await store.startTurn(
+      turn.sessionId,
+      "Start the first step",
+      "incremental",
+    );
+
+    const session = await store.getSession(turn.sessionId);
+    assert.equal(session.mode, "incremental");
+    assert.equal(session.modelId, "zai/glm-5.3-flash");
+    assert.equal(session.reasoningEffort, "medium");
+  } finally {
+    await database.close();
+  }
+});
+
+test("a follow-up turn atomically persists a reasoning-effort change", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Plan the work",
+      folder: "/tmp/project",
+      providerId: "glm",
+      modelId: "zai/glm-5.3-flash",
+      reasoningEffort: "medium",
+    });
+    assert.equal(
+      (await store.getSession(turn.sessionId)).reasoningEffort,
+      "medium",
+    );
+
+    await store.startTurn(turn.sessionId, "Go deeper", undefined, "high");
+
+    const session = await store.getSession(turn.sessionId);
+    assert.equal(session.reasoningEffort, "high");
+    assert.equal(session.modelId, "zai/glm-5.3-flash");
+    assert.equal(session.mode, "standard");
+  } finally {
+    await database.close();
+  }
+});
+
+test("finishRun persists token usage on the assistant message", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Measure the context",
+      folder: "/tmp/project",
+      providerId: "glm",
+      modelId: "zai/glm-5.3-flash",
+    });
+    await store.finishRun(turn.sessionId, turn.assistantMessageId, null, {
+      promptTokens: 42_300,
+      completionTokens: 128,
+      contextWindow: 800_000,
+    });
+
+    const page = await store.pageMessages(turn.sessionId, null, 10);
+    const assistant = page.messages.find(
+      (message) => message.id === turn.assistantMessageId,
+    );
+    assert.ok(assistant);
+    assert.deepEqual(assistant.usage, {
+      promptTokens: 42_300,
+      completionTokens: 128,
+      contextWindow: 800_000,
+    });
+  } finally {
+    await database.close();
+  }
+});
+
+test("session plans persist on the summary and round-trip", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Plan the work",
+      folder: "/tmp/project",
+      providerId: "glm",
+      modelId: "zai/glm-5.3-flash",
+      mode: "incremental",
+    });
+    assert.equal((await store.getSession(turn.sessionId)).plan, null);
+
+    const plan = {
+      tasks: [
+        { text: "Plan format + prompt policy", done: true },
+        { text: "Plan parser", done: false },
+      ],
+    };
+    await store.updatePlan(turn.sessionId, plan);
+
+    const session = await store.getSession(turn.sessionId);
+    assert.deepEqual(session.plan, plan);
+    const sessions = await store.listSessions();
+    assert.deepEqual(sessions[0].plan, plan);
+
+    await store.updatePlan(turn.sessionId, null);
+    assert.equal((await store.getSession(turn.sessionId)).plan, null);
+  } finally {
+    await database.close();
+  }
+});
+
+test("session tabs persist on the session row and decode defensively", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "Open some tabs",
+      folder: "/tmp/project",
+      providerId: "glm",
+      modelId: "zai/glm-5.3-flash",
+    });
+    assert.equal(await store.loadSessionTabs(turn.sessionId), null);
+
+    const tabs: AgentSessionTabs = {
+      tabs: [
+        { kind: "browser", tabId: "tab-1", url: "https://example.com/" },
+        {
+          kind: "browser",
+          tabId: "tab-2",
+          url: "https://news.ycombinator.com/",
+        },
+      ],
+      activeIndex: 1,
+    };
+    await store.saveSessionTabs(turn.sessionId, tabs);
+    assert.deepEqual(await store.loadSessionTabs(turn.sessionId), tabs);
+
+    // Tab bookkeeping is background pane state: saving must not bump
+    // updatedAt, which would reorder the sessions list.
+    const updatedAt = (await store.listSessions())[0].updatedAt;
+    await store.saveSessionTabs(turn.sessionId, tabs);
+    assert.equal(
+      (await store.listSessions())[0].updatedAt.getTime(),
+      updatedAt.getTime(),
+    );
+
+    await store.saveSessionTabs(turn.sessionId, null);
+    assert.equal(await store.loadSessionTabs(turn.sessionId), null);
+
+    // Garbage in the column — torn or hand-edited — reads as "no tabs".
+    const writeRawTabs = hydb.command({
+      input: z.object({ sessionId: z.string(), tabs: z.string().nullable() }),
+      async handler(transaction, input) {
+        await transaction.update(agentSessions, [input.sessionId], {
+          tabs: input.tabs,
+        });
+      },
+    });
+    const writeRaw = async (raw: string): Promise<void> => {
+      await database.execute(writeRawTabs, {
+        sessionId: turn.sessionId,
+        tabs: raw,
+      });
+    };
+    await writeRaw("not-json");
+    assert.equal(await store.loadSessionTabs(turn.sessionId), null);
+    await writeRaw('{"version":99,"tabs":[],"activeIndex":0}');
+    assert.equal(await store.loadSessionTabs(turn.sessionId), null);
+    // A v1 snapshot record (url+title, pre-delta) decodes as empty: the
+    // {tabId, url} model reads only its own version.
+    await writeRaw(
+      JSON.stringify({
+        version: 1,
+        tabs: [{ kind: "browser", url: "https://example.com/", title: "Old" }],
+        activeIndex: 0,
+      }),
+    );
+    assert.equal(await store.loadSessionTabs(turn.sessionId), null);
+    // Unknown tab kinds belong to newer builds and are dropped; entries
+    // without a usable tabId go too, and the focused index clamps into the
+    // survivors.
+    await writeRaw(
+      JSON.stringify({
+        version: 2,
+        tabs: [
+          { kind: "browser", tabId: "tab-1", url: "https://example.com/" },
+          { kind: "terminal", cwd: "/tmp/project" },
+          { kind: "browser", tabId: "", url: "https://broken.example/" },
+        ],
+        activeIndex: 2,
+      }),
+    );
+    assert.deepEqual(await store.loadSessionTabs(turn.sessionId), {
+      tabs: [{ kind: "browser", tabId: "tab-1", url: "https://example.com/" }],
+      activeIndex: 0,
+    });
+    // -1 is meaningful: no browser tab was focused (the pinned tab was).
+    await writeRaw(
+      JSON.stringify({
+        version: 2,
+        tabs: [
+          { kind: "browser", tabId: "tab-1", url: "https://example.com/" },
+        ],
+        activeIndex: -1,
+      }),
+    );
+    assert.deepEqual(await store.loadSessionTabs(turn.sessionId), {
+      tabs: [{ kind: "browser", tabId: "tab-1", url: "https://example.com/" }],
+      activeIndex: -1,
+    });
+  } finally {
+    await database.close();
+  }
+});
+
+test("watchSessionTabs fires with decoded strips as they are saved", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const first = await store.createSession({
+      prompt: "First",
+      folder: "/tmp/project",
+      providerId: "glm",
+      modelId: "zai/glm-5.3-flash",
+    });
+    const second = await store.createSession({
+      prompt: "Second",
+      folder: "/tmp/project",
+      providerId: "glm",
+      modelId: "zai/glm-5.3-flash",
+    });
+
+    const changes: import("../../capabilities/agent.js").AgentSessionTabsChange[] =
+      [];
+    let seenChange = false;
+    const pending: (() => void)[] = [];
+    const unsubscribe = store.watchSessionTabs((change) => {
+      changes.push(change);
+      if (seenChange) pending.shift()?.();
+    });
+    const nextChange = (): Promise<void> => {
+      seenChange = true;
+      return new Promise((resolve) => pending.push(resolve));
+    };
+
+    // The subscription seeds before the first save lands; an initial empty
+    // snapshot must never fire for a session with no tabs.
+    const saved = nextChange();
+    const tabs: AgentSessionTabs = {
+      tabs: [{ kind: "browser", tabId: "tab-1", url: "https://example.com/" }],
+      activeIndex: 0,
+    };
+    await store.saveSessionTabs(first.sessionId, tabs);
+    await saved;
+    assert.deepEqual(changes, [{ sessionId: first.sessionId, tabs }]);
+
+    // An unchanged write (identical strip) must not fire — the renderer
+    // reconciles against these events and churn would defeat that.
+    await store.saveSessionTabs(first.sessionId, tabs);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(changes.length, 1);
+
+    // A different session's strip arrives tagged with its own id. Clearing
+    // only fires when a strip actually existed: null over null is no change.
+    const secondTabs: AgentSessionTabs = {
+      tabs: [
+        {
+          kind: "browser",
+          tabId: "tab-9",
+          url: "https://news.ycombinator.com/",
+        },
+      ],
+      activeIndex: 0,
+    };
+    const secondSaved = nextChange();
+    await store.saveSessionTabs(second.sessionId, secondTabs);
+    await secondSaved;
+    assert.deepEqual(changes[1], {
+      sessionId: second.sessionId,
+      tabs: secondTabs,
+    });
+
+    const cleared = nextChange();
+    await store.saveSessionTabs(second.sessionId, null);
+    await cleared;
+    assert.deepEqual(changes[2], { sessionId: second.sessionId, tabs: null });
+
+    unsubscribe();
+  } finally {
+    await database.close();
+  }
+});
+
+test("global tabs persist as rows and decode defensively", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    // An empty strip reads as empty.
+    assert.deepEqual(await store.loadGlobalTabs(), []);
+
+    const tabs: import("./store.js").AgentGlobalTabRow[] = [
+      {
+        id: "global-tab-1",
+        data: { kind: "browser", url: "https://example.com/", title: "Ex" },
+        active: true,
+        position: 0,
+      },
+      {
+        id: "whiteboard-board-1",
+        data: { kind: "whiteboard", boardId: "board-1" },
+        active: false,
+        position: 1,
+      },
+    ];
+    await store.replaceGlobalTabs(tabs);
+    assert.deepEqual(await store.loadGlobalTabs(), tabs);
+
+    // Replacing with a shorter strip drops the removed rows.
+    await store.replaceGlobalTabs([tabs[0]]);
+    assert.deepEqual(await store.loadGlobalTabs(), [tabs[0]]);
+
+    // Garbage in the data column — torn or hand-edited — drops just that
+    // row instead of failing the whole strip, as does an unknown kind.
+    await store.replaceGlobalTabs([
+      tabs[0],
+      {
+        id: "whiteboard-x",
+        data: { kind: "whiteboard", boardId: "x" },
+        active: false,
+        position: 1,
+      },
+    ]);
+    await database.execute(
+      hydb.command({
+        input: z.object({
+          updates: z.array(
+            z.object({ id: z.string(), kind: z.string(), data: z.string() }),
+          ),
+        }),
+        async handler(transaction, input) {
+          for (const update of input.updates) {
+            await transaction.update(agentGlobalTabs, [update.id], {
+              kind: update.kind,
+              data: update.data,
+            });
+          }
+        },
+      }),
+      {
+        updates: [
+          { id: "global-tab-1", kind: "browser", data: "{not json" },
+          {
+            id: "whiteboard-x",
+            kind: "unknown",
+            data: JSON.stringify({ version: 1, boardId: "x" }),
+          },
+        ],
+      },
+    );
+    assert.deepEqual(await store.loadGlobalTabs(), []);
+  } finally {
+    await database.close();
+  }
+});
+
+test("watchGlobalTabs fires when the strip is replaced", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    let seenChange = false;
+    const changed = new Promise<void>((resolve) => {
+      let unsubscribe: () => void = () => undefined;
+      unsubscribe = store.watchGlobalTabs(() => {
+        if (!seenChange) return;
+        unsubscribe();
+        resolve();
+      });
+    });
+
+    seenChange = true;
+    await store.replaceGlobalTabs([
+      {
+        id: "global-tab-1",
+        data: { kind: "browser", url: "https://example.com/", title: "Ex" },
+        active: true,
+        position: 0,
+      },
+    ]);
+    await changed;
+
+    const tabs = await store.loadGlobalTabs();
+    assert.equal(tabs.length, 1);
+    assert.equal(tabs[0].active, true);
+  } finally {
+    await database.close();
+  }
+});
+
+test("reorderSessions persists manual order; unordered sessions stay newest-first on top", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const first = await store.createSession({
+      prompt: "First session",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+    const second = await store.createSession({
+      prompt: "Second session",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+    const third = await store.createSession({
+      prompt: "Third session",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+
+    // Default: newest first.
+    const titles = (sessions: Awaited<ReturnType<typeof store.listSessions>>) =>
+      sessions.map(({ title }) => title);
+    assert.deepEqual(titles(await store.listSessions()), [
+      "Third session",
+      "Second session",
+      "First session",
+    ]);
+
+    // Manual order: move the oldest to the front; the never-ranked middle
+    // session stays on top, ahead of everything with a rank.
+    await store.reorderSessions([first.sessionId, third.sessionId]);
+    const ordered = await store.listSessions();
+    assert.deepEqual(titles(ordered), [
+      "Second session",
+      "First session",
+      "Third session",
+    ]);
+
+    // A session created after a reorder has no rank yet: it lands on top.
+    const fourth = await store.createSession({
+      prompt: "Fourth session",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+    assert.deepEqual(titles(await store.listSessions()), [
+      "Fourth session",
+      "Second session",
+      "First session",
+      "Third session",
+    ]);
+
+    // Re-ranking everything (the client always sends the full list) rewrites ranks.
+    await store.reorderSessions([
+      fourth.sessionId,
+      second.sessionId,
+      first.sessionId,
+      third.sessionId,
+    ]);
+    assert.deepEqual(titles(await store.listSessions()), [
+      "Fourth session",
+      "Second session",
+      "First session",
+      "Third session",
+    ]);
+  } finally {
+    await database.close();
+  }
+});
+
+test("folder order and collapse state persist and publish", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    assert.deepEqual(await store.loadFolderState(), []);
+
+    const changes: number[] = [];
+    const unsubscribe = store.watchFolderState(() => changes.push(1));
+
+    await store.reorderFolders(["/tmp/beta", "/tmp/alpha"]);
+    await store.setFolderCollapsed("/tmp/beta", true);
+    await store.setFolderWorktree("/tmp/beta", true);
+
+    const state = await store.loadFolderState();
+    assert.deepEqual(
+      state.map(({ folder, position, collapsed, worktreeDefault }) => ({
+        folder,
+        position,
+        collapsed,
+        worktreeDefault,
+      })),
+      [
+        {
+          folder: "/tmp/beta",
+          position: 0,
+          collapsed: true,
+          worktreeDefault: true,
+        },
+        {
+          folder: "/tmp/alpha",
+          position: 1,
+          collapsed: false,
+          worktreeDefault: false,
+        },
+      ],
+    );
+
+    // Expanding again only touches the collapsed flag — the rank and
+    // worktree default survive.
+    await store.setFolderCollapsed("/tmp/beta", false);
+    assert.deepEqual(
+      (await store.loadFolderState()).find((row) => row.folder === "/tmp/beta"),
+      {
+        folder: "/tmp/beta",
+        position: 0,
+        collapsed: false,
+        worktreeDefault: true,
+      },
+    );
+
+    // Turning the worktree default off only touches that flag.
+    await store.setFolderWorktree("/tmp/beta", false);
+    assert.deepEqual(
+      (await store.loadFolderState()).find((row) => row.folder === "/tmp/beta"),
+      {
+        folder: "/tmp/beta",
+        position: 0,
+        collapsed: false,
+        worktreeDefault: false,
+      },
+    );
+
+    // A partial reorder only rewrites the listed folders' ranks; beta keeps
+    // its earlier rank 0, tying with gamma (tie broken by path order).
+    await store.reorderFolders(["/tmp/gamma"]);
+    assert.deepEqual(
+      (await store.loadFolderState()).map((row) => row.folder),
+      ["/tmp/beta", "/tmp/gamma", "/tmp/alpha"],
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.ok(changes.length >= 3, "expected change pings");
+
+    unsubscribe();
+  } finally {
+    await database.close();
+  }
+});
+
+test("pageMessages attaches persisted image references to the user message", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "What is in this screenshot?",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+      images: [
+        { id: "img-1", file: "img-1.png", mimeType: "image/png" },
+        { id: "img-2", file: "img-2.jpg", mimeType: "image/jpeg" },
+      ],
+    });
+    await store.startTurn(turn.sessionId, "And this one?", undefined, null, [
+      { id: "img-3", file: "img-3.png", mimeType: "image/png" },
+    ]);
+
+    const page = await store.pageMessages(turn.sessionId, null, 50);
+    const users = page.messages.filter((message) => message.role === "user");
+    assert.deepEqual(
+      users.map((message) => message.images?.map(({ file }) => file)),
+      [["img-1.png", "img-2.jpg"], ["img-3.png"]],
+    );
+    assert.deepEqual(
+      users.map((message) => message.images?.[0]?.mimeType),
+      ["image/png", "image/png"],
+    );
+    // Assistant messages carry no image references.
+    assert.ok(
+      page.messages
+        .filter((message) => message.role === "assistant")
+        .every((message) => message.images === undefined),
+    );
+  } finally {
+    await database.close();
+  }
+});

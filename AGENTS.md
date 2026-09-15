@@ -38,6 +38,13 @@ Use these rules for changes in this repository, especially `packages/hyos`.
 - Native `WebContentsView`s belong to the base window. The transparent Solid renderer window stays above them so renderer content can overlay browser pixels.
 - Keep pointer arbitration centralized. Browser regions pass input through; registered renderer overlay regions retain input.
 
+## Logging
+
+- Application logs go through the `log.main` module, which provides the `log.sink` service: a JSONL file sink with size-based rotation.
+- Log file location: Electron's `app.getPath("logs")` directory (macOS: `~/Library/Logs/`), file `hyos.log`, rotated to `hyos.log.1` … `hyos.log.3` (oldest dropped) at ~5 MB. Entries are one JSON object per line: `{"ts","level","source","msg"}`.
+- Route hyos-owned `WebContentsView` console output through `attachViewConsoleLogging(sink, contents, source)` from `modules/log-main/sink.ts`. Never attach `console-message` listeners to browser tab views (`browser-main/tab.ts`); page logs must stay out of the sink.
+- Log from main-process modules via the injected `log.sink` (`sink.log(level, source, msg)`) instead of bare `console.log` when output should be persisted.
+
 ## Adding or changing a module
 
 1. Create or update a module folder and its thin entrypoint.

@@ -1,4 +1,4 @@
-import type { BrowserWindow } from "electron";
+import type { BrowserWindow, WebContentsView } from "electron";
 import type {
   BrowserBounds,
   BrowserPresentation,
@@ -12,8 +12,39 @@ export class BrowserPresentations {
 
   constructor(
     private readonly baseWindow: BrowserWindow,
+    private readonly uiView: WebContentsView,
     private readonly tabs: Map<TabId, Tab>,
   ) {}
+
+  /**
+   * Modal overlay mode: while active, the UI view is raised above all browser
+   * views so modal chrome (backdrop, dialog) composites over embedded web
+   * content and blocks its input. Deactivated by re-inserting the UI view at
+   * the bottom of the contentView.
+   */
+  setModalOverlay(active: boolean): void {
+    this.modalOverlay = active;
+    this.applyUiOrder();
+  }
+
+  private modalOverlay = false;
+
+  private applyUiOrder(): void {
+    if (
+      this.baseWindow.isDestroyed() ||
+      this.uiView.webContents.isDestroyed()
+    ) {
+      return;
+    }
+    const contentView = this.baseWindow.contentView;
+    // Removing a view that holds keyboard focus drops it to the topmost
+    // remaining view (a browser tab); re-apply it to the UI view afterwards.
+    const uiHadFocus = this.uiView.webContents.isFocused();
+    contentView.removeChildView(this.uiView);
+    if (this.modalOverlay) contentView.addChildView(this.uiView);
+    else contentView.addChildView(this.uiView, 0);
+    if (uiHadFocus) this.uiView.webContents.focus();
+  }
 
   visibleBounds(): BrowserBounds[] {
     return [...this.presentations.values()]
@@ -67,6 +98,9 @@ export class BrowserPresentations {
     if (!tab.attached) {
       this.baseWindow.contentView.addChildView(tab.view);
       tab.attached = true;
+      // A newly attached browser view lands on top of everything; re-apply
+      // the UI view's position so modal overlay mode keeps it above.
+      this.applyUiOrder();
     }
     const [windowWidth, windowHeight] = this.baseWindow.getContentSize();
     const x = Math.max(0, Math.round(bounds.x));
