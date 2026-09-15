@@ -60,6 +60,18 @@ export type CdpTarget = Readonly<{
   webSocketDebuggerUrl: string | null;
 }>;
 
+/** A request to open one discovered target's devtools frontend as a tab. */
+export type CdpTargetRequest = Readonly<{
+  endpoint: CdpEndpoint;
+  targetId: string;
+}>;
+
+/** The browser tab opened for a CDP target, plus the target it shows. */
+export type CdpTargetOpen = Readonly<{
+  tabId: TabId;
+  target: CdpTarget;
+}>;
+
 export type BrowserPresentation = Readonly<{
   presentationId: PresentationId;
   tabId: TabId;
@@ -69,12 +81,16 @@ export type BrowserPresentation = Readonly<{
 
 export const browserCapability = defineRemoteCapability({
   id: "browser",
-  version: 4,
+  version: 5,
   methods: {
     execute: remoteMethod<readonly [command: BrowserCommand], BrowserState>(),
     inspectCdp: remoteMethod<
       readonly [endpoint: CdpEndpoint],
       readonly CdpTarget[]
+    >(),
+    openCdpTarget: remoteMethod<
+      readonly [request: CdpTargetRequest],
+      CdpTargetOpen
     >(),
     present: remoteMethod<readonly [presentation: BrowserPresentation], void>(),
     release: remoteMethod<readonly [presentationId: PresentationId], void>(),

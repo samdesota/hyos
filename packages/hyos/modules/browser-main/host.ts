@@ -3,13 +3,15 @@ import {
   browserCapability,
   type BrowserCommand,
   type BrowserState,
+  type CdpEndpoint,
+  type CdpTargetOpen,
   type TabId,
 } from "../../capabilities/browser.js";
 import type {
   MainRemoteCapabilities,
   RemoteProvider,
 } from "../../remote-capabilities.js";
-import { listCdpTargets } from "./cdp.js";
+import { listCdpTargets, resolveCdpFrontendUrl } from "./cdp.js";
 import { BrowserPresentations } from "./presentations.js";
 import { createTabView, disposeTabView, tabState } from "./tab.js";
 import type { BrowserMainConfig, Tab } from "./types.js";
@@ -113,9 +115,34 @@ export function createBrowserHost(
     return state();
   };
 
+  /**
+   * Open a discovered CDP target's devtools frontend as an ordinary browser
+   * tab. The tab is closable through the regular `close-tab` command, so no
+   * separate close path is needed.
+   */
+  const openCdpTarget = async (
+    endpoint: CdpEndpoint,
+    targetId: string,
+  ): Promise<CdpTargetOpen> => {
+    const targets = await listCdpTargets(endpoint);
+    const target = targets.find(({ id }) => id === targetId);
+    if (!target) {
+      throw new Error(
+        `No CDP target ${targetId} on ${endpoint.host}:${endpoint.port}`,
+      );
+    }
+    const tab = createTab(
+      normalizeUrl(resolveCdpFrontendUrl(endpoint, target)),
+    );
+    publish();
+    return { tabId: tab.id, target };
+  };
+
   const provider: RemoteProvider<typeof browserCapability> = {
     execute,
     inspectCdp: (endpoint) => listCdpTargets(endpoint),
+    openCdpTarget: ({ endpoint, targetId }) =>
+      openCdpTarget(endpoint, targetId),
     present(presentation) {
       presentations.present(presentation);
     },
