@@ -556,6 +556,11 @@ export const agentStyles = String.raw`
   }
   .side-tab-add:hover { color: #eceae5; background: #292b26; }
   .cdp-inspect { position: relative; flex: none; }
+  .side-add-option {
+    display: block; width: 100%; padding: 6px 8px; text-align: left; border: 0;
+    border-radius: 7px; color: #c9c8c1; background: transparent; cursor: pointer; font-size: 11px;
+  }
+  .side-add-option:hover { color: #eceae5; background: #2e3029; }
   .cdp-inspect-popover {
     position: absolute; z-index: 30; top: 34px; left: 0; width: 300px;
     display: flex; flex-direction: column; gap: 8px; padding: 10px;
