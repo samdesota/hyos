@@ -122,7 +122,7 @@ export const agentStyles = String.raw`
   .archive-open {
     position: relative;
     display: grid; place-items: center;
-    width: 28px; height: 28px; margin: 0; padding: 0;
+    width: 28px; height: 28px; margin: 0 0 0 auto; padding: 0;
     border: 0; border-radius: 8px;
     color: #ffffff; background: transparent; cursor: pointer;
     transition: background .12s, color .12s;
@@ -234,7 +234,7 @@ export const agentStyles = String.raw`
   .welcome { display: grid; place-items: center; width: 100%; height: 100%; padding: 38px; overflow-y: auto; }
   .welcome-card { width: min(760px, 100%); }
   .archive-page { display: flex; justify-content: center; width: 100%; height: 100%; min-height: 0; padding: 22px 26px; }
-  .archive-column { display: flex; flex-direction: column; width: 100%; max-width: 560px; min-height: 0; }
+  .archive-column { display: flex; flex-direction: column; width: 100%; max-width: 760px; min-height: 0; }
   .archive-header { display: flex; flex-direction: column; align-items: center; gap: 12px; padding-bottom: 18px; }
   .archive-title { margin: 0; font-size: 15px; font-weight: 600; color: #eceae5; }
   .archive-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; }
