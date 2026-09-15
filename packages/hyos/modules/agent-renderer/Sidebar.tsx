@@ -957,32 +957,6 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
       <div class="sidebar-footer">
         <button
           type="button"
-          class="archive-open"
-          classList={{ active: location.pathname === ROUTE_PATHS.archive }}
-          aria-label="Archived sessions"
-          onClick={() => navigate(ROUTE_PATHS.archive)}
-        >
-          <span class="sound-toggle-tip" aria-hidden="true">
-            Archived sessions
-          </span>
-          <svg
-            class="sound-toggle-icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            {/* lucide archive */}
-            <rect width="18" height="4" x="3" y="4" rx="1" />
-            <path d="M5 8v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
-            <path d="M10 12h4" />
-          </svg>
-        </button>
-        <button
-          type="button"
           class="sound-toggle"
           aria-pressed={soundEnabled()}
           aria-label="Toggle agent chime"
@@ -1024,6 +998,32 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
                 <path d="M19.364 18.364a9 9 0 0 0 0-12.728" />
               </>
             </Show>
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="archive-open"
+          classList={{ active: location.pathname === ROUTE_PATHS.archive }}
+          aria-label="Archived sessions"
+          onClick={() => navigate(ROUTE_PATHS.archive)}
+        >
+          <span class="sound-toggle-tip" aria-hidden="true">
+            Archived sessions
+          </span>
+          <svg
+            class="sound-toggle-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            {/* lucide archive */}
+            <rect width="18" height="4" x="3" y="4" rx="1" />
+            <path d="M5 8v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
+            <path d="M10 12h4" />
           </svg>
         </button>
       </div>
