@@ -497,7 +497,10 @@ const updateUsageCommand = hydb.command({
       promptTokens: input.usage.promptTokens,
       completionTokens: input.usage.completionTokens,
       contextWindow: input.usage.contextWindow,
-      createdAt: input.now,
+      // createdAt is the renderer's timeline sort key — bumping it here
+      // (per tool round) re-sorted the empty streaming assistant placeholder
+      // to the end of the activity run each round, splitting the single
+      // activity block into several. Only updatedAt moves.
       updatedAt: input.now,
     });
     await transaction.update(agentSessions, [input.sessionId], {
