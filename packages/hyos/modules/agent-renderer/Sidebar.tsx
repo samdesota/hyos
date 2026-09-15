@@ -18,6 +18,32 @@ import {
   orderedFolderGroups,
 } from "./sessions-model.js";
 
+/**
+ * Folder glyph for the collapse toggle: closed when the group is shown
+ * collapsed, open when expanded (lucide `folder` / `folder-open` paths).
+ */
+const FolderIcon: Component<{ open: boolean }> = (props) => (
+  <svg
+    class="session-folder-icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    <Show
+      when={props.open}
+      fallback={
+        <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+      }
+    >
+      <path d="M6 14l1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2" />
+    </Show>
+  </svg>
+);
+
 const SessionFolderList: Component<{
   sessions: readonly AgentSessionSummary[];
   /** Persisted manual folder order; folders absent from it keep group order. */
@@ -290,9 +316,7 @@ const SessionFolderList: Component<{
                         props.onToggleCollapse(group().folder, !collapsed());
                       }}
                     >
-                      <i class="session-folder-chevron" aria-hidden="true">
-                        {collapsed() ? "▸" : "▾"}
-                      </i>
+                      <FolderIcon open={!collapsed()} />
                     </button>
                     <span class="session-folder-name">{group().label}</span>
                     <Show when={group().parentPath}>
@@ -315,9 +339,7 @@ const SessionFolderList: Component<{
       <Show when={ghostFolder()}>
         {(group) => (
           <div class="session-folder-heading drag-ghost" ref={ghostEl}>
-            <i class="session-folder-chevron" aria-hidden="true">
-              ▸
-            </i>
+            <FolderIcon open={false} />
             <span class="session-folder-name">{group().label}</span>
             <Show when={group().parentPath}>
               <span class="session-folder-parent">{group().parentPath}</span>
