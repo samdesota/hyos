@@ -233,7 +233,12 @@ const SessionFolderList: Component<{
     };
     const finish = (): void => {
       cleanup();
-      if (!dragging) return;
+      // A press on the heading without crossing the drag threshold is a
+      // click: toggle the folder's persisted collapse state.
+      if (!dragging) {
+        props.onToggleCollapse(folder, !isCollapsed(folder));
+        return;
+      }
       setDragFolder(null);
       setDragCollapsed((current) => {
         const next = new Set(current);
