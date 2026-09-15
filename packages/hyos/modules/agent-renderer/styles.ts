@@ -35,15 +35,24 @@ export const agentStyles = String.raw`
     border-right: 1px solid #30312d;
     background: #20211e;
   }
-  .sidebar-head { position: relative; padding: 0 16px 14px 80px; }
+  /* The brand text hugs the collapsed dot cluster and shifts right as the
+     dots expand toward the native lights' slot (ends at x≈79). */
+  .sidebar-head {
+    position: relative; padding: 0 16px 14px 58px;
+    transition: padding-left .16s ease;
+  }
+  .sidebar-head:has(.win-controls:hover),
+  .sidebar-head:has(.win-controls:focus-within) { padding-left: 80px; }
   /* Arc-style window controls: collapsed dim dots expand into the macOS
      traffic lights on hover or keyboard focus, replacing the native buttons
      hidden by the main process. Geometry measured from the native lights
      (macOS Tahoe): expanded centers at x 27/50/73, vertical center 29. */
   .win-controls {
     position: absolute; left: 21px; top: 15px; height: 28px;
-    display: flex; align-items: center; gap: 11px;
+    display: flex; align-items: center; gap: 5px;
+    transition: gap .16s ease;
   }
+  .win-controls:hover, .win-controls:focus-within { gap: 11px; }
   .win-dot {
     width: 5px; height: 5px; padding: 0; border: 0; border-radius: 50%;
     background: #6b6d64; cursor: pointer;
