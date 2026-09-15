@@ -5,6 +5,7 @@ import {
   createMemo,
   createSignal,
   onCleanup,
+  onMount,
   type Component,
   type JSX,
 } from "solid-js";
@@ -99,30 +100,22 @@ const ActivityRegion: Component<{
   let inner!: HTMLDivElement;
   const [expanded, setExpanded] = createSignal(false);
   const [clipped, setClipped] = createSignal(false);
-  createEffect(() => {
-    // Track content size (tool details and streaming commentary text) so the
-    // fade appears only once content actually overflows the 60vh cap.
-    const sizes = props.entries.map((entry) => {
-      if (entry.type === "tools")
-        return entry.messages.map(
-          (message) =>
-            message.content.length +
-            (message.activity?.type === "tool"
-              ? message.activity.detail.length
-              : 0),
-        );
-      if (entry.type === "message")
-        return (
-          entry.message.content.length +
-          (entry.message.activity?.type === "commentary"
-            ? entry.message.activity.text.length
-            : 0)
-        );
-      return 0;
-    });
-    void sizes;
-    void expanded();
+  const measure = (): void => {
     setClipped(inner.offsetHeight > region.clientHeight + 1);
+  };
+  // The fade appears only once content actually overflows the 60vh cap.
+  // Markdown mounts asynchronously inside MarkdownBody and content streams in
+  // afterwards, so measure on real size changes (ResizeObserver) instead of
+  // once at mount — otherwise old threads never show the fade/button.
+  createEffect(() => {
+    void expanded();
+    measure();
+  });
+  onMount(() => {
+    const resizeObserver = new ResizeObserver(measure);
+    resizeObserver.observe(inner);
+    resizeObserver.observe(region);
+    onCleanup(() => resizeObserver.disconnect());
   });
   return (
     <div
@@ -139,6 +132,11 @@ const ActivityRegion: Component<{
         <div class="activity-fade" />
         <button class="activity-expand" onClick={() => setExpanded(true)}>
           Show all activity
+        </button>
+      </Show>
+      <Show when={expanded()}>
+        <button class="activity-collapse" onClick={() => setExpanded(false)}>
+          Collapse activity
         </button>
       </Show>
     </div>

@@ -462,11 +462,19 @@ export const agentStyles = String.raw`
     pointer-events: none;
   }
   .activity-expand {
-    position: absolute; top: 8px; left: 0;
-    padding: 3px 9px; border: 1px solid #3a3c35; border-radius: 7px;
-    color: #b5b7ac; background: #1d1e1be8; font-size: 11px; cursor: pointer;
+    position: absolute; top: 2px; left: 0; right: 0;
+    padding: 3px 0; border: none; border-radius: 0;
+    color: #8a8c81; background: none; font-size: 11px;
+    cursor: pointer; text-align: center;
   }
-  .activity-expand:hover { color: #eceae5; background: #30312d; }
+  .activity-expand:hover { color: #eceae5; }
+  .activity-collapse {
+    position: absolute; top: 2px; left: 0; right: 0;
+    padding: 3px 0; border: none; border-radius: 0;
+    color: #8a8c81; background: none; font-size: 11px;
+    cursor: pointer; text-align: center;
+  }
+  .activity-collapse:hover { color: #eceae5; }
   .message-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.62; }
   .markdown { white-space: normal; }
   .markdown > :first-child { margin-top: 0; }
