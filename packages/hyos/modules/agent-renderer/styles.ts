@@ -447,35 +447,28 @@ export const agentStyles = String.raw`
   /* A run of agent activity (thinking + commands) is the single capped
      region: 60vh, overflow hidden, never scrollable. Its content is anchored
      to the bottom so the newest streamed activity stays visible while older
-     activity clips above the cap, behind a top fade-out gradient. "Show all
-     activity" removes the cap entirely. */
+     activity clips above the cap, behind a top fade-out gradient. The
+     expand/collapse buttons sit in normal flow above the region so they never
+     overlap the content. */
+  .activity-region { display: flex; flex-direction: column; }
   .activity-capped {
     position: relative;
     max-height: 60vh; overflow: hidden;
     display: flex; flex-direction: column; justify-content: flex-end;
   }
   .activity-capped.expanded { max-height: none; }
-  .activity-capped.has-button { padding-top: 22px; }
   .activity-capped-inner { flex-shrink: 0; }
   .activity-fade {
     position: absolute; top: 0; left: 0; right: 0; height: 64px;
     background: linear-gradient(to bottom, #171816, rgba(23, 24, 22, 0));
     pointer-events: none;
   }
-  .activity-expand {
-    position: absolute; top: 2px; left: 0; right: 0;
+  .activity-expand, .activity-collapse {
     padding: 3px 0; border: none; border-radius: 0;
     color: #8a8c81; background: none; font-size: 11px;
     cursor: pointer; text-align: center;
   }
-  .activity-expand:hover { color: #eceae5; }
-  .activity-collapse {
-    position: absolute; top: 2px; left: 0; right: 0;
-    padding: 3px 0; border: none; border-radius: 0;
-    color: #8a8c81; background: none; font-size: 11px;
-    cursor: pointer; text-align: center;
-  }
-  .activity-collapse:hover { color: #eceae5; }
+  .activity-expand:hover, .activity-collapse:hover { color: #eceae5; }
   .message-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.62; }
   .markdown { white-space: normal; }
   .markdown > :first-child { margin-top: 0; }

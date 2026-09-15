@@ -118,22 +118,10 @@ const ActivityRegion: Component<{
     onCleanup(() => resizeObserver.disconnect());
   });
   return (
-    <div
-      class="activity-capped"
-      classList={{
-        // Reserve the top strip so the button never overlaps the content.
-        "has-button": expanded() || clipped(),
-        expanded: expanded(),
-      }}
-      ref={region}
-    >
-      <div class="activity-capped-inner" ref={inner}>
-        <For each={props.entries}>
-          {(entry) => <TimelineEntryView entry={entry} app={props.app} />}
-        </For>
-      </div>
+    <div class="activity-region">
+      {/* Buttons live in normal flow above the capped region so they can
+          never overlap the clipped activity content. */}
       <Show when={!expanded() && clipped()}>
-        <div class="activity-fade" />
         <button class="activity-expand" onClick={() => setExpanded(true)}>
           Show all activity
         </button>
@@ -143,6 +131,20 @@ const ActivityRegion: Component<{
           Collapse activity
         </button>
       </Show>
+      <div
+        class="activity-capped"
+        classList={{ expanded: expanded() }}
+        ref={region}
+      >
+        <div class="activity-capped-inner" ref={inner}>
+          <For each={props.entries}>
+            {(entry) => <TimelineEntryView entry={entry} app={props.app} />}
+          </For>
+        </div>
+        <Show when={!expanded() && clipped()}>
+          <div class="activity-fade" />
+        </Show>
+      </div>
     </div>
   );
 };
