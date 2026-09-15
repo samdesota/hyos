@@ -89,11 +89,6 @@ export const agentStyles = String.raw`
   .create-item-hint { color: #85877e; font-size: 11px; }
   .create-empty { padding: 10px 12px 12px; color: #85877e; font-size: 12px; }
   .global-tabs { border-bottom: 1px solid #30312d; }
-  .global-tabs-head {
-    display: flex; align-items: center; justify-content: space-between;
-    padding-right: 10px;
-  }
-  .global-tabs-label { flex: 1; }
   .global-tab-list { display: flex; flex-direction: column; gap: 2px; padding: 0 8px 8px; }
   .global-tab-row { display: flex; align-items: center; border-radius: 8px; }
   .global-tab-row:hover { background: #292a27; }
@@ -113,10 +108,6 @@ export const agentStyles = String.raw`
   .global-tab-row:hover .global-tab-close,
   .global-tab-row:focus-within .global-tab-close { opacity: 1; }
   .global-tab-close:hover { color: #eceae5; background: #3b3d37; }
-  .session-label {
-    padding: 8px 18px; color: #85877e; font-size: 11px; font-weight: 700;
-    letter-spacing: .09em; text-transform: uppercase;
-  }
   .session-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 18px; }
   .sidebar-footer { display: flex; align-items: center; gap: 6px; flex: none; border-top: 1px solid #30312d; padding: 8px 10px; }
   .archive-open {

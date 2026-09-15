@@ -854,9 +854,6 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
       </Modal>
       <Show when={globalTabs().length > 0}>
         <div class="global-tabs" aria-label="Global tabs">
-          <div class="global-tabs-head">
-            <span class="session-label global-tabs-label">Tabs</span>
-          </div>
           <div class="global-tab-list" role="tablist">
             <For each={globalTabs()}>
               {(tab) => (
@@ -896,7 +893,6 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
           </div>
         </div>
       </Show>
-      <div class="session-label">Sessions</div>
       <div class="session-list" id="agent-session-list">
         <SessionFolderList
           sessions={effectiveSessions()}
