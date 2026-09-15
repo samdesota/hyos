@@ -92,9 +92,12 @@ const SessionFolderList: Component<{
   });
 
   // FLIP siblings: after each reorder the DOM is already in its final layout,
-  // so measure headings, diff against the previous frame's rects, and animate
+  // so measure sections, diff against the previous frame's rects, and animate
   // the delta back to identity. Re-running animate() replaces the previous
-  // animation, which keeps slides retargetable mid-flight.
+  // animation, which keeps slides retargetable mid-flight. Slots are measured
+  // from the untransformed <section>, never the FLIP-animated heading: a
+  // heading's rect reflects the running animation transform, which fed
+  // hit-testing a moving target and caused end-of-list oscillation.
   let folderRects = new Map<string, number>();
   createEffect(() => {
     if (!dragFolder() || !listEl) {
@@ -103,13 +106,13 @@ const SessionFolderList: Component<{
     }
     effectiveFolders();
     const next = new Map<string, number>();
-    for (const heading of Array.from(
+    for (const section of Array.from(
       listEl.querySelectorAll<HTMLElement>(
-        ".session-folder-heading[data-folder]",
+        ".session-folder-group[data-folder]",
       ),
     )) {
-      const folder = heading.dataset.folder;
-      if (folder) next.set(folder, heading.getBoundingClientRect().top);
+      const folder = section.dataset.folder;
+      if (folder) next.set(folder, section.getBoundingClientRect().top);
     }
     for (const [folder, top] of next) {
       const previous = folderRects.get(folder);
@@ -147,11 +150,13 @@ const SessionFolderList: Component<{
   const folderIndexAt = (dragged: string, y: number): number => {
     const others = effectiveFolders().filter((folder) => folder !== dragged);
     for (let index = 0; index < others.length; index++) {
-      const heading = listEl?.querySelector<HTMLElement>(
-        `.session-folder-heading[data-folder="${CSS.escape(others[index])}"]`,
+      // Measure the untransformed section, not the animated heading, so a
+      // running FLIP animation can't shift the midpoint under the pointer.
+      const section = listEl?.querySelector<HTMLElement>(
+        `.session-folder-group[data-folder="${CSS.escape(others[index])}"]`,
       );
-      if (!heading) continue;
-      const rect = heading.getBoundingClientRect();
+      if (!section) continue;
+      const rect = section.getBoundingClientRect();
       if (y < rect.top + rect.height / 2) return index;
     }
     return others.length;
@@ -258,6 +263,7 @@ const SessionFolderList: Component<{
                 <section
                   class="session-folder-group"
                   classList={{ collapsed: collapsed() }}
+                  data-folder={group().folder}
                   aria-label={group().folder || group().label}
                 >
                   <h3
