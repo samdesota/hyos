@@ -106,7 +106,14 @@ export const agentStyles = String.raw`
   .create-item-text strong { font-size: 13px; font-weight: 600; }
   .create-item-hint { color: #85877e; font-size: 11px; }
   .create-empty { padding: 10px 12px 12px; color: #85877e; font-size: 12px; }
-  .global-tabs { border-bottom: 1px solid #30312d; }
+  /* Divider under the tabs is inset so it doesn't run edge to edge. */
+  .global-tabs::after {
+    content: "";
+    display: block;
+    height: 1px;
+    margin: 0 10px;
+    background: #30312d;
+  }
   .global-tab-list { display: flex; flex-direction: column; gap: 2px; padding: 0 8px 8px; }
   .global-tab-row { display: flex; align-items: center; border-radius: 8px; }
   .global-tab-row:hover { background: #292a27; }
