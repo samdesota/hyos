@@ -455,6 +455,7 @@ export const agentStyles = String.raw`
     display: flex; flex-direction: column; justify-content: flex-end;
   }
   .activity-capped.expanded { max-height: none; }
+  .activity-capped.has-button { padding-top: 22px; }
   .activity-capped-inner { flex-shrink: 0; }
   .activity-fade {
     position: absolute; top: 0; left: 0; right: 0; height: 64px;

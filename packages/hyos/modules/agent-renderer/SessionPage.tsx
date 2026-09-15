@@ -120,7 +120,11 @@ const ActivityRegion: Component<{
   return (
     <div
       class="activity-capped"
-      classList={{ expanded: expanded() }}
+      classList={{
+        // Reserve the top strip so the button never overlaps the content.
+        "has-button": expanded() || clipped(),
+        expanded: expanded(),
+      }}
       ref={region}
     >
       <div class="activity-capped-inner" ref={inner}>
