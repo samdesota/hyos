@@ -117,6 +117,7 @@ export const NewSessionPage: Component<NewSessionPageProps> = (props) => {
                               app.setFolderMenuOpen(false);
                             }}
                           >
+                            <span>{folderName(recent)}</span>
                             <Show
                               when={duplicateNames().has(folderName(recent))}
                             >
@@ -124,7 +125,6 @@ export const NewSessionPage: Component<NewSessionPageProps> = (props) => {
                                 {truncatePathStart(folderPathPrefix(recent))}/
                               </span>
                             </Show>
-                            <span>{folderName(recent)}</span>
                           </button>
                         )}
                       </For>

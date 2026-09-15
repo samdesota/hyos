@@ -358,8 +358,8 @@ export const agentStyles = String.raw`
   .folder-menu-item:hover { background: #30322d; }
   .folder-menu-item.selected { color: #eff0e8; background: #36382f; }
   .folder-menu-item-path {
-    overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0;
-    color: #777a71; font-size: 11px;
+    overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; min-width: 0;
+    margin-left: auto; text-align: right; color: #777a71; font-size: 11px;
   }
   .model-picker { position: relative; }
   .model-picker-trigger {
