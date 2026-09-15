@@ -1,4 +1,5 @@
 import type {
+  AgentActivity,
   AgentMessage,
   AgentPlan,
   AgentPlanTask,
@@ -135,6 +136,76 @@ export function timelineEntries(
     }
   }
   return entries;
+}
+
+const sameActivity = (
+  a: AgentActivity | null,
+  b: AgentActivity | null,
+): boolean => {
+  if (a === b) return true;
+  if (!a || !b || a.type !== b.type) return false;
+  if (a.type === "commentary" && b.type === "commentary")
+    return a.text === b.text;
+  if (a.type === "tool" && b.type === "tool")
+    return a.label === b.label && a.detail === b.detail;
+  if (a.type === "patch" && b.type === "patch")
+    return a.explanation === b.explanation && a.diff === b.diff;
+  return false;
+};
+
+/**
+ * Value equality for timeline entries. Derived entries are rebuilt from the
+ * message list on every change; this lets the renderer reuse the previous
+ * entry objects (and their group wrappers) when nothing visible changed, so
+ * Solid's reference-keyed `<For>` only remounts the rows that really moved.
+ */
+export function sameTimelineEntry(
+  a: TimelineEntry | undefined,
+  b: TimelineEntry | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.type !== b.type) return false;
+  if (a.type === "tools" && b.type === "tools")
+    return (
+      a.messages.length === b.messages.length &&
+      a.messages.every((message, i) => message === b.messages[i])
+    );
+  if (a.type === "work" && b.type === "work")
+    return (
+      a.startedAt.getTime() === b.startedAt.getTime() &&
+      a.endedAt.getTime() === b.endedAt.getTime() &&
+      a.entries.length === b.entries.length &&
+      a.entries.every((entry, i) => sameTimelineEntry(entry, b.entries[i]))
+    );
+  if (a.type === "message" && b.type === "message") {
+    const { message: x } = a;
+    const { message: y } = b;
+    if (x === y) return true;
+    return (
+      x.id === y.id &&
+      x.role === y.role &&
+      x.status === y.status &&
+      x.lastError === y.lastError &&
+      x.content === y.content &&
+      x.updatedAt.getTime() === y.updatedAt.getTime() &&
+      sameActivity(x.activity ?? null, y.activity ?? null)
+    );
+  }
+  return false;
+}
+
+/**
+ * Return `next` with each entry replaced by the previous run's identical
+ * entry object, so downstream reference-keyed `<For>` lists stay stable.
+ */
+export function shareTimelineEntries(
+  prev: readonly TimelineEntry[] | undefined,
+  next: readonly TimelineEntry[],
+): TimelineEntry[] {
+  if (!prev) return [...next];
+  return next.map((entry, i) =>
+    sameTimelineEntry(prev[i], entry) ? prev[i]! : entry,
+  );
 }
 
 export function patchEntries(

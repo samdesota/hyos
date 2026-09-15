@@ -40,6 +40,7 @@ import {
 import type { AppState } from "./app-state.js";
 import {
   implementNextPrompt,
+  sameTimelineEntry,
   workPaneLabel,
   type TimelineEntry,
 } from "./sessions-model.js";
@@ -186,6 +187,35 @@ const groupTimeline = (entries: readonly TimelineEntry[]): TimelineGroup[] => {
   });
   flush(entries.length);
   return groups;
+};
+
+/**
+ * Reuse the previous run's group objects when nothing changed, so the
+ * reference-keyed `<For>` over groups keeps ActivityRegion components (and
+ * their local expand/clip state) mounted across streamed updates.
+ */
+const shareTimelineGroups = (
+  prev: readonly TimelineGroup[] | undefined,
+  next: readonly TimelineGroup[],
+): TimelineGroup[] => {
+  if (!prev) return [...next];
+  return next.map((group, i) => {
+    const previous = prev[i];
+    if (!previous || group.kind !== previous.kind) return group;
+    if (group.kind === "single" && previous.kind === "single")
+      return group.index === previous.index &&
+        sameTimelineEntry(group.entry, previous.entry)
+        ? previous
+        : group;
+    if (group.kind === "activity" && previous.kind === "activity")
+      return group.start === previous.start &&
+        group.end === previous.end &&
+        group.entries.length === previous.entries.length &&
+        group.entries.every((entry, j) => entry === previous.entries[j])
+        ? previous
+        : group;
+    return group;
+  });
 };
 
 const PlanPanel: Component<{
@@ -421,7 +451,9 @@ export const SessionPage: Component<SessionPageProps> = (props) => {
   const session = props.session;
   const [patchPanelWidth, setPatchPanelWidth] = createSignal(520);
   let followupPicker: HTMLDivElement | undefined;
-  const timelineGroups = createMemo(() => groupTimeline(app.timeline()));
+  const timelineGroups = createMemo((prev?: readonly TimelineGroup[]) =>
+    shareTimelineGroups(prev, groupTimeline(app.timeline())),
+  );
 
   const allowImageDrop = (event: DragEvent): void => {
     event.preventDefault();

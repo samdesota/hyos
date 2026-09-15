@@ -83,7 +83,9 @@ import {
   planPanelIndex,
   recentFolders,
   sessionsShallowEqual,
+  shareTimelineEntries,
   timelineEntries,
+  type TimelineEntry,
 } from "./sessions-model.js";
 
 export type AppStateProps = Readonly<{
@@ -455,8 +457,11 @@ export function createAppState({
   const selectedModel = createMemo(() =>
     selectedProvider()?.models.find(({ id }) => id === modelId()),
   );
-  const timeline = createMemo(() =>
-    collapseWorkRuns(timelineEntries(messages())),
+  // Structural sharing: reuse the previous run's entry objects when nothing
+  // visible changed, so reference-keyed `<For>` lists don't remount every
+  // row on each streamed chunk.
+  const timeline = createMemo((prev?: readonly TimelineEntry[]) =>
+    shareTimelineEntries(prev, collapseWorkRuns(timelineEntries(messages()))),
   );
   const patches = createMemo(() => patchEntries(messages()));
   const sideActive = createMemo(() =>
