@@ -8,16 +8,15 @@ import type { WindowControlsClient } from "./client.js";
  * invokes the `window-controls` capability on click.
  *
  * On pointer hover the expanded dots crossfade into the *native* traffic
- * lights, which the main process reveals via `setButtonsVisible(true)` —
- * but only once the expansion animation has finished (`transitionend` on
- * the cluster's `gap` transition, with a fallback timer), so the ghosts
- * settle onto the native slot before the real macOS buttons (long-press
- * menus, option-click zoom) take over. The native buttons sit
+ * lights, which the main process reveals via `setButtonsVisible(true)`
+ * shortly after hover starts (REVEAL_DELAY_MS), so the real macOS buttons
+ * (long-press menus, option-click zoom) take over as the custom dots
+ * settle onto the native slot. The native buttons sit
  * above the renderer and swallow pointer events, so concealment watches
  * window-level `pointermove`: any move landing outside the controls region
  * (the only events we can still see) hides them again.
  */
-const REVEAL_FALLBACK_MS = 250;
+const REVEAL_DELAY_MS = 100;
 
 export const WindowControls: Component<{ controls: WindowControlsClient }> = (
   props,
@@ -37,7 +36,6 @@ export const WindowControls: Component<{ controls: WindowControlsClient }> = (
       clearTimeout(fallbackTimer);
       fallbackTimer = undefined;
     }
-    container?.removeEventListener("transitionend", onTransitionEnd);
   };
 
   const revealNow = (): void => {
@@ -48,24 +46,12 @@ export const WindowControls: Component<{ controls: WindowControlsClient }> = (
     window.addEventListener("pointermove", onPointerMove);
   };
 
-  // Wait for the expansion animation (the `gap` transition on the cluster)
-  // to finish before the native lights take over.
+  // Reveal the native lights a short beat after hover starts, so the ghost
+  // dots visibly begin their expansion before the real buttons take over.
   const reveal = (): void => {
     if (native() || pendingReveal) return;
     pendingReveal = true;
-    container?.addEventListener("transitionend", onTransitionEnd);
-    fallbackTimer = setTimeout(revealNow, REVEAL_FALLBACK_MS);
-  };
-
-  const onTransitionEnd = (event: TransitionEvent): void => {
-    // Only the container's `gap` transition marks the end of the expansion;
-    // guard against pointer leaving mid-animation.
-    if (event.target !== container || event.propertyName !== "gap") return;
-    if (!container?.matches(":hover, :focus-within")) {
-      cancelPendingReveal();
-      return;
-    }
-    revealNow();
+    fallbackTimer = setTimeout(revealNow, REVEAL_DELAY_MS);
   };
 
   const conceal = (): void => {
@@ -76,8 +62,8 @@ export const WindowControls: Component<{ controls: WindowControlsClient }> = (
     window.removeEventListener("pointermove", onPointerMove);
   };
 
-  // Pointer left before the animation finished — never reveal the native
-  // lights and let the cluster collapse back.
+  // Pointer left before the reveal fired — never reveal the native lights
+  // and let the cluster collapse back.
   const onPointerLeave = (): void => {
     if (!native()) cancelPendingReveal();
   };
