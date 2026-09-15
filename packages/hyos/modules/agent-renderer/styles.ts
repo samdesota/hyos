@@ -135,8 +135,20 @@ export const agentStyles = String.raw`
   .sound-toggle:hover .sound-toggle-tip,
   .sound-toggle:focus-visible .sound-toggle-tip { display: block; }
   .session-folder-group + .session-folder-group { margin-top: 10px; }
-  .session-folder-heading { margin: 0; padding: 8px 10px 4px; color: #b5b7ac; font-size: 12px; font-weight: 600; }
+  .session-folder-heading { display: flex; align-items: center; gap: 4px; margin: 0; padding: 8px 10px 4px; color: #b5b7ac; font-size: 12px; font-weight: 600; cursor: grab; user-select: none; }
+  .session-folder-heading.dragging { cursor: grabbing; }
+  .session-folder-toggle {
+    flex: none; display: flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; margin-left: -4px; padding: 0;
+    border: 0; border-radius: 5px; background: transparent; cursor: pointer;
+    color: inherit; font-size: 11px; line-height: 1;
+  }
+  .session-folder-toggle:hover { color: #eceae5; background: #30312d; }
+  .session-folder-chevron { font-style: normal; }
+  .session-folder-group.collapsed .session-folder-heading { padding-bottom: 8px; }
+  /* Name/parent stay inline when collapsed; stacked block layout when open. */
   .session-folder-name, .session-folder-parent { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .session-folder-group.collapsed .session-folder-parent { display: none; }
   .session-folder-parent { margin-top: 3px; color: #85877e; font-size: 10px; font-weight: 400; }
   .session-row { display: flex; align-items: stretch; border-radius: 9px; }
   .session-open {

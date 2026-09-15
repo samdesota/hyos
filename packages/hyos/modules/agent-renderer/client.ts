@@ -5,6 +5,7 @@ import {
   type AgentFeedChange,
   type AgentFileContent,
   type AgentGlobalTabRow,
+  type AgentFolderStateRow,
   type AgentMessageChange,
   type AgentMessageCursor,
   type AgentMessagePage,
@@ -92,6 +93,10 @@ export interface AgentClient {
   ): Promise<void>;
   globalTabs(): Promise<readonly AgentGlobalTabRow[]>;
   replaceGlobalTabs(tabs: readonly AgentGlobalTabRow[]): Promise<void>;
+  /** The persisted per-folder sidebar state (manual order + collapse). */
+  folderState(): Promise<readonly AgentFolderStateRow[]>;
+  /** Fires whenever folder state changed in the database. */
+  subscribeFolderState(listener: () => void): () => void;
   dispose(): void;
 }
 
@@ -174,6 +179,9 @@ export function createAgentClient(
       agent.call("saveSessionTabs", sessionId, tabs),
     globalTabs: () => agent.call("globalTabs"),
     replaceGlobalTabs: (tabs) => agent.call("replaceGlobalTabs", tabs),
+    folderState: () => agent.call("folderState"),
+    subscribeFolderState: (listener) =>
+      agent.subscribe("folderState", listener),
     dispose() {
       unsubscribeFeedEvents();
       feeds.clear();

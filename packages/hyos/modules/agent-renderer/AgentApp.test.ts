@@ -10,14 +10,12 @@ import {
   folderName,
   groupSessionsByFolder,
   implementNextPrompt,
-  loadFolderOrder,
   nextPlanTask,
   orderedFolderGroups,
   orderedFolders,
   partitionSessions,
   planPanelIndex,
   recentFolders,
-  saveFolderOrder,
   timelineEntries,
   workPaneLabel,
 } from "./sessions-model.js";
@@ -223,43 +221,21 @@ test("orderedFolderGroups orders groups by the saved folder order", () => {
     "/tmp/gamma",
   ]);
   // Saved order wins; unsaved groups append in group order.
-  assert.deepEqual(folders(orderedFolderGroups(groups, ["/tmp/gamma", "/tmp/alpha"])), [
-    "/tmp/gamma",
-    "/tmp/alpha",
-    "/tmp/beta",
-  ]);
+  assert.deepEqual(
+    folders(orderedFolderGroups(groups, ["/tmp/gamma", "/tmp/alpha"])),
+    ["/tmp/gamma", "/tmp/alpha", "/tmp/beta"],
+  );
   // Saved entries that no longer exist are dropped, without duplicating.
-  assert.deepEqual(folders(orderedFolderGroups(groups, ["/tmp/beta", "/tmp/gone"])), [
-    "/tmp/beta",
-    "/tmp/alpha",
-    "/tmp/gamma",
-  ]);
+  assert.deepEqual(
+    folders(orderedFolderGroups(groups, ["/tmp/beta", "/tmp/gone"])),
+    ["/tmp/beta", "/tmp/alpha", "/tmp/gamma"],
+  );
   // A single saved entry moves that group to the front.
   assert.deepEqual(folders(orderedFolderGroups(groups, ["/tmp/beta"])), [
     "/tmp/beta",
     "/tmp/alpha",
     "/tmp/gamma",
   ]);
-});
-
-test("folder order persists to storage and tolerates bad data", () => {
-  const store = new Map<string, string>();
-  const storage = {
-    getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => {
-      store.set(key, value);
-    },
-  };
-
-  assert.equal(loadFolderOrder(storage), null);
-
-  saveFolderOrder(["/tmp/beta", "/tmp/alpha"], storage);
-  assert.deepEqual(loadFolderOrder(storage), ["/tmp/beta", "/tmp/alpha"]);
-
-  store.set("hyos.sidebar-folder-order", "not json");
-  assert.equal(loadFolderOrder(storage), null);
-  store.set("hyos.sidebar-folder-order", '["a", 3, "b"]');
-  assert.deepEqual(loadFolderOrder(storage), ["a", "b"]);
 });
 
 test("folderName extracts the basename of a folder path", () => {

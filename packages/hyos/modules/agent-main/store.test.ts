@@ -721,3 +721,54 @@ test("reorderSessions persists manual order; unordered sessions stay newest-firs
     await database.close();
   }
 });
+
+test("folder order and collapse state persist and publish", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    assert.deepEqual(await store.loadFolderState(), []);
+
+    const changes: number[] = [];
+    const unsubscribe = store.watchFolderState(() => changes.push(1));
+
+    await store.reorderFolders(["/tmp/beta", "/tmp/alpha"]);
+    await store.setFolderCollapsed("/tmp/beta", true);
+
+    const state = await store.loadFolderState();
+    assert.deepEqual(
+      state.map(({ folder, position, collapsed }) => ({
+        folder,
+        position,
+        collapsed,
+      })),
+      [
+        { folder: "/tmp/beta", position: 0, collapsed: true },
+        { folder: "/tmp/alpha", position: 1, collapsed: false },
+      ],
+    );
+
+    // Expanding again only touches the collapsed flag — the rank survives.
+    await store.setFolderCollapsed("/tmp/beta", false);
+    assert.deepEqual(
+      (await store.loadFolderState()).find((row) => row.folder === "/tmp/beta"),
+      { folder: "/tmp/beta", position: 0, collapsed: false },
+    );
+
+    // A partial reorder only rewrites the listed folders' ranks; beta keeps
+    // its earlier rank 0, tying with gamma (tie broken by path order).
+    await store.reorderFolders(["/tmp/gamma"]);
+    assert.deepEqual(
+      (await store.loadFolderState()).map((row) => row.folder),
+      ["/tmp/beta", "/tmp/gamma", "/tmp/alpha"],
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.ok(changes.length >= 3, "expected change pings");
+
+    unsubscribe();
+  } finally {
+    await database.close();
+  }
+});

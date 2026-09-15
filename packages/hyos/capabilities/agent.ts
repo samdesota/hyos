@@ -206,6 +206,16 @@ export type AgentFeedChange = Readonly<{
   change: AgentMessageChange;
 }>;
 
+/**
+ * One persisted folder's sidebar state: its manual order (`position`, the
+ * list index at last drag; null = never manually ordered) and collapse flag.
+ */
+export type AgentFolderStateRow = Readonly<{
+  folder: string;
+  position: number | null;
+  collapsed: boolean;
+}>;
+
 export type AgentCommand =
   | Readonly<{ type: "choose-folder" }>
   | Readonly<{
@@ -243,6 +253,17 @@ export type AgentCommand =
   | Readonly<{
       type: "reorder-sessions";
       orderedIds: readonly AgentSessionId[];
+    }>
+  | Readonly<{
+      /** Persist the manual sidebar folder order (list index = position). */
+      type: "reorder-folders";
+      orderedFolders: readonly string[];
+    }>
+  | Readonly<{
+      /** Persist one folder's collapsed/expanded state. */
+      type: "set-folder-collapsed";
+      folder: string;
+      collapsed: boolean;
     }>;
 
 export type AgentCommandResult =
@@ -252,7 +273,7 @@ export type AgentCommandResult =
 
 export const agentCapability = defineRemoteCapability({
   id: "agent",
-  version: 10,
+  version: 11,
   methods: {
     execute: remoteMethod<
       readonly [command: AgentCommand],
@@ -292,6 +313,8 @@ export const agentCapability = defineRemoteCapability({
       readonly [tabs: readonly AgentGlobalTabRow[]],
       void
     >(),
+    /** The persisted per-folder sidebar state (manual order + collapse). */
+    folderState: remoteMethod<readonly [], readonly AgentFolderStateRow[]>(),
   },
   events: {
     sessions: remoteEvent<AgentSessionsState>(),
@@ -299,5 +322,7 @@ export const agentCapability = defineRemoteCapability({
     sessionTabs: remoteEvent<AgentSessionTabsChange>(),
     /** Pings whenever the global tab strip changed; the caller re-reads. */
     globalTabs: remoteEvent<void>(),
+    /** Pings whenever folder state changed; the caller re-reads. */
+    folderState: remoteEvent<void>(),
   },
 });

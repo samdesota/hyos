@@ -9,6 +9,7 @@ import migration0006 from "./0006-agent-sessions-order.js";
 import migration0007 from "./0007-agent-board-tables.js";
 import migration0008 from "./0008-agent-global-tabs.js";
 import migration0009 from "./0009-agent-sessions-seen-status-detail.js";
+import migration0010 from "./0010-agent-folder-state.js";
 
 /**
  * The agent storage history, oldest first. The order mirrors the deprecated
@@ -27,4 +28,5 @@ export const agentMigrations: readonly Migration[] = [
   migration0007,
   migration0008,
   migration0009,
+  migration0010,
 ];

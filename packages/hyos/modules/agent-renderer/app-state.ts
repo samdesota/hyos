@@ -65,13 +65,11 @@ import { selectedMode } from "./mode-selection.js";
 import {
   collapseWorkRuns,
   implementNextPrompt,
-  loadFolderOrder,
   orderedFolders,
   partitionSessions,
   patchEntries,
   planPanelIndex,
   recentFolders,
-  saveFolderOrder,
   sessionsShallowEqual,
   timelineEntries,
 } from "./sessions-model.js";
@@ -157,12 +155,32 @@ export function createAppState({
     unsubscribeCreateTriggered();
     void keybindingClient.unregister(createOpenAction).catch(() => undefined);
   });
+  // Folder sidebar state (manual order + collapse) is persisted host-side in
+  // hydb; these signals mirror the last state the host published. Null order
+  // means nothing persisted yet — folders render in newest-session order.
   const [folderOrder, setFolderOrder] = createSignal<readonly string[] | null>(
-    loadFolderOrder(),
+    null,
   );
+  const [collapsedFolders, setCollapsedFolders] = createSignal<
+    ReadonlySet<string>
+  >(new Set());
   const persistFolderOrder = (order: readonly string[]): void => {
+    // Optimistic: the host echoes the change through the folderState ping.
     setFolderOrder(order);
-    saveFolderOrder(order);
+    void client
+      .execute({ type: "reorder-folders", orderedFolders: [...order] })
+      .catch(() => undefined);
+  };
+  const setFolderCollapsed = (folder: string, collapsed: boolean): void => {
+    setCollapsedFolders((previous) => {
+      const next = new Set(previous);
+      if (collapsed) next.add(folder);
+      else next.delete(folder);
+      return next;
+    });
+    void client
+      .execute({ type: "set-folder-collapsed", folder, collapsed })
+      .catch(() => undefined);
   };
   const recentFoldersList = createMemo(() =>
     orderedFolders(recentFolders(sessions()), folderOrder()),
@@ -958,6 +976,31 @@ export function createAppState({
   const unsubscribeGlobalTabs = client.subscribeGlobalTabs(refreshGlobalTabs);
   onCleanup(() => unsubscribeGlobalTabs());
 
+  const applyFolderState = (
+    rows: readonly {
+      folder: string;
+      position: number | null;
+      collapsed: boolean;
+    }[],
+  ): void => {
+    // Row order already sorts manually-positioned folders first; mirror it
+    // verbatim so orderedFolderGroups sees the saved order.
+    setFolderOrder(rows.map((row) => row.folder));
+    setCollapsedFolders(
+      new Set(rows.filter((row) => row.collapsed).map((row) => row.folder)),
+    );
+  };
+  const refreshFolderState = (): void => {
+    void client
+      .folderState()
+      .then(applyFolderState)
+      .catch(() => undefined); // background sidebar state; leave as-is
+  };
+  void bootBrowserSnapshot.then(refreshFolderState);
+  const unsubscribeFolderState =
+    client.subscribeFolderState(refreshFolderState);
+  onCleanup(() => unsubscribeFolderState());
+
   const selectSession = async (sessionId: string): Promise<void> => {
     const selectStart = perfNow();
     let feedOpenDone = 0;
@@ -1298,6 +1341,8 @@ export function createAppState({
     setError,
     folderOrder,
     persistFolderOrder,
+    collapsedFolders,
+    setFolderCollapsed,
     recentFoldersList,
     modelMenuOpen,
     setModelMenuOpen,

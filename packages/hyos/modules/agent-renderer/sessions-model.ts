@@ -295,35 +295,6 @@ export function recentFolders(
   return folders;
 }
 
-const FOLDER_ORDER_KEY = "hyos.sidebar-folder-order";
-
-/** Read the persisted folder order, if any. */
-export function loadFolderOrder(
-  storage: Pick<Storage, "getItem"> = window.localStorage,
-): readonly string[] | null {
-  try {
-    const raw = storage.getItem(FOLDER_ORDER_KEY);
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return null;
-    return parsed.filter((entry): entry is string => typeof entry === "string");
-  } catch {
-    return null;
-  }
-}
-
-/** Persist a folder order. */
-export function saveFolderOrder(
-  order: readonly string[],
-  storage: Pick<Storage, "setItem"> = window.localStorage,
-): void {
-  try {
-    storage.setItem(FOLDER_ORDER_KEY, JSON.stringify(order));
-  } catch {
-    // Storage unavailable (private mode, quota); order just won't persist.
-  }
-}
-
 /**
  * Apply a saved manual order to the recent folders: saved folders keep their
  * order, folders not in the saved order (new ones) append at the end.

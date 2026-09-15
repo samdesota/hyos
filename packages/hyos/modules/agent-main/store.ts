@@ -19,12 +19,14 @@ import type {
   AgentSessionTabsChange,
   AgentGlobalTabData,
   AgentGlobalTabRow,
+  AgentFolderStateRow,
 } from "../../capabilities/agent.js";
 
 // The strip row types live in the capability contract (the renderer reads the
 // same shapes over the wire); re-exported here for the store's callers.
-export type { AgentGlobalTabData, AgentGlobalTabRow };
+export type { AgentGlobalTabData, AgentGlobalTabRow, AgentFolderStateRow };
 import {
+  agentFolderState,
   agentGlobalTabs,
   agentMessageChunks,
   agentMessages,
@@ -647,6 +649,43 @@ const reorderSessionsCommand = hydb.command({
   },
 });
 
+// Folder state is a lazy upsert: only fields the caller passes are written
+// (null = leave unchanged), so a reorder doesn't clobber collapse flags and
+// vice versa. Rows appear on first write and are never deleted — stale rows
+// for vanished folders are simply ignored by the ordering logic.
+const upsertFolderStateCommand = hydb.command({
+  input: z.object({
+    now: z.date(),
+    entries: z.array(
+      z.object({
+        folder: z.string(),
+        position: z.number().nullable(),
+        collapsed: z.number().nullable(),
+      }),
+    ),
+  }),
+  async handler(transaction, input) {
+    for (const entry of input.entries) {
+      const existing = await transaction.get(agentFolderState, [entry.folder]);
+      if (existing === undefined) {
+        await transaction.insert(agentFolderState, {
+          folder: entry.folder,
+          position: entry.position,
+          collapsed: entry.collapsed,
+          createdAt: input.now,
+          updatedAt: input.now,
+        });
+      } else {
+        await transaction.update(agentFolderState, [entry.folder], {
+          position: entry.position ?? existing.position,
+          collapsed: entry.collapsed ?? existing.collapsed,
+          updatedAt: input.now,
+        });
+      }
+    }
+  },
+});
+
 // Deliberately does not touch updatedAt: marking an outcome seen must not
 // reorder the sidebar.
 const markSessionSeenCommand = hydb.command({
@@ -780,6 +819,14 @@ export interface AgentStore {
   replaceGlobalTabs(tabs: readonly AgentGlobalTabRow[]): Promise<void>;
   /** Fires whenever the global tabs table changes; the caller re-reads. */
   watchGlobalTabs(listener: () => void): () => void;
+  /** The persisted per-folder sidebar state, ordered by position. */
+  loadFolderState(): Promise<AgentFolderStateRow[]>;
+  /** Persist the manual folder order (list index = position rank). */
+  reorderFolders(orderedFolders: readonly string[]): Promise<void>;
+  /** Persist one folder's collapsed flag. */
+  setFolderCollapsed(folder: string, collapsed: boolean): Promise<void>;
+  /** Fires whenever the folder state table changes; the caller re-reads. */
+  watchFolderState(listener: () => void): () => void;
   updateUsage(
     sessionId: string,
     messageId: string,
@@ -1124,6 +1171,44 @@ export function createAgentStore(database: Database): AgentStore {
           .many(),
         listener,
       );
+    },
+    async loadFolderState() {
+      const rows = await database.fetch(hydb.query(agentFolderState).many());
+      // Manually ordered folders first, in rank order; unordered and
+      // half-ordered rows trail in stable path order. The renderer further
+      // filters this against the folders it actually has sessions for.
+      return rows
+        .sort(
+          (left, right) =>
+            (left.position ?? Number.POSITIVE_INFINITY) -
+              (right.position ?? Number.POSITIVE_INFINITY) ||
+            left.folder.localeCompare(right.folder),
+        )
+        .map((row) => ({
+          folder: row.folder,
+          position: row.position,
+          collapsed: row.collapsed !== 0 && row.collapsed !== null,
+        }));
+    },
+    async reorderFolders(orderedFolders) {
+      if (orderedFolders.length === 0) return;
+      await database.execute(upsertFolderStateCommand, {
+        now: now(),
+        entries: orderedFolders.map((folder, index) => ({
+          folder,
+          position: index,
+          collapsed: null,
+        })),
+      });
+    },
+    async setFolderCollapsed(folder, collapsed) {
+      await database.execute(upsertFolderStateCommand, {
+        now: now(),
+        entries: [{ folder, position: null, collapsed: collapsed ? 1 : 0 }],
+      });
+    },
+    watchFolderState(listener) {
+      return database.subscribe(hydb.query(agentFolderState).many(), listener);
     },
     async updateUsage(sessionId, messageId, usage) {
       await database.execute(updateUsageCommand, {

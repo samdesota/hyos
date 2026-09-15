@@ -186,6 +186,18 @@ export const agentGlobalTabs = hydb.table(
   ],
 );
 
+// Per-folder sidebar state, keyed by folder path: the manual folder order
+// (`position`, the list index at last drag) and collapse flag. Folders come
+// and go with their sessions, so rows are upserted lazily and stale rows are
+// harmless — ordering logic ignores folders with no sessions.
+export const agentFolderState = hydb.table("hyos_agent_folder_state", {
+  folder: text().primaryKey(),
+  position: integer(),
+  collapsed: integer(),
+  createdAt: timestamp().notNull(),
+  updatedAt: timestamp().notNull(),
+});
+
 export const agentSchema = hydb.schema({
   agentSessions,
   agentMessages,
@@ -194,6 +206,7 @@ export const agentSchema = hydb.schema({
   agentBoardCards,
   agentBoardMedia,
   agentGlobalTabs,
+  agentFolderState,
 });
 
 export type StoredAgentSession = InferRow<typeof agentSessions>;

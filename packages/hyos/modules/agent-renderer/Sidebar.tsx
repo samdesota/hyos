@@ -22,6 +22,12 @@ const SessionFolderList: Component<{
   sessions: readonly AgentSessionSummary[];
   /** Persisted manual folder order; folders absent from it keep group order. */
   savedFolderOrder?: readonly string[] | null;
+  /** Folders currently collapsed (persisted host-side). */
+  collapsedFolders: ReadonlySet<string>;
+  /** Toggle one folder's collapsed state (persists via the host). */
+  onToggleCollapse: (folder: string, collapsed: boolean) => void;
+  /** Commit a manual folder order (persists via the host). */
+  onReorderFolders: (order: readonly string[]) => void;
   children: (session: () => AgentSessionSummary) => JSX.Element;
 }> = (props) => {
   // Key-stable rendering: folder sections are keyed by folder string and
@@ -41,31 +47,166 @@ const SessionFolderList: Component<{
       props.savedFolderOrder ?? null,
     ),
   );
+  // Folder drag-and-drop: the same pointer-lift model as session rows, minus
+  // the ghost — crossing the threshold reorders headings live as the pointer
+  // crosses a sibling's midpoint, and the drop commits the order through the
+  // host's reorder-folders command. The override stays visible until the
+  // host's published order catches up (or a safety timer fires), so the
+  // list never snaps back mid-round-trip.
+  const [dragFolder, setDragFolder] = createSignal<string | null>(null);
+  const [dragOrder, setDragOrder] = createSignal<readonly string[] | null>(
+    null,
+  );
+
+  const effectiveFolders = createMemo(() => {
+    const computed = groups().map(({ folder }) => folder);
+    const order = dragOrder();
+    if (!order) return computed;
+    const known = new Set(computed);
+    const ordered = order.filter((folder) => known.has(folder));
+    for (const folder of computed)
+      if (!order.includes(folder)) ordered.push(folder);
+    return ordered;
+  });
+
+  // Once the host publishes the committed order, the override is redundant.
+  createEffect(() => {
+    const order = dragOrder();
+    if (!order || dragFolder()) return;
+    const active = groups().map(({ folder }) => folder);
+    if (
+      active.length === order.length &&
+      active.every((folder, index) => folder === order[index])
+    )
+      setDragOrder(null);
+  });
+
+  const moveFolderTo = (dragged: string, index: number): void => {
+    const current = effectiveFolders();
+    const others = current.filter((folder) => folder !== dragged);
+    if (index < 0 || index > others.length) return;
+    const next = [...others.slice(0, index), dragged, ...others.slice(index)];
+    const previous = dragOrder() ?? current;
+    if (
+      previous.length === next.length &&
+      previous.every((folder, i) => folder === next[i])
+    )
+      return;
+    setDragOrder(next);
+  };
+
+  /** Folder slot index whose gap the pointer is over (midpoint hit-testing). */
+  const folderIndexAt = (dragged: string, y: number): number => {
+    const others = effectiveFolders().filter((folder) => folder !== dragged);
+    for (let index = 0; index < others.length; index++) {
+      const heading = document.querySelector<HTMLElement>(
+        `.session-folder-heading[data-folder="${CSS.escape(others[index])}"]`,
+      );
+      if (!heading) continue;
+      const rect = heading.getBoundingClientRect();
+      if (y < rect.top + rect.height / 2) return index;
+    }
+    return others.length;
+  };
+
+  const startFolderDrag = (folder: string, event: PointerEvent): void => {
+    if (event.button !== 0) return;
+    const startY = event.clientY;
+    let dragging = false;
+    const move = (moveEvent: PointerEvent): void => {
+      if (!dragging) {
+        if (Math.abs(moveEvent.clientY - startY) < 5) return;
+        dragging = true;
+        setDragFolder(folder);
+      }
+      moveEvent.preventDefault();
+      moveFolderTo(folder, folderIndexAt(folder, moveEvent.clientY));
+    };
+    const cleanup = (): void => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", cancel);
+    };
+    const finish = (): void => {
+      cleanup();
+      if (!dragging) return;
+      setDragFolder(null);
+      const ordered = dragOrder();
+      if (ordered) {
+        props.onReorderFolders([...ordered]);
+        // Keep the optimistic order visible until the host republishes (the
+        // effect above clears it) or this safety timer fires on rejection.
+        window.setTimeout(() => {
+          if (dragOrder() === ordered) setDragOrder(null);
+        }, 2000);
+      }
+    };
+    const cancel = (): void => {
+      cleanup();
+      if (!dragging) return;
+      setDragFolder(null);
+      setDragOrder(null);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", cancel);
+  };
+
   return (
-    <For each={groups().map(({ folder }) => folder)}>
+    <For each={effectiveFolders()}>
       {(folder) => (
         <Show when={groups().find((group) => group.folder === folder)}>
-          {(group) => (
-            <section
-              class="session-folder-group"
-              aria-label={group().folder || group().label}
-            >
-              <h3
-                class="session-folder-heading"
-                title={group().folder || group().label}
+          {(group) => {
+            const collapsed = () => props.collapsedFolders.has(group().folder);
+            return (
+              <section
+                class="session-folder-group"
+                classList={{ collapsed: collapsed() }}
+                aria-label={group().folder || group().label}
               >
-                <span class="session-folder-name">{group().label}</span>
-                <Show when={group().parentPath}>
-                  <span class="session-folder-parent">
-                    {group().parentPath}
-                  </span>
+                <h3
+                  class="session-folder-heading"
+                  classList={{ dragging: dragFolder() === group().folder }}
+                  data-folder={group().folder}
+                  title={group().folder || group().label}
+                  onPointerDown={(event) =>
+                    startFolderDrag(group().folder, event)
+                  }
+                >
+                  <button
+                    type="button"
+                    class="session-folder-toggle"
+                    aria-expanded={!collapsed()}
+                    aria-label={
+                      collapsed()
+                        ? `Expand ${group().label}`
+                        : `Collapse ${group().label}`
+                    }
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      props.onToggleCollapse(group().folder, !collapsed());
+                    }}
+                  >
+                    <i class="session-folder-chevron" aria-hidden="true">
+                      {collapsed() ? "▸" : "▾"}
+                    </i>
+                  </button>
+                  <span class="session-folder-name">{group().label}</span>
+                  <Show when={group().parentPath}>
+                    <span class="session-folder-parent">
+                      {group().parentPath}
+                    </span>
+                  </Show>
+                </h3>
+                <Show when={!collapsed()}>
+                  <For each={group().sessions.map(({ id }) => id)}>
+                    {(id) => props.children(() => byId().get(id)!)}
+                  </For>
                 </Show>
-              </h3>
-              <For each={group().sessions.map(({ id }) => id)}>
-                {(id) => props.children(() => byId().get(id)!)}
-              </For>
-            </section>
-          )}
+              </section>
+            );
+          }}
         </Show>
       )}
     </For>
@@ -616,6 +757,9 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
         <SessionFolderList
           sessions={effectiveSessions()}
           savedFolderOrder={props.app.folderOrder()}
+          collapsedFolders={props.app.collapsedFolders()}
+          onToggleCollapse={props.app.setFolderCollapsed}
+          onReorderFolders={(order) => props.app.persistFolderOrder(order)}
         >
           {(session) => (
             <Show when={session()}>
@@ -679,6 +823,9 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
             <SessionFolderList
               sessions={archivedSessions()}
               savedFolderOrder={props.app.folderOrder()}
+              collapsedFolders={props.app.collapsedFolders()}
+              onToggleCollapse={props.app.setFolderCollapsed}
+              onReorderFolders={(order) => props.app.persistFolderOrder(order)}
             >
               {(session) => (
                 <Show when={session()}>

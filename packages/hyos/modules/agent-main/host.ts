@@ -362,6 +362,7 @@ export function createAgentHost(options: {
   let unsubscribeSessions: (() => void) | undefined;
   let unsubscribeSessionTabs: (() => void) | undefined;
   let unsubscribeGlobalTabs: (() => void) | undefined;
+  let unsubscribeFolderState: (() => void) | undefined;
   let accepting = true;
 
   const sessionsState = async (): Promise<AgentSessionsState> => ({
@@ -797,6 +798,16 @@ export function createAgentHost(options: {
       await store.reorderSessions(command.orderedIds);
       return { type: "accepted" };
     }
+    if (command.type === "reorder-folders") {
+      // Folder-state rank rewrite: no session mutation, and the folderState
+      // publish fires through watchFolderState.
+      await store.reorderFolders(command.orderedFolders);
+      return { type: "accepted" };
+    }
+    if (command.type === "set-folder-collapsed") {
+      await store.setFolderCollapsed(command.folder, command.collapsed);
+      return { type: "accepted" };
+    }
     if (command.type === "start-session") {
       await assertFolder(command.folder);
       const provider = providers.get(command.providerId);
@@ -883,6 +894,7 @@ export function createAgentHost(options: {
       store.saveSessionTabs(sessionId, tabs),
     globalTabs: () => store.loadGlobalTabs(),
     replaceGlobalTabs: (tabs) => store.replaceGlobalTabs(tabs),
+    folderState: () => store.loadFolderState(),
   };
 
   const BOOT_TRACE = process.env.HYOS_BOOT_TRACE === "1";
@@ -910,6 +922,12 @@ export function createAgentHost(options: {
         if (!accepting) return;
         remote.publish(agentCapability, "globalTabs", undefined);
       });
+      // Same bare-ping pattern as global tabs: the caller re-reads via
+      // folderState() when it fires.
+      unsubscribeFolderState = store.watchFolderState(() => {
+        if (!accepting) return;
+        remote.publish(agentCapability, "folderState", undefined);
+      });
       publishSessions();
       bootTrace("initial-publish:scheduled");
     },
@@ -921,6 +939,8 @@ export function createAgentHost(options: {
       unsubscribeSessionTabs = undefined;
       unsubscribeGlobalTabs?.();
       unsubscribeGlobalTabs = undefined;
+      unsubscribeFolderState?.();
+      unsubscribeFolderState = undefined;
       for (const feedId of [...feeds.keys()]) closeFeed(feedId);
       for (const run of activeRuns.values()) run.controller.abort();
       await Promise.allSettled([...activeRuns.values()].map((run) => run.done));
