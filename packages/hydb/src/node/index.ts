@@ -41,3 +41,17 @@ export {
   type TableDescription,
 } from "./migration.js";
 export { nodeSpillStore } from "./spill-store.js";
+
+export { KeyValueConflictError } from "./key-value-store.js";
+export type {
+  KeyValueStore,
+  KeyValueOperation,
+  KeyValueCondition,
+} from "./key-value-store.js";
+export { memoryKeyValueStore } from "./memory-key-value-store.js";
+export { openLmdbKeyValueStore } from "./lmdb-key-value-store.js";
+export {
+  KeyValueStorageDatabase,
+  openKeyValueStorage,
+} from "./key-value-storage.js";
+export type { KeyValueStorageOptions } from "./key-value-storage.js";

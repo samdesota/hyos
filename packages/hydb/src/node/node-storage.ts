@@ -1,16 +1,12 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { MemoryManager } from "../memory.js";
 
 import {
-  getColumnDefinition,
-  getIndexDefinition,
-  getSchemaDefinition,
   getTableDefinition,
   type AnySchema,
   type AnyTable,
-  type InferRow,
 } from "../schema.js";
 import {
   HistoryUnavailableError,
@@ -28,20 +24,10 @@ import {
   type StorageDatabase,
   type StorageKey,
   type StorageMutation,
-  type StorageScan,
   type StorageSnapshot,
 } from "../storage.js";
-import {
-  ImmutableBPlusTree,
-  type TreeRange,
-  type TreeRoot,
-} from "./bplus-tree.js";
-import {
-  decodeValue,
-  encodeOrderedKey,
-  encodeValue,
-  keyPrefixUpperBound,
-} from "./codec.js";
+import { ImmutableBPlusTree, type TreeRoot } from "./bplus-tree.js";
+import { decodeValue, encodeOrderedKey, encodeValue } from "./codec.js";
 import {
   buildMigrationPlan,
   type Migration,
@@ -57,48 +43,24 @@ import {
   type StartupCheckpoint,
 } from "./startup-checkpoint.js";
 
-type StoredRow = Readonly<Record<string, unknown>>;
-
-function decodeRow(bytes: Uint8Array): StoredRow {
-  return Object.freeze(decodeValue(bytes) as Record<string, unknown>);
-}
-
-function cloneRow(row: Readonly<Record<string, unknown>>): StoredRow {
-  return decodeRow(encodeValue(row));
-}
-
-type TableManifest = {
-  primary: TreeRoot;
-  indexes: Record<string, TreeRoot>;
-};
-
-type DatabaseManifest = {
-  schema: string;
-  tables: Record<string, TableManifest>;
-  /**
-   * Progress marker written only by migration commits: the number of
-   * migration steps already applied to the branch. cloneManifest drops it so
-   * ordinary commits never inherit migration progress.
-   */
-  migration?: { step: number };
-};
-
-type StoredChange = {
-  table: string;
-  key: StorageKey;
-  before?: StoredRow;
-  after?: StoredRow;
-};
-
-type StoredCommit = {
-  id?: CommitId;
-  committedAtMs?: number;
-  parent: CommitId | null;
-  branch: BranchName;
-  sequence: BranchSequence;
-  manifest: DatabaseManifest;
-  changes: StoredChange[];
-};
+import { NodeSnapshot } from "./tree-snapshot.js";
+import {
+  applyTreeMutations,
+  cloneManifest,
+  cloneRow,
+  decodeRow,
+  foreverRetention,
+  newCommitId,
+  primaryKey,
+  sameRetention,
+  schemaMetadata,
+  validateRetention,
+  type DatabaseManifest,
+  type StoredChange,
+  type StoredCommit,
+  type StoredRow,
+  type TableMetadata,
+} from "./tree-storage-model.js";
 
 type StoredRef = {
   operation: "create" | "commit";
@@ -113,39 +75,6 @@ type StoredMetadata = {
   retains?: Record<string, CommitId>;
   historyFloors?: Record<BranchName, BranchSequence>;
 };
-
-const foreverRetention: RetentionPolicy = Object.freeze({ mode: "forever" });
-
-function validateRetention(policy: RetentionPolicy): RetentionPolicy {
-  if (policy.mode === "forever") return foreverRetention;
-  if (!Number.isSafeInteger(policy.keepAtLeast) || policy.keepAtLeast < 1) {
-    throw new TypeError("retention.keepAtLeast must be a positive integer");
-  }
-  if (
-    policy.keepYoungerThanMs !== undefined &&
-    (!Number.isFinite(policy.keepYoungerThanMs) ||
-      policy.keepYoungerThanMs <= 0)
-  ) {
-    throw new TypeError("retention.keepYoungerThanMs must be positive");
-  }
-  return Object.freeze({
-    mode: "window",
-    keepAtLeast: policy.keepAtLeast,
-    ...(policy.keepYoungerThanMs === undefined
-      ? {}
-      : { keepYoungerThanMs: policy.keepYoungerThanMs }),
-  });
-}
-
-function sameRetention(left: RetentionPolicy, right: RetentionPolicy): boolean {
-  return (
-    left.mode === right.mode &&
-    (left.mode === "forever" ||
-      (right.mode === "window" &&
-        left.keepAtLeast === right.keepAtLeast &&
-        left.keepYoungerThanMs === right.keepYoungerThanMs))
-  );
-}
 
 async function syncParentDirectory(path: string): Promise<void> {
   const directory = await open(dirname(path), "r");
@@ -175,112 +104,6 @@ type CommitLocation = {
   value?: StoredCommit;
 };
 
-type TableMetadata = Readonly<{
-  table: AnyTable;
-  name: string;
-  primaryColumns: readonly string[];
-  indexes: readonly Readonly<{
-    name: string;
-    unique: boolean;
-    columns: readonly string[];
-  }>[];
-}>;
-
-const newCommitId = (): CommitId => `commit:${randomUUID()}`;
-
-function cloneManifest(manifest: DatabaseManifest): DatabaseManifest {
-  // The migration progress marker is intentionally dropped: only migration
-  // commits themselves carry progress, so ordinary commits never inherit it.
-  return {
-    schema: manifest.schema,
-    tables: Object.fromEntries(
-      Object.entries(manifest.tables).map(([name, table]) => [
-        name,
-        { primary: table.primary, indexes: { ...table.indexes } },
-      ]),
-    ),
-  };
-}
-
-function schemaMetadata(
-  schema: AnySchema,
-  addedNullableColumns: Readonly<Record<string, readonly string[]>> = {},
-  omittedTables: readonly string[] = [],
-): {
-  fingerprint: string;
-  tables: ReadonlyMap<string, TableMetadata>;
-} {
-  const tables = new Map<string, TableMetadata>();
-  const description = Object.values(getSchemaDefinition(schema).tables)
-    .map((table) => {
-      const definition = getTableDefinition(table);
-      const columns = Object.entries(definition.columns).map(
-        ([name, column]) => {
-          const value = getColumnDefinition(column);
-          return {
-            name,
-            dataType: value.dataType,
-            notNull: value.notNull,
-            primaryKey: value.primaryKey,
-          };
-        },
-      );
-      const indexes = definition.indexes.map((value) => {
-        const index = getIndexDefinition(value);
-        return {
-          name: index.name,
-          unique: index.unique,
-          columns: index.columns.map(
-            (column) => getColumnDefinition(column).name,
-          ),
-        };
-      });
-      tables.set(definition.name, {
-        table,
-        name: definition.name,
-        primaryColumns: columns
-          .filter((column) => column.primaryKey)
-          .map((column) => column.name),
-        indexes,
-      });
-      const added = addedNullableColumns[definition.name] ?? [];
-      for (const name of added) {
-        const column = columns.find((column) => column.name === name);
-        if (
-          !column ||
-          column.notNull ||
-          column.primaryKey ||
-          indexes.some((index) => index.columns.includes(name))
-        ) {
-          throw new TypeError(
-            `Migration requires a nullable, non-indexed column: ${definition.name}.${name}`,
-          );
-        }
-      }
-      return {
-        name: definition.name,
-        columns: columns.filter((column) => !added.includes(column.name)),
-        indexes,
-      };
-    })
-    .filter((table) => !omittedTables.includes(table.name))
-    .sort((left, right) => left.name.localeCompare(right.name));
-  for (const name of Object.keys(addedNullableColumns)) {
-    if (!tables.has(name))
-      throw new TypeError(`Unknown migration table: ${name}`);
-  }
-  return {
-    fingerprint: createHash("sha256")
-      .update(JSON.stringify(description))
-      .digest("hex"),
-    tables,
-  };
-}
-
-function primaryKey(metadata: TableMetadata, row: StoredRow): StorageKey {
-  return metadata.primaryColumns.map((column) => row[column]);
-}
-
 /**
  * One executable migration step. `schema` steps come from the declarative
  * migration list (one commit per operation); `data` steps run a callback
@@ -309,143 +132,6 @@ type MigrationPendingRow = {
   /** The row after the write; undefined means delete. */
   after?: StoredRow;
 };
-
-function indexPrefix(
-  index: TableMetadata["indexes"][number],
-  row: StoredRow,
-): StorageKey {
-  return index.columns.map((column) => row[column]);
-}
-
-function indexKey(
-  index: TableMetadata["indexes"][number],
-  row: StoredRow,
-  key: StorageKey,
-): Uint8Array {
-  return encodeOrderedKey([...indexPrefix(index, row), ...key]);
-}
-
-function encodedRange(
-  range: StorageScan["range"],
-  prefixValues: boolean,
-): TreeRange {
-  if (range === undefined) return {};
-  return {
-    ...(range.gt === undefined
-      ? {}
-      : {
-          ...(prefixValues
-            ? { gte: keyPrefixUpperBound(encodeOrderedKey(range.gt)) }
-            : { gt: encodeOrderedKey(range.gt) }),
-        }),
-    ...(range.gte === undefined ? {} : { gte: encodeOrderedKey(range.gte) }),
-    ...(range.lt === undefined ? {} : { lt: encodeOrderedKey(range.lt) }),
-    ...(range.lte === undefined
-      ? {}
-      : {
-          ...(prefixValues
-            ? { lt: keyPrefixUpperBound(encodeOrderedKey(range.lte)) }
-            : { lte: encodeOrderedKey(range.lte) }),
-        }),
-    reverse: range.reverse,
-    limit: range.limit,
-  };
-}
-
-class NodeSnapshot implements StorageSnapshot {
-  readonly version: BranchSequence;
-  #closed = false;
-
-  constructor(
-    readonly commit: CommitId,
-    readonly sequence: BranchSequence,
-    readonly branch: BranchName | undefined,
-    private readonly manifest: DatabaseManifest,
-    private readonly tree: ImmutableBPlusTree,
-    private readonly tables: ReadonlyMap<string, TableMetadata>,
-    private readonly release: () => Promise<void>,
-  ) {
-    this.version = sequence;
-  }
-
-  async get<TableValue extends AnyTable>(
-    table: TableValue,
-    key: StorageKey,
-  ): Promise<InferRow<TableValue> | undefined> {
-    this.assertOpen();
-    const name = getTableDefinition(table).name;
-    const root = this.manifest.tables[name]?.primary;
-    if (root === undefined) throw new TypeError(`Unknown table: ${name}`);
-    const value = await this.tree.get(root, encodeOrderedKey(key));
-    return (value === undefined ? undefined : decodeRow(value)) as
-      InferRow<TableValue> | undefined;
-  }
-
-  async *scan<TableValue extends AnyTable>(
-    request: StorageScan<TableValue>,
-  ): AsyncIterable<readonly InferRow<TableValue>[]> {
-    this.assertOpen();
-    const name = getTableDefinition(request.table).name;
-    const table = this.manifest.tables[name];
-    const metadata = this.tables.get(name);
-    if (table === undefined || metadata === undefined) {
-      throw new TypeError(`Unknown table: ${name}`);
-    }
-
-    const rows: InferRow<TableValue>[] = [];
-    const emit = async function* (): AsyncIterable<
-      readonly InferRow<TableValue>[]
-    > {
-      if (rows.length > 0) {
-        yield Object.freeze(rows.splice(0, rows.length));
-      }
-    };
-
-    if (request.type === "table") {
-      for await (const entry of this.tree.scan(
-        table.primary,
-        encodedRange(request.range, false),
-      )) {
-        rows.push(decodeRow(entry.value) as InferRow<TableValue>);
-        if (rows.length === 1_024) yield* emit();
-      }
-    } else {
-      const index = metadata.indexes.find(
-        (value) => value.name === request.index,
-      );
-      if (index === undefined)
-        throw new TypeError(`Unknown index: ${request.index}`);
-      const root = table.indexes[index.name];
-      const range =
-        request.key === undefined
-          ? encodedRange(request.range, true)
-          : {
-              gte: encodeOrderedKey(request.key),
-              lt: keyPrefixUpperBound(encodeOrderedKey(request.key)),
-              reverse: request.range?.reverse,
-              limit: request.range?.limit,
-            };
-      for await (const entry of this.tree.scan(root, range)) {
-        const key = decodeValue(entry.value) as StorageKey;
-        const value = await this.tree.get(table.primary, encodeOrderedKey(key));
-        if (value !== undefined)
-          rows.push(decodeRow(value) as InferRow<TableValue>);
-        if (rows.length === 1_024) yield* emit();
-      }
-    }
-    yield* emit();
-  }
-
-  async close(): Promise<void> {
-    if (this.#closed) return;
-    this.#closed = true;
-    await this.release();
-  }
-
-  private assertOpen(): void {
-    if (this.#closed) throw new Error("Storage snapshot is closed");
-  }
-}
 
 export class NodeStorageDatabase implements StorageDatabase {
   readonly #branches = new Map<BranchName, BranchState>();
@@ -1576,93 +1262,13 @@ export class NodeStorageDatabase implements StorageDatabase {
     if (migrationStep !== undefined) {
       manifest.migration = { step: migrationStep };
     }
-    const changes: StoredChange[] = [];
     const mutationsStartedAt = writeTraceNow();
-
-    for (const mutation of request.mutations) {
-      const name = getTableDefinition(mutation.table).name;
-      const metadata = this.tables.get(name);
-      const table = manifest.tables[name];
-      if (metadata === undefined || table === undefined) {
-        throw new TypeError(`Unknown table: ${name}`);
-      }
-      const key =
-        mutation.type === "insert"
-          ? primaryKey(metadata, mutation.row)
-          : mutation.key;
-      const encodedKey = encodeOrderedKey(key);
-      const beforeBytes = await this.tree.get(table.primary, encodedKey);
-      const before =
-        beforeBytes === undefined ? undefined : decodeRow(beforeBytes);
-      let after: StoredRow | undefined;
-
-      if (mutation.type === "insert") {
-        if (before !== undefined)
-          throw new TypeError(`Duplicate primary key for table ${name}`);
-        after = cloneRow(mutation.row);
-      } else {
-        if (before === undefined)
-          throw new TypeError(`Missing row for table ${name}`);
-        if (mutation.type === "update") {
-          if (
-            Buffer.compare(
-              encodeOrderedKey(primaryKey(metadata, mutation.row)),
-              encodedKey,
-            ) !== 0
-          ) {
-            throw new TypeError(
-              `Primary keys cannot be updated for table ${name}`,
-            );
-          }
-          after = cloneRow(mutation.row);
-        }
-      }
-
-      for (const index of metadata.indexes) {
-        let root = table.indexes[index.name] ?? null;
-        if (before !== undefined) {
-          root = await this.tree.mutate(root, [
-            { type: "delete", key: indexKey(index, before, key) },
-          ]);
-        }
-        if (after !== undefined) {
-          if (index.unique) {
-            const prefix = encodeOrderedKey(indexPrefix(index, after));
-            for await (const existing of this.tree.scan(root, {
-              gte: prefix,
-              lt: keyPrefixUpperBound(prefix),
-              limit: 1,
-            })) {
-              if (existing !== undefined) {
-                throw new TypeError(
-                  `Unique index ${index.name} rejected a duplicate key`,
-                );
-              }
-            }
-          }
-          root = await this.tree.mutate(root, [
-            {
-              type: "put",
-              key: indexKey(index, after, key),
-              value: encodeValue(key),
-            },
-          ]);
-        }
-        table.indexes[index.name] = root;
-      }
-
-      table.primary = await this.tree.mutate(table.primary, [
-        after === undefined
-          ? { type: "delete", key: encodedKey }
-          : { type: "put", key: encodedKey, value: encodeValue(after) },
-      ]);
-      changes.push({
-        table: name,
-        key: [...key],
-        ...(before === undefined ? {} : { before }),
-        ...(after === undefined ? {} : { after }),
-      });
-    }
+    const changes = await applyTreeMutations(
+      this.tree,
+      this.tables,
+      manifest,
+      request.mutations,
+    );
 
     const stored: StoredCommit = {
       id: newCommitId(),
