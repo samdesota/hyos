@@ -157,7 +157,7 @@ export const agentStyles = String.raw`
     color: inherit; font-size: 11px; line-height: 1;
   }
   .session-folder-toggle:hover { color: #eceae5; background: #30312d; }
-  .session-folder-chevron { font-style: normal; }
+  .session-folder-chevron { font-style: normal; font-size: 14px; }
   .session-folder-group.collapsed .session-folder-heading { padding-bottom: 8px; }
   /* Name/parent stay inline when collapsed; stacked block layout when open. */
   .session-folder-name, .session-folder-parent { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
