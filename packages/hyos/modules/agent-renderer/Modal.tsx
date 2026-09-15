@@ -1,6 +1,7 @@
-import { createEffect, onCleanup, Show, type Component, type JSX } from "solid-js";
+import { Show, type Component, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
-import { setModalOverlayActive } from "../browser-view/modal-overlay.js";
+
+import { bindOverlayLifecycle } from "./overlay-lifecycle.js";
 
 /**
  * Reusable portal-based modal: fixed overlay with blurred backdrop,
@@ -20,33 +21,33 @@ export const Modal: Component<{
   overBrowser?: boolean;
   children: JSX.Element;
 }> = (props) => {
-  createEffect(() => {
-    setModalOverlayActive(props.open && !!props.overBrowser);
-  });
-  onCleanup(() => setModalOverlayActive(false));
+  bindOverlayLifecycle(
+    () => props.open,
+    () => !!props.overBrowser,
+  );
   return (
     <Show when={props.open}>
       <Portal>
-      <div
-        class="modal-overlay"
-        role="presentation"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) props.onClose();
-        }}
-      >
         <div
-          class={props.class ? `modal-panel ${props.class}` : "modal-panel"}
-          role="dialog"
-          aria-modal="true"
-          aria-label={props.label}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") props.onClose();
+          class="modal-overlay"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) props.onClose();
           }}
         >
-          {props.children}
+          <div
+            class={props.class ? `modal-panel ${props.class}` : "modal-panel"}
+            role="dialog"
+            aria-modal="true"
+            aria-label={props.label}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") props.onClose();
+            }}
+          >
+            {props.children}
+          </div>
         </div>
-      </div>
-    </Portal>
+      </Portal>
     </Show>
   );
 };
