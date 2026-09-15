@@ -16,10 +16,20 @@ export type ElectronWindows = Readonly<{
 
 /**
  * Where the native macOS traffic lights sit when revealed. Re-applied after
- * every `setWindowButtonVisibility` because Electron resets the buttons to
- * the default position when they are hidden and shown again.
+ * every reveal because Electron resets the buttons to the default position
+ * in various states (visibility changes, restores, module reloads).
  */
 export const TRAFFIC_LIGHT_POSITION = { x: 16, y: 22 };
+
+/**
+ * Off-window position where the lights are parked while concealed. The
+ * buttons stay *visible* to AppKit at all times — concealment moves them
+ * outside the window instead of hiding them, so AppKit never redraws its
+ * titlebar chrome (which visibly shifted the window's top border on every
+ * `setWindowButtonVisibility` toggle). Off-window buttons cannot receive
+ * clicks.
+ */
+export const PARKED_BUTTON_POSITION = { x: -100, y: 0 };
 
 /**
  * Single-window shell: the app UI renders in its own `WebContentsView`
@@ -58,9 +68,10 @@ export function createElectronWindows(
     show: false,
   });
   // The sidebar renders its own Arc-style collapsible controls; the native
-  // traffic lights would sit underneath, so hide them (macOS only).
+  // traffic lights are parked off-window underneath (macOS only) so AppKit
+  // never toggles its titlebar chrome.
   if (process.platform === "darwin")
-    baseWindow.setWindowButtonVisibility(false);
+    baseWindow.setWindowButtonPosition({ ...PARKED_BUTTON_POSITION });
   const uiView = new WebContentsView({ webPreferences });
   // Append (no index) so the UI sits above the window's own blank contents
   // and below browser views that browser.main attaches later.
@@ -136,15 +147,18 @@ export function windowControlsImplementation(
     close: () => {
       if (!baseWindow.isDestroyed()) baseWindow.close();
     },
-    // Reveals the real macOS traffic lights (with their native long-press
-    // menus) while the sidebar's hover-expanded controls are active.
-    // `setWindowButtonVisibility` resets the lights to the default position,
-    // so the custom position is re-applied after every toggle.
+    // Conceals/reveals the real macOS traffic lights (with their native
+    // long-press menus) for the sidebar's hover-expanded controls. The
+    // buttons are always left *visible* to AppKit: concealment parks them
+    // off-window, so the top border (AppKit titlebar chrome) never redraws.
+    // The custom position is re-applied on reveal because Electron resets
+    // the button position in various states.
     setButtonsVisible: (visible) => {
       if (baseWindow.isDestroyed()) return;
       if (process.platform !== "darwin") return;
-      baseWindow.setWindowButtonVisibility(visible);
-      baseWindow.setWindowButtonPosition({ ...TRAFFIC_LIGHT_POSITION });
+      baseWindow.setWindowButtonPosition(
+        visible ? { ...TRAFFIC_LIGHT_POSITION } : { ...PARKED_BUTTON_POSITION },
+      );
     },
   };
 }
