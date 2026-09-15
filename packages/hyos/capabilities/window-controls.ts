@@ -6,11 +6,13 @@ import { defineRemoteCapability, remoteMethod } from "./contract.js";
  */
 export const windowControlsCapability = defineRemoteCapability({
   id: "window-controls",
-  version: 1,
+  version: 2,
   methods: {
     minimize: remoteMethod<readonly [], void>(),
     toggleMaximize: remoteMethod<readonly [], void>(),
     close: remoteMethod<readonly [], void>(),
+    /** macOS only: reveal/hide the native traffic-light buttons. */
+    setButtonsVisible: remoteMethod<readonly [boolean], void>(),
   },
   events: {},
 });

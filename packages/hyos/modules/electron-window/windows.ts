@@ -100,6 +100,7 @@ export type WindowControlsTarget = Pick<
   | "unmaximize"
   | "isMaximized"
   | "close"
+  | "setWindowButtonVisibility"
 >;
 
 /**
@@ -113,6 +114,7 @@ export function windowControlsImplementation(
   minimize(): void;
   toggleMaximize(): void;
   close(): void;
+  setButtonsVisible(visible: boolean): void;
 } {
   return {
     minimize: () => {
@@ -125,6 +127,13 @@ export function windowControlsImplementation(
     },
     close: () => {
       if (!baseWindow.isDestroyed()) baseWindow.close();
+    },
+    // Reveals the real macOS traffic lights (with their native long-press
+    // menus) while the sidebar's hover-expanded controls are active.
+    setButtonsVisible: (visible) => {
+      if (baseWindow.isDestroyed()) return;
+      if (process.platform !== "darwin") return;
+      baseWindow.setWindowButtonVisibility(visible);
     },
   };
 }

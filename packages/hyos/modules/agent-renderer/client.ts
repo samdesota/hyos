@@ -74,6 +74,8 @@ export interface WindowControlsClient {
   minimize(): Promise<void>;
   toggleMaximize(): Promise<void>;
   close(): Promise<void>;
+  /** macOS only: show/hide the native traffic-light buttons. */
+  setButtonsVisible(visible: boolean): Promise<void>;
 }
 
 export function createWindowControlsClient(
@@ -85,6 +87,7 @@ export function createWindowControlsClient(
     minimize: () => controls.call("minimize"),
     toggleMaximize: () => controls.call("toggleMaximize"),
     close: () => controls.call("close"),
+    setButtonsVisible: (visible) => controls.call("setButtonsVisible", visible),
   };
 }
 
