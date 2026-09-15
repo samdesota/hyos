@@ -17,6 +17,7 @@ import {
   reverseSchemaChanges,
   schemaFingerprint,
 } from "../src/node/index.js";
+import { buildMigrationPlan } from "../src/node/migration.js";
 
 const rowsTable = hydb.table("rows", {
   id: id().primaryKey(),
@@ -59,6 +60,29 @@ test("adding a nullable column changes the fingerprint and round-trips", () => {
     ["id", "title", "archivedAt"],
   );
   assert.deepEqual(reverseSchemaChanges(next, [op]), description);
+});
+
+test("migration plans use the exact target column order at boundaries", () => {
+  const nextRows = hydb.table("rows", {
+    id: id().primaryKey(),
+    note: text(),
+    title: text().notNull(),
+  });
+  const nextSchema = hydb.schema({ rows: nextRows, indexed: indexedTable });
+  const migrations = [
+    defineMigration({
+      id: "0001-add-note",
+      steps: [ddl.addColumn("rows", "note", text())],
+    }),
+  ];
+
+  const plan = buildMigrationPlan(nextSchema, migrations);
+  const step = plan.steps[0];
+
+  assert.ok(step && step.kind === "schema");
+  assert.equal(step.from, schemaFingerprint(describeSchema(schema)));
+  assert.equal(step.to, schemaFingerprint(describeSchema(nextSchema)));
+  assert.equal(plan.final, step.to);
 });
 
 test("addColumn rejects non-nullable, primary key, and indexed columns", () => {

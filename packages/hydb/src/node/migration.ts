@@ -643,8 +643,25 @@ export function buildMigrationPlan(
   const nodes = deriveMigrationFingerprints(schema, migrations);
   let description = nodes[0]!.description;
   const steps: PlannedStep[] = [];
-  for (const migration of migrations) {
-    for (const step of migration.steps) {
+  for (
+    let migrationIndex = 0;
+    migrationIndex < migrations.length;
+    migrationIndex += 1
+  ) {
+    const migration = migrations[migrationIndex]!;
+    let lastSchemaStep = -1;
+    for (let index = migration.steps.length - 1; index >= 0; index -= 1) {
+      if (!isDataStep(migration.steps[index]!)) {
+        lastSchemaStep = index;
+        break;
+      }
+    }
+    for (
+      let stepIndex = 0;
+      stepIndex < migration.steps.length;
+      stepIndex += 1
+    ) {
+      const step = migration.steps[stepIndex]!;
       if (isDataStep(step)) {
         steps.push({
           kind: "data",
@@ -653,7 +670,15 @@ export function buildMigrationPlan(
         });
         continue;
       }
-      const next = applySchemaChanges(description, [step]);
+      const applied = applySchemaChanges(description, [step]);
+      // addColumn appends to the runtime table metadata, while the model may
+      // declare the new column anywhere. At the migration boundary, use the
+      // exact historical description derived from the current schema so the
+      // persisted fingerprint matches both old storages and the model.
+      const next =
+        stepIndex === lastSchemaStep
+          ? nodes[migrationIndex + 1]!.description
+          : applied;
       steps.push({
         kind: "schema",
         op: step,
