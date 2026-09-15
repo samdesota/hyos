@@ -763,7 +763,6 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
     <aside class="agent-sidebar">
       <div class="sidebar-head">
         <div class="brand">
-          <span class="brand-mark">H</span>
           <strong>hyos</strong>
           <div class="brand-new-wrap">
             <button
