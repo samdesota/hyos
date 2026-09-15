@@ -38,11 +38,11 @@ export const agentStyles = String.raw`
   .sidebar-head { position: relative; padding: 0 16px 14px 80px; }
   /* Arc-style window controls: collapsed dim dots expand into the macOS
      traffic lights on hover or keyboard focus, replacing the native buttons
-     hidden by the main process. Sits where the native lights were
-     (left 16px, vertically centered at 28px). */
+     hidden by the main process. Geometry measured from the native lights
+     (macOS Tahoe): expanded centers at x 27/50/73, vertical center 29. */
   .win-controls {
-    position: absolute; left: 16px; top: 14px; height: 28px;
-    display: flex; align-items: center; gap: 8px;
+    position: absolute; left: 21px; top: 15px; height: 28px;
+    display: flex; align-items: center; gap: 11px;
   }
   .win-dot {
     width: 5px; height: 5px; padding: 0; border: 0; border-radius: 50%;
