@@ -140,9 +140,10 @@ async function runRg(
   args: readonly string[],
   cwd: string,
   signal: AbortSignal,
+  timeout = 120_000,
 ): Promise<string> {
   const rg = await resolveRgBinary();
-  return run(rg, args, cwd, signal, 120_000, { noMatchesIsSuccess: true });
+  return run(rg, args, cwd, signal, timeout, { noMatchesIsSuccess: true });
 }
 
 const objectSchema = (
@@ -260,6 +261,12 @@ export const openCodeTools: readonly OpenCodeTool[] = [
           type: "string",
           description: "Optional file glob such as *.ts",
         },
+        timeout: {
+          type: "integer",
+          minimum: 1,
+          description:
+            "Timeout in milliseconds; defaults to 10000 so a hung search never blocks the run",
+        },
       },
       ["pattern"],
     ),
@@ -278,7 +285,9 @@ export const openCodeTools: readonly OpenCodeTool[] = [
       ];
       if (typeof input.include === "string")
         args.splice(4, 0, "--glob", input.include);
-      return { output: await runRg(args, folder, signal) };
+      const timeout =
+        typeof input.timeout === "number" ? Math.max(1, input.timeout) : 10_000;
+      return { output: await runRg(args, folder, signal, timeout) };
     },
   },
   {

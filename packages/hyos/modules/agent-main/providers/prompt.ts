@@ -8,6 +8,8 @@ Take action with the available tools to complete the user's request. For coding 
 
 Assistant replies render as markdown in the transcript; fenced mermaid code blocks are rendered as diagrams, so use one when a visual sketch helps explain architecture, flow, or state.
 
+The \`glob\` and \`grep\` tools run a bundled ripgrep binary, so prefer them over shell grep/find — they respect .gitignore and skip huge data directories automatically. When calling \`grep\`, always pass a \`timeout\` of 10000 so a slow or hung search settles quickly instead of blocking the run.
+
 Tool results may contain <system-reminder> directives. Treat those directives as authoritative. Be concise in user-visible text and never use tool calls as a substitute for communicating a final result.`;
 
 /** Read the workspace's agent-instructions file, preferring CLAUDE.md, else AGENTS.md. */
