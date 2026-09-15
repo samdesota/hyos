@@ -254,6 +254,7 @@ const createSessionCommand = hydb.command({
     assistantMessageId: z.string(),
     title: z.string(),
     folder: z.string(),
+    originFolder: z.string().nullable().default(null),
     providerId: z.string(),
     modelId: z.string(),
     prompt: z.string(),
@@ -266,6 +267,7 @@ const createSessionCommand = hydb.command({
       id: input.sessionId,
       title: input.title,
       folder: input.folder,
+      originFolder: input.originFolder,
       providerId: input.providerId,
       modelId: input.modelId,
       providerSessionId: null,
@@ -773,6 +775,7 @@ function sessionSummary(
     id: string;
     title: string;
     folder: string;
+    originFolder: string | null;
     providerId: string;
     modelId: string;
     status: AgentSessionStatus;
@@ -790,6 +793,7 @@ function sessionSummary(
     id: row.id,
     title: row.title,
     folder: row.folder,
+    originFolder: row.originFolder,
     providerId: row.providerId,
     modelId: model.modelId,
     reasoningEffort: model.reasoningEffort,
@@ -808,6 +812,8 @@ function sessionSummary(
 export type NewAgentSession = Readonly<{
   prompt: string;
   folder: string;
+  /** When the session runs in a worktree, the origin folder it came from. */
+  originFolder?: string | null;
   providerId: string;
   modelId: string;
   reasoningEffort?: AgentReasoningEffort | null;

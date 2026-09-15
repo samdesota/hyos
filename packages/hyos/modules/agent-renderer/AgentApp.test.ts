@@ -31,6 +31,7 @@ function sessionSummary(
     id,
     title: id,
     folder: "/tmp/project",
+    originFolder: null,
     providerId: "codex",
     modelId: "gpt-5.6-sol",
     reasoningEffort: null,

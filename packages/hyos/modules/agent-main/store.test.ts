@@ -97,6 +97,40 @@ test("agent sessions persist chunked messages and publish HyDB changes", async (
   }
 });
 
+test("sessions persist their origin folder for worktree grouping", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    // Worktree session: folder is the worktree cwd, originFolder the folder
+    // the composer pointed at.
+    const worktreeTurn = await store.createSession({
+      prompt: "Worktree session",
+      folder: "/Users/sam/.hyos/worktrees/hyos",
+      originFolder: "/Users/sam/projects/hyos",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+    const worktreeSession = await store.getSession(worktreeTurn.sessionId);
+    assert.equal(worktreeSession.folder, "/Users/sam/.hyos/worktrees/hyos");
+    assert.equal(worktreeSession.originFolder, "/Users/sam/projects/hyos");
+
+    // Plain session: no origin folder.
+    const plainTurn = await store.createSession({
+      prompt: "Plain session",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+    const plainSession = await store.getSession(plainTurn.sessionId);
+    assert.equal(plainSession.originFolder, null);
+    assert.equal((await store.listSessions()).length, 2);
+  } finally {
+    await database.close();
+  }
+});
+
 test("renameSession updates the title and publishes the change", async () => {
   const storage = await memoryStorage({ schema: agentSchema });
   const database = await hydb.database({ schema: agentSchema, storage });

@@ -179,6 +179,14 @@ export type SessionFolderGroup = Readonly<{
   sessions: readonly AgentSessionSummary[];
 }>;
 
+/**
+ * The folder a session is grouped under in the sidebar: worktree sessions
+ * report their origin folder so they never spawn duplicate folder entries.
+ */
+export function sessionGroupFolder(session: AgentSessionSummary): string {
+  return session.originFolder ?? session.folder;
+}
+
 /** Group a newest-first session list, preserving group and session order.
  * Call separately for active and archived sessions after partitioning.
  */
@@ -187,9 +195,10 @@ export function groupSessionsByFolder(
 ): readonly SessionFolderGroup[] {
   const folders = new Map<string, AgentSessionSummary[]>();
   for (const session of sessions) {
-    const group = folders.get(session.folder);
+    const key = sessionGroupFolder(session);
+    const group = folders.get(key);
     if (group) group.push(session);
-    else folders.set(session.folder, [session]);
+    else folders.set(key, [session]);
   }
   const labels = new Map<string, number>();
   const labelFor = (folder: string) =>
@@ -258,9 +267,12 @@ export function reorderWithinFolder(
   if (draggedId === targetId) return null;
   const dragged = active.find((session) => session.id === draggedId);
   const target = active.find((session) => session.id === targetId);
-  if (!dragged || !target || dragged.folder !== target.folder) return null;
+  if (!dragged || !target) return null;
+  const draggedKey = sessionGroupFolder(dragged);
+  const targetKey = sessionGroupFolder(target);
+  if (draggedKey !== targetKey) return null;
   const folderSessions = active.filter(
-    (session) => session.folder === target.folder,
+    (session) => sessionGroupFolder(session) === targetKey,
   );
   const from = folderSessions.findIndex((session) => session.id === draggedId);
   const to = folderSessions.findIndex((session) => session.id === targetId);
@@ -274,7 +286,9 @@ export function reorderWithinFolder(
   const result: string[] = [];
   for (const session of active) {
     result.push(
-      session.folder === target.folder ? queue.shift()!.id : session.id,
+      sessionGroupFolder(session) === targetKey
+        ? queue.shift()!.id
+        : session.id,
     );
   }
   return result;
@@ -287,9 +301,10 @@ export function recentFolders(
   const seen = new Set<string>();
   const folders: string[] = [];
   for (const session of sessions) {
-    if (session.folder && !seen.has(session.folder)) {
-      seen.add(session.folder);
-      folders.push(session.folder);
+    const key = sessionGroupFolder(session);
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      folders.push(key);
     }
   }
   return folders;
@@ -347,6 +362,7 @@ const sameSession = (a: AgentSessionSummary, b: AgentSessionSummary): boolean =>
   a.id === b.id &&
   a.title === b.title &&
   a.folder === b.folder &&
+  a.originFolder === b.originFolder &&
   a.providerId === b.providerId &&
   a.modelId === b.modelId &&
   a.reasoningEffort === b.reasoningEffort &&

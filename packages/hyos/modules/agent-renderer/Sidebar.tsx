@@ -20,6 +20,7 @@ import { WindowControls } from "./WindowControls.js";
 import {
   groupSessionsByFolder,
   orderedFolderGroups,
+  sessionGroupFolder,
 } from "./sessions-model.js";
 
 /**
@@ -598,10 +599,14 @@ export const Sidebar: Component<{
   const reorderDraggedTo = (draggedId: string, index: number): void => {
     const dragged = sessionById(draggedId);
     if (!dragged) return;
+    const draggedKey = sessionGroupFolder(dragged);
     const others = (dragOrder() ?? activeSessions().map((s) => s.id)).filter(
       (id) => {
         const session = sessionById(id);
-        return session?.folder === dragged.folder && id !== draggedId;
+        return (
+          (session ? sessionGroupFolder(session) : "") === draggedKey &&
+          id !== draggedId
+        );
       },
     );
     if (index < 0 || index > others.length) return;
@@ -612,7 +617,7 @@ export const Sidebar: Component<{
     ];
     const queue = [...folderIds];
     const order = activeSessions().map((session) =>
-      session.folder === dragged.folder ? queue.shift()! : session.id,
+      sessionGroupFolder(session) === draggedKey ? queue.shift()! : session.id,
     );
     const current = dragOrder() ?? activeSessions().map((s) => s.id);
     if (
@@ -629,7 +634,8 @@ export const Sidebar: Component<{
     if (!dragged) return -1;
     const others = effectiveSessions().filter(
       (session) =>
-        session.folder === dragged.folder && session.id !== draggedId,
+        sessionGroupFolder(session) === sessionGroupFolder(dragged) &&
+        session.id !== draggedId,
     );
     for (let index = 0; index < others.length; index++) {
       const row = document.querySelector<HTMLElement>(

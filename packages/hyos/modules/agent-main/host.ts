@@ -863,9 +863,10 @@ export function createAgentHost(options: {
       const turn = await store.createSession({
         ...command,
         // The worktree path is the session's working folder (cwd for every
-        // provider tool); grouping it under the origin folder comes with the
-        // sidebar-grouping change.
+        // provider tool); the origin folder stays the session's sidebar
+        // identity so worktree sessions group under their origin folder.
         folder: sessionFolder,
+        originFolder: sessionFolder === command.folder ? null : command.folder,
         images,
       });
       // Best-effort title generation: the session starts under the raw prompt

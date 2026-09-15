@@ -33,6 +33,9 @@ export const agentSessions = hydb.table(
     id: id().primaryKey(),
     title: text().notNull(),
     folder: text().notNull(),
+    // For worktree sessions: the origin folder the session was started from
+    // (the sidebar groups the session under it). Null = folder is the origin.
+    originFolder: text(),
     providerId: text().notNull(),
     modelId: text().notNull(),
     providerSessionId: text(),

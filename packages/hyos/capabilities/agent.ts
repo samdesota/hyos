@@ -111,6 +111,11 @@ export type AgentSessionSummary = Readonly<{
   id: AgentSessionId;
   title: string;
   folder: string;
+  /**
+   * For worktree sessions, the origin folder the session was started from —
+   * the sidebar groups the session under it. Null when `folder` is the origin.
+   */
+  originFolder: string | null;
   providerId: string;
   modelId: string;
   reasoningEffort: AgentReasoningEffort | null;
@@ -295,7 +300,7 @@ export type AgentCommandResult =
 
 export const agentCapability = defineRemoteCapability({
   id: "agent",
-  version: 14,
+  version: 15,
   methods: {
     execute: remoteMethod<
       readonly [command: AgentCommand],
