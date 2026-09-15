@@ -20,6 +20,7 @@
     "build:cjs": "esbuild src/*.ts src/node/*.ts --platform=node --format=cjs --outbase=. --outdir=dist-cjs --packages=external && cp cjs.package.json dist-cjs/package.json",
     "sandbox": "npm run sandbox:query-planner",
     "sandbox:query-planner": "npm run build && node sandboxes/query-planner/generate.mjs",
+    "migration": "node scripts/migration-cli.mjs",
     "test": "npm run typecheck && npm run build && node --test dist/test/*.test.js",
     "test:coverage": "npm run build && node --experimental-test-coverage --test --test-coverage-lines=90 --test-coverage-branches=85 --test-coverage-functions=95 dist/test/*.test.js",
     "typecheck": "tsc --noEmit"

@@ -139,12 +139,12 @@ function tableDescription(table: AnyTable): TableDescription {
 export type SchemaOp =
   | Readonly<{
       type: "addTable";
-      table: AnyTable;
+      table: AnyTable | TableDescription;
       description: TableDescription;
     }>
   | Readonly<{
       type: "dropTable";
-      table: AnyTable;
+      table: AnyTable | TableDescription;
       description: TableDescription;
     }>
   | Readonly<{
@@ -164,21 +164,39 @@ export type SchemaOp =
       previous: ColumnDescription;
     }>;
 
+/**
+ * Accepts either a table builder or an already-resolved description, e.g. one
+ * captured by the migration tooling for a table that no longer exists in code.
+ */
+function asTableDescription(
+  table: AnyTable | TableDescription,
+): TableDescription {
+  const candidate = table as TableDescription;
+  if (
+    typeof candidate.name === "string" &&
+    Array.isArray(candidate.columns) &&
+    Array.isArray(candidate.indexes)
+  ) {
+    return candidate;
+  }
+  return tableDescription(table as AnyTable);
+}
+
 /** Adds a table that does not exist yet. */
-export function addTable(table: AnyTable): SchemaOp {
-  return Object.freeze({
-    type: "addTable",
-    table,
-    description: tableDescription(table),
-  });
+export function addTable(table: AnyTable | TableDescription): SchemaOp {
+  const description = asTableDescription(table);
+  if (!description.columns.some((column) => column.primaryKey)) {
+    throw new TypeError(`Added table has no primary key: ${description.name}`);
+  }
+  return Object.freeze({ type: "addTable", table, description });
 }
 
 /** Removes a table. The definition is required so the op can be inverted. */
-export function dropTable(table: AnyTable): SchemaOp {
+export function dropTable(table: AnyTable | TableDescription): SchemaOp {
   return Object.freeze({
     type: "dropTable",
     table,
-    description: tableDescription(table),
+    description: asTableDescription(table),
   });
 }
 
@@ -190,7 +208,7 @@ export function dropTable(table: AnyTable): SchemaOp {
 export function addColumn(
   table: string,
   name: string,
-  column: AnyColumnBuilder,
+  column: ColumnSpec,
 ): SchemaOp {
   const description = resolveColumn(column, name);
   if (description.notNull || description.primaryKey) {
@@ -223,7 +241,7 @@ export function changeColumn(
   table: string,
   name: string,
   previous: ColumnSpec,
-  column: AnyColumnBuilder,
+  column: ColumnSpec,
 ): SchemaOp {
   const description = resolveColumn(column, name);
   const old = resolveColumn(previous, name);
@@ -650,4 +668,213 @@ export function buildMigrationPlan(
     final: nodes[nodes.length - 1]!.fingerprint,
     steps: Object.freeze(steps),
   });
+}
+
+/**
+ * Stable identity of a schema operation for diffing declared migrations
+ * against the structural difference between two schema descriptions.
+ */
+function schemaOpKey(op: SchemaOp): string {
+  if (op.type === "addTable" || op.type === "dropTable") {
+    return `${op.type}:${op.description.name}`;
+  }
+  return `${op.type}:${op.table}:${op.column.name}`;
+}
+
+/**
+ * Computes the schema operations that convert one description into another:
+ * column drops, changes, and additions per shared table, then dropped tables,
+ * then added tables. The result applied forward via `applySchemaChanges`
+ * yields exactly the target description. Diffs that would require an
+ * incompatible operation (for example adding a required column) throw from
+ * the op constructors; such changes need an interleaved data step instead.
+ */
+export function diffSchemaDescriptions(
+  from: SchemaDescription,
+  to: SchemaDescription,
+): SchemaOp[] {
+  const toTables = new Map(to.map((table) => [table.name, table]));
+  const fromNames = new Set(from.map((table) => table.name));
+  const ops: SchemaOp[] = [];
+  for (const before of from) {
+    const after = toTables.get(before.name);
+    if (after === undefined) {
+      ops.push(dropTable(before));
+      continue;
+    }
+    const beforeColumns = new Map(
+      before.columns.map((column) => [column.name, column]),
+    );
+    const afterColumns = new Map(
+      after.columns.map((column) => [column.name, column]),
+    );
+    for (const [name, previous] of beforeColumns) {
+      const next = afterColumns.get(name);
+      if (next === undefined) {
+        ops.push(dropColumn(before.name, name, previous));
+      } else if (
+        next.dataType !== previous.dataType ||
+        next.notNull !== previous.notNull
+      ) {
+        ops.push(changeColumn(before.name, name, previous, next));
+      }
+    }
+    for (const [name, column] of afterColumns) {
+      if (!beforeColumns.has(name)) {
+        ops.push(addColumn(before.name, name, column));
+      }
+    }
+  }
+  for (const after of to) {
+    if (!fromNames.has(after.name)) ops.push(addTable(after));
+  }
+  return ops;
+}
+
+export type MigrationChainIssue = Readonly<{
+  migrationId: string;
+  /** Schema differences the migration does not declare. */
+  missing: readonly SchemaOp[];
+  /**
+   * Declared schema ops beyond the structural difference. These are expected
+   * when a data step pairs an addition with a later removal; empty `missing`
+   * with non-empty `extra` is not an error.
+   */
+  extra: readonly SchemaOp[];
+}>;
+
+export type MigrationChainCheck = Readonly<{
+  /** True when every schema difference is covered by a declared op. */
+  ok: boolean;
+  baseFingerprint: string;
+  baseDescription: SchemaDescription;
+  targetFingerprint: string;
+  issues: readonly MigrationChainIssue[];
+  /** Set when the migration chain itself is invalid. */
+  error?: string;
+}>;
+
+/**
+ * Verifies that an ordered migration list covers the schema change it claims
+ * to. Without a base schema the check validates only that the chain itself is
+ * internally consistent. When `base` (a schema or a captured description) is
+ * given, the chain's derived base must equal it, and every structural
+ * difference between the base and the current schema must be declared: any
+ * undeclared difference is reported as missing, and any declared op that does
+ * not correspond to a difference is reported as extra (legitimate only when
+ * paired with a data step).
+ */
+export function checkMigrationChain(
+  schema: AnySchema,
+  migrations: readonly Migration[],
+  base?: AnySchema | SchemaDescription,
+): MigrationChainCheck {
+  let nodes: MigrationFingerprint[];
+  try {
+    nodes = deriveMigrationFingerprints(schema, migrations);
+  } catch (error) {
+    return {
+      ok: false,
+      baseFingerprint: "",
+      baseDescription: [],
+      targetFingerprint: "",
+      issues: [],
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const targetDescription = nodes[nodes.length - 1]!.description;
+  const targetFingerprint = nodes[nodes.length - 1]!.fingerprint;
+  if (base === undefined) {
+    return {
+      ok: true,
+      baseFingerprint: nodes[0]!.fingerprint,
+      baseDescription: nodes[0]!.description,
+      targetFingerprint,
+      issues: [],
+    };
+  }
+  const baseDescription = Array.isArray(base)
+    ? base
+    : describeSchema(base as AnySchema);
+  const baseFingerprint = schemaFingerprint(baseDescription);
+  const declared = migrations.flatMap((migration) =>
+    migration.steps.filter((step) => !isDataStep(step)),
+  ) as SchemaOp[];
+  const expected = diffSchemaDescriptions(baseDescription, targetDescription);
+  const declaredKeys = new Set(declared.map(schemaOpKey));
+  const expectedKeys = new Set(expected.map(schemaOpKey));
+  const missing = expected.filter((op) => !declaredKeys.has(schemaOpKey(op)));
+  const extra = declared.filter((op) => !expectedKeys.has(schemaOpKey(op)));
+  // Undeclared schema differences are the actionable finding; only when the
+  // declared ops cover the whole difference but the chain's derived base
+  // still disagrees with the supplied base is the chain itself wrong.
+  if (
+    missing.length === 0 &&
+    schemaFingerprint(nodes[0]!.description) !== baseFingerprint
+  ) {
+    return {
+      ok: false,
+      baseFingerprint,
+      baseDescription,
+      targetFingerprint,
+      issues: [],
+      error: "the migration chain does not start from the supplied base schema",
+    };
+  }
+  const issues: MigrationChainIssue[] =
+    missing.length > 0 || extra.length > 0
+      ? [{ migrationId: "", missing, extra }]
+      : [];
+  return {
+    ok: missing.length === 0,
+    baseFingerprint,
+    baseDescription,
+    targetFingerprint,
+    issues,
+  };
+}
+
+function formatColumn(value: ColumnDescription): string {
+  return JSON.stringify(value);
+}
+
+/**
+ * Renders a migration file's source: a `defineMigration` declaration with the
+ * given id and schema operations. Data steps cannot be generated; add them by
+ * hand where a transformation is required.
+ */
+export function formatMigrationSource(
+  id: string,
+  ops: readonly SchemaOp[],
+): string {
+  const lines: string[] = [
+    'import { ddl, defineMigration } from "@hyos/hydb/node";',
+    "",
+    "// Generated by the hydb migration tooling. Review before applying, and add",
+    "// interleaved data steps for any transformation this schema change requires.",
+    "export default defineMigration({",
+    `  id: ${JSON.stringify(id)},`,
+    "  steps: [",
+  ];
+  for (const op of ops) {
+    if (op.type === "addTable" || op.type === "dropTable") {
+      lines.push(
+        `    ddl.${op.type}(${JSON.stringify(op.description, null, 2).replaceAll("\n", "\n    ")}),`,
+      );
+    } else if (op.type === "changeColumn") {
+      lines.push(
+        `    ddl.changeColumn(${JSON.stringify(op.table)}, ${JSON.stringify(op.column.name)}, ${formatColumn(op.previous)}, ${formatColumn(op.column)}),`,
+      );
+    } else if (op.type === "dropColumn") {
+      lines.push(
+        `    ddl.dropColumn(${JSON.stringify(op.table)}, ${JSON.stringify(op.column.name)}, ${formatColumn(op.column)}),`,
+      );
+    } else {
+      lines.push(
+        `    ddl.addColumn(${JSON.stringify(op.table)}, ${JSON.stringify(op.column.name)}, ${formatColumn(op.column)}),`,
+      );
+    }
+  }
+  lines.push("  ],", "});", "");
+  return lines.join("\n");
 }
