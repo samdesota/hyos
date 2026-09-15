@@ -1161,6 +1161,7 @@ export function createAppState({
     if (!prompt().trim() || !folder() || !providerId() || !modelId()) return;
     setSubmitting(true);
     setError(null);
+    const images = pendingImages();
     try {
       const result = await client.execute({
         type: "start-session",
@@ -1171,9 +1172,11 @@ export function createAppState({
         reasoningEffort: reasoningEffort(),
         mode: initialMode(),
         intent: "investigate",
+        images: images.map((image) => image.dataUrl),
       });
       if (result.type === "session-started") {
         setPrompt("");
+        setPendingImages([]);
         await selectSession(result.sessionId);
       }
     } catch (value) {
@@ -1192,6 +1195,7 @@ export function createAppState({
     setSubmitting(true);
     setError(null);
     setPrompt("");
+    const images = pendingImages();
     const sendStarted = performance.now();
     sendStartedAt = sendStarted;
     try {
@@ -1205,8 +1209,10 @@ export function createAppState({
         mode: followupMode(),
         reasoningEffort: followupEffort(),
         intent,
+        images: images.map((image) => image.dataUrl),
       });
       perfLog("send:execute-returned", performance.now() - sendStarted);
+      setPendingImages([]);
     } catch (value) {
       setPrompt(content);
       showError(value);

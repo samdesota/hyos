@@ -227,6 +227,12 @@ export type AgentCommand =
       reasoningEffort?: AgentReasoningEffort | null;
       mode?: AgentMode;
       intent?: "implement" | "investigate";
+      /**
+       * Composer image attachments as `data:<mime>;base64,…` URLs. The host
+       * persists them as media files and references them by id; data URLs
+       * never enter the database.
+       */
+      images?: readonly string[];
     }>
   | Readonly<{
       type: "send-message";
@@ -235,6 +241,8 @@ export type AgentCommand =
       mode?: AgentMode;
       reasoningEffort?: AgentReasoningEffort | null;
       intent?: "implement" | "investigate" | "summary";
+      /** Composer image attachments, same data-URL form as `start-session`. */
+      images?: readonly string[];
     }>
   | Readonly<{ type: "cancel"; sessionId: AgentSessionId }>
   | Readonly<{ type: "interrupt"; sessionId: AgentSessionId }>
@@ -273,7 +281,7 @@ export type AgentCommandResult =
 
 export const agentCapability = defineRemoteCapability({
   id: "agent",
-  version: 11,
+  version: 12,
   methods: {
     execute: remoteMethod<
       readonly [command: AgentCommand],
