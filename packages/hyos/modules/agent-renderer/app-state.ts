@@ -76,12 +76,11 @@ import { createSessionTabsRecorder } from "./session-tabs.js";
 import { selectedMode } from "./mode-selection.js";
 import {
   collapseWorkRuns,
+  foldersByRecentUse,
   implementNextPrompt,
-  orderedFolders,
   partitionSessions,
   patchEntries,
   planPanelIndex,
-  recentFolders,
   sessionsShallowEqual,
   shareTimelineEntries,
   timelineEntries,
@@ -246,9 +245,7 @@ export function createAppState({
       })
       .catch(() => undefined);
   };
-  const recentFoldersList = createMemo(() =>
-    orderedFolders(recentFolders(sessions()), folderOrder()),
-  );
+  const recentFoldersList = createMemo(() => foldersByRecentUse(sessions()));
   const initialMode = () => selectedMode(providerId(), newMode());
   const followupMode = () => {
     const session = activeSession();

@@ -409,6 +409,29 @@ export function recentFolders(
 }
 
 /**
+ * Distinct folders from sessions, ordered by each folder's most recent
+ * session (newest first). Folders never seen sort last, keeping first-seen
+ * order among themselves.
+ */
+export function foldersByRecentUse(
+  sessions: readonly AgentSessionSummary[],
+): readonly string[] {
+  const latest = new Map<string, number>();
+  const firstSeen: string[] = [];
+  for (const session of sessions) {
+    const key = sessionGroupFolder(session);
+    if (!key) continue;
+    if (!latest.has(key)) firstSeen.push(key);
+    const time = session.updatedAt.getTime();
+    const current = latest.get(key);
+    if (current === undefined || time > current) latest.set(key, time);
+  }
+  return [...firstSeen].sort(
+    (a, b) => (latest.get(b) ?? 0) - (latest.get(a) ?? 0),
+  );
+}
+
+/**
  * Apply a saved manual order to the recent folders: saved folders keep their
  * order, folders not in the saved order (new ones) append at the end.
  */

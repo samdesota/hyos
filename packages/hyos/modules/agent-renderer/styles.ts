@@ -349,6 +349,10 @@ export const agentStyles = String.raw`
   }
   .folder-menu-new:hover { background: #2c2e28; }
   .folder-menu-list { max-height: 260px; overflow-y: auto; padding: 7px; }
+  .folder-menu-title {
+    padding: 4px 8px 6px; color: #777a71; font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
   .folder-menu-empty { padding: 10px 13px 12px; color: #777a71; font-size: 11px; }
   .folder-menu-item {
     display: flex; align-items: baseline; gap: 5px; width: 100%; min-height: 32px; padding: 6px 8px;

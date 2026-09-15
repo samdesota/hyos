@@ -105,6 +105,7 @@ export const NewSessionPage: Component<NewSessionPageProps> = (props) => {
                     }
                   >
                     <div class="folder-menu-list">
+                      <div class="folder-menu-title">Recent Folders</div>
                       <For each={app.recentFoldersList()}>
                         {(recent) => (
                           <button

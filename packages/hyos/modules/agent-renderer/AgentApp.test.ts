@@ -9,6 +9,7 @@ import {
   collapseWorkRuns,
   duplicateFolderNames,
   folderName,
+  foldersByRecentUse,
   folderPathPrefix,
   groupSessionsByFolder,
   implementNextPrompt,
@@ -175,6 +176,26 @@ test("recent folders are deduplicated in session order", () => {
       folder("/tmp/beta"),
       folder("/tmp/alpha"),
       folder("/tmp/gamma"),
+    ]),
+    ["/tmp/alpha", "/tmp/beta", "/tmp/gamma"],
+  );
+});
+
+test("foldersByRecentUse orders folders by their most recent session", () => {
+  const folder = (path: string, base: number): AgentSessionSummary => ({
+    ...sessionSummary("session", null),
+    folder: path,
+    updatedAt: new Date(base),
+  });
+  const base = Date.parse("2026-09-04T00:00:00.000Z");
+
+  assert.deepEqual(foldersByRecentUse([]), []);
+  assert.deepEqual(
+    foldersByRecentUse([
+      folder("/tmp/alpha", base),
+      folder("/tmp/beta", base + 5_000),
+      folder("/tmp/alpha", base + 10_000), // alpha's latest beats beta
+      folder("/tmp/gamma", base - 1_000),
     ]),
     ["/tmp/alpha", "/tmp/beta", "/tmp/gamma"],
   );
