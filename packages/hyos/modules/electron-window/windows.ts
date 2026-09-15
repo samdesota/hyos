@@ -19,7 +19,7 @@ export type ElectronWindows = Readonly<{
  * every `setWindowButtonVisibility` because Electron resets the buttons to
  * the default position when they are hidden and shown again.
  */
-export const TRAFFIC_LIGHT_POSITION = { x: 16, y: 28 };
+export const TRAFFIC_LIGHT_POSITION = { x: 16, y: 22 };
 
 /**
  * Single-window shell: the app UI renders in its own `WebContentsView`
