@@ -42,7 +42,7 @@ export const agentStyles = String.raw`
     transition: padding-left .16s ease;
   }
   .sidebar-head:has(.win-controls:hover),
-  .sidebar-head:has(.win-controls:focus-within) { padding-left: 80px; }
+  .sidebar-head:has(.win-controls:focus-within) { padding-left: 88px; }
   /* Arc-style window controls: collapsed dim dots expand into the macOS
      traffic lights on hover or keyboard focus, replacing the native buttons
      hidden by the main process. Geometry measured from the native lights
