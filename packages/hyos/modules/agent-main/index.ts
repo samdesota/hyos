@@ -16,6 +16,7 @@ import { createAgentProviders } from "./providers/index.js";
 import { createAgentStore } from "./store.js";
 import { createMediaStore } from "./media-store.js";
 import { createFinishSound } from "./finish-sound.js";
+import { scheduleStorageCollection } from "../storage-maintenance/maintenance.js";
 import type { LogSink } from "../log-main/sink.js";
 
 type AgentMainConfig = Readonly<{
@@ -58,11 +59,20 @@ export = defineModule<AgentMainConfig>({
     const window = ctx.get<BrowserWindow>("electron.base-window");
     const remote = ctx.get<MainRemoteCapabilities>("remote.capabilities");
     const browser = remote.consume(browserCapability);
+    const sink = ctx.get<LogSink>("log.sink");
+    const storageDirectory = path.resolve(root, config.storagePath);
     bootTrace("storage:open:start");
     const storage = await openNodeStorage({
-      directory: path.resolve(root, config.storagePath),
+      directory: storageDirectory,
       schema: agentSchema,
       migrations: agentMigrations,
+      // Bound the append-only log; existing storages migrate to this policy
+      // and dead history is reclaimed by the periodic collection below.
+      retention: {
+        mode: "window",
+        keepAtLeast: 200,
+        keepYoungerThanMs: 86_400_000,
+      },
     });
     bootTrace("storage:open:done");
     bootTrace("database:init:start");
@@ -99,9 +109,19 @@ export = defineModule<AgentMainConfig>({
     ctx.effect(() => remote.provide(agentCapability, host.provider));
     ctx.effect(() => () => host.dispose());
 
+    // Periodically reclaim dead history from the append-only storage file,
+    // backing the file up before the first collection ever runs.
+    ctx.effect(() =>
+      scheduleStorageCollection({
+        storage,
+        directory: storageDirectory,
+        sink,
+        source: "agent.main",
+      }),
+    );
+
     // Finish chime: main-process playback via the platform player, with the
     // enabled preference persisted beside the agent storage.
-    const sink = ctx.get<LogSink>("log.sink");
     const finishSound = createFinishSound({
       store,
       storageDirectory: path.resolve(root, config.storagePath),

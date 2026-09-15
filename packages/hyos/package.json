@@ -11,7 +11,7 @@
     "dev": "electron .",
     "presmoke": "npm run build:hyedit",
     "smoke": "electron . --smoke-test",
-    "test": "node --test *.test.js && npm run build:hydb && tsx --test capabilities/*.test.ts modules/agent-main/*.test.ts modules/agent-main/providers/*.test.ts modules/agent-renderer/*.test.ts modules/browser-main/*.test.ts modules/log-main/*.test.ts modules/whiteboard/main/*.test.ts modules/whiteboard/renderer/*.test.ts modules/reload-main/*.test.ts",
+    "test": "node --test *.test.js && npm run build:hydb && tsx --test capabilities/*.test.ts modules/agent-main/*.test.ts modules/agent-main/providers/*.test.ts modules/agent-renderer/*.test.ts modules/browser-main/*.test.ts modules/log-main/*.test.ts modules/storage-maintenance/*.test.ts modules/whiteboard/main/*.test.ts modules/whiteboard/renderer/*.test.ts modules/reload-main/*.test.ts",
     "typecheck": "npm run build:hydb && tsc --noEmit -p tsconfig.json",
     "check": "node --check main.js && node --check application-loader.js && node --check isomorphic-compiler.js && node --check runtime.js && node --check remote-capabilities.js && node --check preload.js && node --check renderer/renderer.js && npm run typecheck"
   },
