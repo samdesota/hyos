@@ -12,6 +12,13 @@ import {
 import { agentSchema } from "./model.js";
 import type { AgentProvider } from "./providers/types.js";
 import { createAgentStore } from "./store.js";
+import { createMediaStore } from "./media-store.js";
+
+// The host persists composer images through this store; tests point it at a
+// throwaway directory so no real files are written.
+const testMedia = createMediaStore({
+  directory: "/tmp/hyos-agent-host-test-media",
+});
 
 test("finishing a turn publishes the final message's new timeline position", async () => {
   const storage = await memoryStorage({ schema: agentSchema });
@@ -79,6 +86,7 @@ test("finishing a turn publishes the final message's new timeline position", asy
       subscribe: () => () => {},
     } as never,
     store,
+    media: testMedia,
     providers: new Map([[provider.summary.id, provider]]),
   });
 
@@ -162,6 +170,7 @@ test("an interrupted run resumes from its streamed provider session checkpoint",
         subscribe: () => () => {},
       } as never,
       store,
+      media: testMedia,
       providers: new Map([[provider.summary.id, provider]]),
     });
 
@@ -534,6 +543,7 @@ test("a finished incremental turn persists its plan and replays it on the next t
       subscribe: () => () => {},
     } as never,
     store,
+    media: testMedia,
     providers: new Map([[provider.summary.id, provider]]),
   });
 
@@ -617,6 +627,7 @@ test("a finished run summarizes its outcome into the sidebar status line", async
       subscribe: () => () => {},
     } as never,
     store,
+    media: testMedia,
     providers: new Map([[provider.summary.id, provider]]),
   });
 
@@ -682,6 +693,7 @@ test("session tabs round-trip through the agent provider", async () => {
       subscribe: () => () => {},
     } as never,
     store,
+    media: testMedia,
     providers: new Map(),
   });
 
@@ -754,6 +766,7 @@ test("rename-session command persists the new title and publishes sessions", asy
       subscribe: () => () => {},
     } as never,
     store,
+    media: testMedia,
     providers: new Map(),
   });
 
@@ -815,6 +828,7 @@ test("reorder-sessions command persists manual order and publishes sessions", as
       subscribe: () => () => {},
     } as never,
     store,
+    media: testMedia,
     providers: new Map(),
   });
 
