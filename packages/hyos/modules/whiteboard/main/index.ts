@@ -7,6 +7,7 @@ import type { MainRemoteCapabilities } from "../../../remote-capabilities.js";
 import { defineModule } from "../../../runtime.js";
 import { whiteboardCapability } from "../../../capabilities/whiteboard.js";
 import { whiteboardSchema } from "./model.js";
+import { whiteboardMigrations } from "./migrations/index.js";
 import { createWhiteboardStore } from "./store.js";
 
 type WhiteboardMainConfig = Readonly<{
@@ -24,6 +25,7 @@ export = defineModule<WhiteboardMainConfig>({
     const storage = await openNodeStorage({
       directory: path.resolve(root, config.storagePath),
       schema: whiteboardSchema,
+      migrations: whiteboardMigrations,
     });
     const database = await hydb.database({ schema: whiteboardSchema, storage });
     const store = createWhiteboardStore(database);

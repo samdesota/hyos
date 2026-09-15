@@ -6,6 +6,9 @@ export const whiteboardBoards = hydb.table(
   "hyos_whiteboard_boards",
   {
     id: id().primaryKey(),
+    // Nullable: boards are created lazily by card saves; the title is set
+    // by the rename bar and absent until the user names the board.
+    title: text(),
     createdAt: timestamp().notNull(),
     updatedAt: timestamp().notNull(),
   },
