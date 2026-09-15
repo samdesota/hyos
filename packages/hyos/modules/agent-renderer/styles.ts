@@ -233,7 +233,10 @@ export const agentStyles = String.raw`
   .global-browser { display: flex; width: 100%; height: 100%; min-height: 0; }
   .welcome { display: grid; place-items: center; width: 100%; height: 100%; padding: 38px; overflow-y: auto; }
   .welcome-card { width: min(760px, 100%); }
-  .archive-page { display: flex; justify-content: center; width: 100%; height: 100%; min-height: 0; padding: 0 26px 22px; overflow-y: auto; }
+  .archive-page { display: flex; justify-content: center; align-items: flex-start; width: 100%; height: 100%; min-height: 0; padding: 0 26px 22px; overflow-y: auto; }
+  /* align-items: flex-start keeps the column at its content height instead of
+     stretching to the scrollport, so the sticky header's containing block
+     spans the whole list and it stays pinned for the full scroll range. */
   .archive-column { display: flex; flex-direction: column; width: 100%; max-width: 880px; min-height: 0; }
   /* Sticky header: the page's former top padding lives inside the header so
      it keeps the same inset when pinned, and the opaque window-colored

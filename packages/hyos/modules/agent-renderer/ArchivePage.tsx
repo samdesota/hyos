@@ -116,19 +116,19 @@ export const ArchivePage: Component<ArchivePageProps> = (props) => {
     onCleanup(() => observer.disconnect());
   });
 
-  /** Groups truncated to the current lazy-render page, so row rendering is
-   * a pure function of the limit (no render-order bookkeeping). */
-  const visibleGroups = createMemo(() => {
+  /** Per-group row counts truncated to the current lazy-render page
+   * (cumulative across groups), so pagination only ever appends rows and
+   * never remounts already-rendered group sections. */
+  const visibleCounts = createMemo(() => {
     const limit = renderLimit();
-    const visible: ArchiveGroup[] = [];
+    const counts: number[] = [];
     let used = 0;
     for (const group of groups()) {
-      if (used >= limit) break;
-      const sessions = group.sessions.slice(0, limit - used);
-      used += sessions.length;
-      visible.push({ label: group.label, sessions });
+      const count = Math.min(group.sessions.length, Math.max(0, limit - used));
+      used += count;
+      counts.push(count);
     }
-    return visible;
+    return counts;
   });
 
   return (
@@ -166,41 +166,45 @@ export const ArchivePage: Component<ArchivePageProps> = (props) => {
               </div>
             }
           >
-            <For each={visibleGroups()}>
-              {(group) => (
-                <section class="archive-group">
-                  <h3 class="archive-group-label">{group.label}</h3>
-                  <ul class="archive-list">
-                    <For each={group.sessions}>
-                      {(session) => (
-                        <li class="archive-row">
-                          <button
-                            type="button"
-                            class="archive-row-open"
-                            title={`Open "${session.title}"`}
-                            onClick={() => props.onOpen(session.id)}
-                          >
-                            <span class="archive-row-title">
-                              {session.title}
-                            </span>
-                            <span class="archive-row-folder">
-                              {session.folder}
-                            </span>
-                          </button>
-                          <button
-                            type="button"
-                            class="archive-row-unarchive"
-                            aria-label={`Unarchive "${session.title}"`}
-                            title="Unarchive session"
-                            onClick={() => props.onUnarchive(session.id)}
-                          >
-                            ↩
-                          </button>
-                        </li>
-                      )}
-                    </For>
-                  </ul>
-                </section>
+            <For each={groups()}>
+              {(group, index) => (
+                <Show when={visibleCounts()[index()] > 0}>
+                  <section class="archive-group">
+                    <h3 class="archive-group-label">{group.label}</h3>
+                    <ul class="archive-list">
+                      <For
+                        each={group.sessions.slice(0, visibleCounts()[index()])}
+                      >
+                        {(session) => (
+                          <li class="archive-row">
+                            <button
+                              type="button"
+                              class="archive-row-open"
+                              title={`Open "${session.title}"`}
+                              onClick={() => props.onOpen(session.id)}
+                            >
+                              <span class="archive-row-title">
+                                {session.title}
+                              </span>
+                              <span class="archive-row-folder">
+                                {session.folder}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              class="archive-row-unarchive"
+                              aria-label={`Unarchive "${session.title}"`}
+                              title="Unarchive session"
+                              onClick={() => props.onUnarchive(session.id)}
+                            >
+                              ↩
+                            </button>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </section>
+                </Show>
               )}
             </For>
             <div
