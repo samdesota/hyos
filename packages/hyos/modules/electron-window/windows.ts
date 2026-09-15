@@ -50,6 +50,10 @@ export function createElectronWindows(
     backgroundColor: "#171816",
     show: false,
   });
+  // The sidebar renders its own Arc-style collapsible controls; the native
+  // traffic lights would sit underneath, so hide them (macOS only).
+  if (process.platform === "darwin")
+    baseWindow.setWindowButtonVisibility(false);
   const uiView = new WebContentsView({ webPreferences });
   // Append (no index) so the UI sits above the window's own blank contents
   // and below browser views that browser.main attaches later.
@@ -85,4 +89,42 @@ export function createElectronWindows(
     });
   }
   return { baseWindow, uiView, alignUi };
+}
+
+/** Shape of the base window the controls implementation needs. */
+export type WindowControlsTarget = Pick<
+  BrowserWindow,
+  | "isDestroyed"
+  | "minimize"
+  | "maximize"
+  | "unmaximize"
+  | "isMaximized"
+  | "close"
+>;
+
+/**
+ * Implementation of the `window-controls` remote capability against the base
+ * window. Each guard checks `isDestroyed` so a late renderer invocation after
+ * teardown is a no-op rather than an Electron throw.
+ */
+export function windowControlsImplementation(
+  baseWindow: WindowControlsTarget,
+): {
+  minimize(): void;
+  toggleMaximize(): void;
+  close(): void;
+} {
+  return {
+    minimize: () => {
+      if (!baseWindow.isDestroyed()) baseWindow.minimize();
+    },
+    toggleMaximize: () => {
+      if (baseWindow.isDestroyed()) return;
+      if (baseWindow.isMaximized()) baseWindow.unmaximize();
+      else baseWindow.maximize();
+    },
+    close: () => {
+      if (!baseWindow.isDestroyed()) baseWindow.close();
+    },
+  };
 }
