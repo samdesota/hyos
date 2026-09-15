@@ -28,6 +28,7 @@
     "@hyos/hydb": "^0.0.0",
     "@hyos/hyedit": "0.0.0",
     "@solidjs/router": "^0.15.4",
+    "@vscode/ripgrep": "^1.18.0",
     "mermaid": "^11.17.2",
     "micromark": "^4.0.2",
     "micromark-extension-gfm-table": "^2.1.1",
