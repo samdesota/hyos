@@ -384,7 +384,7 @@ export const agentStyles = String.raw`
     overflow: hidden; padding: 6px 12px; border-top: 1px solid #3f2c29;
     color: #ff8f83; font-size: 11px; text-overflow: ellipsis; white-space: nowrap;
   }
-  .transcript { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; font-size: 14px; }
+  .transcript { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; font-size: 14px; container-type: inline-size; }
   .messages { width: min(820px, calc(100% - 44px)); margin: 0 auto; padding: 34px 0 26px; }
   .loading-older { padding: 8px 0 22px; color: #7f8178; text-align: center; font-size: 12px; }
   .message { margin-bottom: 28px; content-visibility: auto; contain-intrinsic-size: auto 140px; }
@@ -399,6 +399,11 @@ export const agentStyles = String.raw`
   .activity-capped {
     max-height: 80vh; overflow-y: auto; overscroll-behavior: contain;
     scrollbar-gutter: stable;
+    /* Extend the scroll box to the transcript's right edge so its scrollbar
+       sits at the window edge, while the content keeps the message column
+       width (50cqw - 50% is the gutter right of the centered column). */
+    margin-right: calc(50cqw - 50%);
+    padding-right: calc(50cqw - 50%);
   }
   .message-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.62; }
   .markdown { white-space: normal; }
