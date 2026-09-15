@@ -8,7 +8,7 @@ import {
   routeFromParams,
 } from "./session-route.js";
 
-test("hash routes resolve to the three route kinds", () => {
+test("hash routes resolve to the four route kinds", () => {
   // `/` — the empty hash, a bare fragment, an explicit slash, and anything
   // unrecognized all read as the new-session view.
   assert.deepEqual(routeFromHash(""), { kind: "new" });
@@ -35,6 +35,7 @@ test("hash routes resolve to the three route kinds", () => {
     tabId: "tab/1",
   });
   assert.deepEqual(routeFromHash("#/tabs/"), { kind: "new" });
+  assert.deepEqual(routeFromHash("#/archive"), { kind: "archive" });
 });
 
 test("router paths mirror the AppRoute kinds", () => {
@@ -42,6 +43,7 @@ test("router paths mirror the AppRoute kinds", () => {
     new: "/",
     session: "/session/:id",
     globalTabs: "/tabs/:id",
+    archive: "/archive",
   });
 });
 
@@ -60,6 +62,7 @@ test("route params map back onto the AppRoute model", () => {
     kind: "global-tabs",
     tabId: "tab/1",
   });
+  assert.deepEqual(routeFromParams("archive", undefined), { kind: "archive" });
   // Missing or empty ids fall back to the new-session view, like a
   // `/session/` hash would.
   assert.deepEqual(routeFromParams("session", undefined), { kind: "new" });
@@ -76,10 +79,12 @@ test("hash routes round-trip", () => {
     hashForRoute({ kind: "global-tabs", tabId: "tab/1" }),
     "#/tabs/tab%2F1",
   );
+  assert.equal(hashForRoute({ kind: "archive" }), "#/archive");
   for (const route of [
     { kind: "new" },
     { kind: "session", sessionId: "ses/sion" },
     { kind: "global-tabs", tabId: "tab/1" },
+    { kind: "archive" },
   ] as const) {
     assert.deepEqual(routeFromHash(hashForRoute(route)), route);
   }

@@ -735,25 +735,55 @@ test("folder order and collapse state persist and publish", async () => {
 
     await store.reorderFolders(["/tmp/beta", "/tmp/alpha"]);
     await store.setFolderCollapsed("/tmp/beta", true);
+    await store.setFolderWorktree("/tmp/beta", true);
 
     const state = await store.loadFolderState();
     assert.deepEqual(
-      state.map(({ folder, position, collapsed }) => ({
+      state.map(({ folder, position, collapsed, worktreeDefault }) => ({
         folder,
         position,
         collapsed,
+        worktreeDefault,
       })),
       [
-        { folder: "/tmp/beta", position: 0, collapsed: true },
-        { folder: "/tmp/alpha", position: 1, collapsed: false },
+        {
+          folder: "/tmp/beta",
+          position: 0,
+          collapsed: true,
+          worktreeDefault: true,
+        },
+        {
+          folder: "/tmp/alpha",
+          position: 1,
+          collapsed: false,
+          worktreeDefault: false,
+        },
       ],
     );
 
-    // Expanding again only touches the collapsed flag — the rank survives.
+    // Expanding again only touches the collapsed flag — the rank and
+    // worktree default survive.
     await store.setFolderCollapsed("/tmp/beta", false);
     assert.deepEqual(
       (await store.loadFolderState()).find((row) => row.folder === "/tmp/beta"),
-      { folder: "/tmp/beta", position: 0, collapsed: false },
+      {
+        folder: "/tmp/beta",
+        position: 0,
+        collapsed: false,
+        worktreeDefault: true,
+      },
+    );
+
+    // Turning the worktree default off only touches that flag.
+    await store.setFolderWorktree("/tmp/beta", false);
+    assert.deepEqual(
+      (await store.loadFolderState()).find((row) => row.folder === "/tmp/beta"),
+      {
+        folder: "/tmp/beta",
+        position: 0,
+        collapsed: false,
+        worktreeDefault: false,
+      },
     );
 
     // A partial reorder only rewrites the listed folders' ranks; beta keeps

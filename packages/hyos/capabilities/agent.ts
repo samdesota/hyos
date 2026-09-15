@@ -208,12 +208,14 @@ export type AgentFeedChange = Readonly<{
 
 /**
  * One persisted folder's sidebar state: its manual order (`position`, the
- * list index at last drag; null = never manually ordered) and collapse flag.
+ * list index at last drag; null = never manually ordered), collapse flag,
+ * and whether new sessions for the folder default to a git worktree.
  */
 export type AgentFolderStateRow = Readonly<{
   folder: string;
   position: number | null;
   collapsed: boolean;
+  worktreeDefault: boolean;
 }>;
 
 export type AgentCommand =
@@ -272,6 +274,12 @@ export type AgentCommand =
       type: "set-folder-collapsed";
       folder: string;
       collapsed: boolean;
+    }>
+  | Readonly<{
+      /** Persist whether new sessions for a folder default to a worktree. */
+      type: "set-folder-worktree";
+      folder: string;
+      worktree: boolean;
     }>;
 
 export type AgentCommandResult =
@@ -281,7 +289,7 @@ export type AgentCommandResult =
 
 export const agentCapability = defineRemoteCapability({
   id: "agent",
-  version: 12,
+  version: 13,
   methods: {
     execute: remoteMethod<
       readonly [command: AgentCommand],

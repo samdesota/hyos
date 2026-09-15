@@ -116,6 +116,24 @@ export const NewSessionPage: Component<NewSessionPageProps> = (props) => {
                 </div>
               </Show>
             </div>
+            <label
+              class="worktree-toggle"
+              title={
+                app.worktreeDefault()
+                  ? "New sessions in this folder start in a git worktree"
+                  : "Start new sessions for this folder in a git worktree"
+              }
+            >
+              <input
+                type="checkbox"
+                checked={app.worktreeDefault()}
+                disabled={!app.folder()}
+                onChange={(event) =>
+                  app.setFolderWorktree(event.currentTarget.checked)
+                }
+              />
+              <span>Worktree</span>
+            </label>
             <div class="model-picker" ref={modelPicker}>
               <button
                 id="agent-model-picker"

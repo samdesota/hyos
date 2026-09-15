@@ -164,6 +164,31 @@ export const agentBoardCards = hydb.table(
   ],
 );
 
+// Composer-attached images persist as files under <storage>/media/ (hydb has
+// no blob type); this table holds only the reference — the bare file name
+// inside the media directory plus its mime type — keyed by user message.
+export const agentMessageImages = hydb.table(
+  "hyos_agent_message_images",
+  {
+    id: id().primaryKey(),
+    sessionId: id()
+      .notNull()
+      .references(() => agentSessions.id),
+    messageId: id()
+      .notNull()
+      .references(() => agentMessages.id),
+    file: text().notNull(),
+    mimeType: text().notNull(),
+    createdAt: timestamp().notNull(),
+  },
+  (columns) => [
+    index("hyos_agent_message_images_message_idx").on(
+      columns.messageId,
+      columns.id,
+    ),
+  ],
+);
+
 // The agent's global tab strip: one row per tab, so the strip survives app
 // restarts. `kind` is the queryable discriminator; everything kind-specific
 // (a browser tab's url/title, a whiteboard tab's boardId) rides in the
@@ -194,6 +219,9 @@ export const agentFolderState = hydb.table("hyos_agent_folder_state", {
   folder: text().primaryKey(),
   position: integer(),
   collapsed: integer(),
+  // 1 = new sessions for this folder default to a git worktree. Set by the
+  // new-session composer checkbox; null = never toggled (unchecked).
+  worktreeDefault: integer(),
   createdAt: timestamp().notNull(),
   updatedAt: timestamp().notNull(),
 });
@@ -202,6 +230,7 @@ export const agentSchema = hydb.schema({
   agentSessions,
   agentMessages,
   agentMessageChunks,
+  agentMessageImages,
   agentBoards,
   agentBoardCards,
   agentBoardMedia,

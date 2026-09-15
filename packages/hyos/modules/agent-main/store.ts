@@ -29,14 +29,47 @@ import {
   agentFolderState,
   agentGlobalTabs,
   agentMessageChunks,
+  agentMessageImages,
   agentMessages,
   agentSessions,
   type StoredAgentMessage,
   type StoredAgentMessageChunk,
 } from "./model.js";
+import type { StoredImage } from "./media-store.js";
 
 const sessionStatusSchema = z.enum(["running", "ready", "failed", "cancelled"]);
 const messageStatusSchema = z.enum(["streaming", "complete", "failed"]);
+// File references persisted under the storage's media/ directory — never
+// image bytes.
+const storedImageSchema = z.object({
+  id: z.string(),
+  file: z.string(),
+  mimeType: z.string(),
+});
+
+/**
+ * Reference the turn's persisted media files from its user message. Files are
+ * written to the media directory before the command runs; the rows only carry
+ * the file name, so no image bytes ever enter the database.
+ */
+async function insertMessageImages(
+  transaction: Parameters<Parameters<typeof hydb.command>[0]["handler"]>[0],
+  sessionId: string,
+  messageId: string,
+  images: readonly StoredImage[],
+  now: Date,
+): Promise<void> {
+  for (const image of images) {
+    await transaction.insert(agentMessageImages, {
+      id: image.id,
+      sessionId,
+      messageId,
+      file: image.file,
+      mimeType: image.mimeType,
+      createdAt: now,
+    });
+  }
+}
 const activityPrefix = "hyos-agent-activity:v1:";
 const commentaryPrefix = "hyos-agent-commentary:v2:";
 const settingSeparator = "\u001fhyos-";
@@ -224,6 +257,7 @@ const createSessionCommand = hydb.command({
     providerId: z.string(),
     modelId: z.string(),
     prompt: z.string(),
+    images: z.array(storedImageSchema).default([]),
     statusDetail: z.string().nullable(),
     now: z.date(),
   }),
@@ -267,6 +301,13 @@ const createSessionCommand = hydb.command({
       createdAt: new Date(input.now.getTime() + 1),
       updatedAt: new Date(input.now.getTime() + 1),
     });
+    await insertMessageImages(
+      transaction,
+      input.sessionId,
+      input.userMessageId,
+      input.images,
+      input.now,
+    );
   },
 });
 
@@ -278,6 +319,7 @@ const startTurnCommand = hydb.command({
     assistantMessageId: z.string(),
     modelId: z.string(),
     prompt: z.string(),
+    images: z.array(storedImageSchema).default([]),
     statusDetail: z.string().nullable(),
     now: z.date(),
   }),
@@ -316,6 +358,13 @@ const startTurnCommand = hydb.command({
       lastError: null,
       updatedAt: assistantTime,
     });
+    await insertMessageImages(
+      transaction,
+      input.sessionId,
+      input.userMessageId,
+      input.images,
+      input.now,
+    );
   },
 });
 
@@ -661,6 +710,7 @@ const upsertFolderStateCommand = hydb.command({
         folder: z.string(),
         position: z.number().nullable(),
         collapsed: z.number().nullable(),
+        worktreeDefault: z.number().nullable(),
       }),
     ),
   }),
@@ -672,6 +722,7 @@ const upsertFolderStateCommand = hydb.command({
           folder: entry.folder,
           position: entry.position,
           collapsed: entry.collapsed,
+          worktreeDefault: entry.worktreeDefault,
           createdAt: input.now,
           updatedAt: input.now,
         });
@@ -679,6 +730,7 @@ const upsertFolderStateCommand = hydb.command({
         await transaction.update(agentFolderState, [entry.folder], {
           position: entry.position ?? existing.position,
           collapsed: entry.collapsed ?? existing.collapsed,
+          worktreeDefault: entry.worktreeDefault ?? existing.worktreeDefault,
           updatedAt: input.now,
         });
       }
@@ -760,6 +812,8 @@ export type NewAgentSession = Readonly<{
   modelId: string;
   reasoningEffort?: AgentReasoningEffort | null;
   mode?: AgentMode;
+  /** Media files already written to disk; rows reference them by id. */
+  images?: readonly StoredImage[];
 }>;
 
 export type StartedTurn = Readonly<{
@@ -782,6 +836,7 @@ export interface AgentStore {
     prompt: string,
     mode?: AgentMode,
     reasoningEffort?: AgentReasoningEffort | null,
+    images?: readonly StoredImage[],
   ): Promise<StartedTurn>;
   appendAssistantChunk(
     sessionId: string,
@@ -825,6 +880,8 @@ export interface AgentStore {
   reorderFolders(orderedFolders: readonly string[]): Promise<void>;
   /** Persist one folder's collapsed flag. */
   setFolderCollapsed(folder: string, collapsed: boolean): Promise<void>;
+  /** Persist whether new sessions for a folder default to a worktree. */
+  setFolderWorktree(folder: string, worktree: boolean): Promise<void>;
   /** Fires whenever the folder state table changes; the caller re-reads. */
   watchFolderState(listener: () => void): () => void;
   updateUsage(
@@ -1008,7 +1065,7 @@ export function createAgentStore(database: Database): AgentStore {
       });
       return { sessionId, assistantMessageId, previousResponse: null };
     },
-    async startTurn(sessionId, prompt, mode, reasoningEffort) {
+    async startTurn(sessionId, prompt, mode, reasoningEffort, images) {
       const getSessionStartedAt = perfNow();
       const session = await getSession(sessionId);
       perfLog(`send:getSession(${sessionId})`, perfNow() - getSessionStartedAt);
@@ -1027,6 +1084,7 @@ export function createAgentStore(database: Database): AgentStore {
           mode ?? session.mode,
         ),
         prompt,
+        images: images ?? [],
         statusDetail: null,
         now: now(),
       });
@@ -1188,6 +1246,7 @@ export function createAgentStore(database: Database): AgentStore {
           folder: row.folder,
           position: row.position,
           collapsed: row.collapsed !== 0 && row.collapsed !== null,
+          worktreeDefault: row.worktreeDefault === 1,
         }));
     },
     async reorderFolders(orderedFolders) {
@@ -1198,13 +1257,34 @@ export function createAgentStore(database: Database): AgentStore {
           folder,
           position: index,
           collapsed: null,
+          worktreeDefault: null,
         })),
       });
     },
     async setFolderCollapsed(folder, collapsed) {
       await database.execute(upsertFolderStateCommand, {
         now: now(),
-        entries: [{ folder, position: null, collapsed: collapsed ? 1 : 0 }],
+        entries: [
+          {
+            folder,
+            position: null,
+            collapsed: collapsed ? 1 : 0,
+            worktreeDefault: null,
+          },
+        ],
+      });
+    },
+    async setFolderWorktree(folder, worktree) {
+      await database.execute(upsertFolderStateCommand, {
+        now: now(),
+        entries: [
+          {
+            folder,
+            position: null,
+            collapsed: null,
+            worktreeDefault: worktree ? 1 : 0,
+          },
+        ],
       });
     },
     watchFolderState(listener) {

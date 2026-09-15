@@ -24,6 +24,7 @@ import type {
 } from "../../remote-capabilities.js";
 import type { AgentProvider } from "./providers/index.js";
 import type { AgentStore } from "./store.js";
+import type { MediaStore, StoredImage } from "./media-store.js";
 import { createCommentaryWriter } from "./commentary-writer.js";
 import { perfLog, perfNow } from "./perf-time.js";
 import { parsePlanBlock } from "../../capabilities/plan.js";
@@ -331,8 +332,10 @@ export function createAgentHost(options: {
   >;
   store: AgentStore;
   providers: ReadonlyMap<string, AgentProvider>;
+  /** Persists composer images as files; rows reference them by id. */
+  media: MediaStore;
 }): AgentHost {
-  const { window, remote, browser, store, providers } = options;
+  const { window, remote, browser, store, providers, media } = options;
   const browserClient: BrowserClient = {
     protocol: { name: "browser" as const, version: browser.version },
     execute: (command) =>
@@ -712,6 +715,7 @@ export function createAgentHost(options: {
     intent?: "implement" | "investigate" | "summary",
     mode?: AgentMode,
     reasoningEffort?: AgentReasoningEffort | null,
+    images?: readonly StoredImage[],
   ): Promise<AgentCommandResult> => {
     if (activeRuns.has(sessionId)) {
       throw new Error("This session already has a running turn.");
@@ -743,6 +747,7 @@ export function createAgentHost(options: {
       prompt,
       mode,
       reasoningEffort,
+      images,
     );
     perfLog(`send:startTurn(${session.providerId})`, perfNow() - sendStartedAt);
     generateStatusDetail(
@@ -816,6 +821,12 @@ export function createAgentHost(options: {
       await store.setFolderCollapsed(command.folder, command.collapsed);
       return { type: "accepted" };
     }
+    if (command.type === "set-folder-worktree") {
+      // Folder-state flag write: no session mutation, and the folderState
+      // publish fires through watchFolderState.
+      await store.setFolderWorktree(command.folder, command.worktree);
+      return { type: "accepted" };
+    }
     if (command.type === "start-session") {
       await assertFolder(command.folder);
       const provider = providers.get(command.providerId);
@@ -840,7 +851,13 @@ export function createAgentHost(options: {
         );
       }
       await provider.prepare?.();
-      const turn = await store.createSession(command);
+      // Write image bytes to disk first; the turn command only stores
+      // references. Invalid data URLs are skipped, never fail the turn.
+      const images = await media.saveImages(command.images ?? []);
+      const turn = await store.createSession({
+        ...command,
+        images,
+      });
       // Best-effort title generation: the session starts under the raw prompt
       // line from titleFromPrompt, then swaps to a model-written title when
       // one arrives. Failures keep the placeholder.
@@ -884,6 +901,7 @@ export function createAgentHost(options: {
       command.intent,
       command.mode,
       command.reasoningEffort,
+      await media.saveImages(command.images ?? []),
     );
   };
 

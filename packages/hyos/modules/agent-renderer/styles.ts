@@ -312,6 +312,16 @@ export const agentStyles = String.raw`
   .folder-button { border: 1px solid #3b3d37; background: #292a27; }
   .folder-button { min-width: 0; max-width: 300px; padding: 0 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .folder-picker { position: relative; }
+  .worktree-toggle {
+    display: flex; align-items: center; gap: 6px; flex: none; height: 38px;
+    padding: 0 11px; border: 1px solid #3b3d37; border-radius: 9px;
+    background: #292a27; color: #c9cbbf; font-size: 12px; cursor: pointer;
+    user-select: none; white-space: nowrap;
+  }
+  .worktree-toggle:hover { border-color: #55584e; background: #30312d; }
+  .worktree-toggle:has(input:checked) { color: #eff0e8; border-color: #6d7a52; }
+  .worktree-toggle input { margin: 0; accent-color: #b2cb8c; cursor: pointer; }
+  .worktree-toggle input:disabled { cursor: default; }
   .folder-button {
     display: flex; align-items: center; gap: 4px; max-width: 220px; padding: 0 8px 0 10px;
     border-radius: 8px; color: #d7d6d0; cursor: pointer; font-size: 11px;

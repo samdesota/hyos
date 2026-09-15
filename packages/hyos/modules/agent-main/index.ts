@@ -14,6 +14,7 @@ import { agentMigrations } from "./migrations/index.js";
 import { agentSchema } from "./model.js";
 import { createAgentProviders } from "./providers/index.js";
 import { createAgentStore } from "./store.js";
+import { createMediaStore } from "./media-store.js";
 import { createFinishSound } from "./finish-sound.js";
 import type { LogSink } from "../log-main/sink.js";
 
@@ -68,11 +69,17 @@ export = defineModule<AgentMainConfig>({
     const database = await hydb.database({ schema: agentSchema, storage });
     bootTrace("database:init:done");
     const store = createAgentStore(database);
+    // Composer images persist as files under <storage>/media/, referenced by
+    // id in the database — no image bytes in the database itself.
+    const media = createMediaStore({
+      directory: path.resolve(root, config.storagePath, "media"),
+    });
     const host = createAgentHost({
       window,
       remote,
       browser,
       store,
+      media,
       providers: createAgentProviders(config.providers, {
         codex: config.codex,
         claude: config.claude,

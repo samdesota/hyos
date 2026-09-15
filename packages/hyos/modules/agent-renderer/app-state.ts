@@ -190,6 +190,11 @@ export function createAppState({
   const [collapsedFolders, setCollapsedFolders] = createSignal<
     ReadonlySet<string>
   >(new Set());
+  // Folders whose new sessions default to a git worktree (persisted
+  // host-side, mirrored from folderState pings like order and collapse).
+  const [worktreeFolders, setWorktreeFolders] = createSignal<
+    ReadonlySet<string>
+  >(new Set());
   const persistFolderOrder = (order: readonly string[]): void => {
     // Optimistic: the host echoes the change through the folderState ping.
     setFolderOrder(order);
@@ -206,6 +211,25 @@ export function createAppState({
     });
     void client
       .execute({ type: "set-folder-collapsed", folder, collapsed })
+      .catch(() => undefined);
+  };
+  /** Whether the new-session composer's worktree checkbox is on for `folder`. */
+  const worktreeDefault = () => worktreeFolders().has(folder());
+  const setFolderWorktree = (enabled: boolean): void => {
+    const folderPath = folder();
+    if (!folderPath) return;
+    setWorktreeFolders((previous) => {
+      const next = new Set(previous);
+      if (enabled) next.add(folderPath);
+      else next.delete(folderPath);
+      return next;
+    });
+    void client
+      .execute({
+        type: "set-folder-worktree",
+        folder: folderPath,
+        worktree: enabled,
+      })
       .catch(() => undefined);
   };
   const recentFoldersList = createMemo(() =>
@@ -1058,6 +1082,7 @@ export function createAppState({
       folder: string;
       position: number | null;
       collapsed: boolean;
+      worktreeDefault: boolean;
     }[],
   ): void => {
     // Row order already sorts manually-positioned folders first; mirror it
@@ -1065,6 +1090,11 @@ export function createAppState({
     setFolderOrder(rows.map((row) => row.folder));
     setCollapsedFolders(
       new Set(rows.filter((row) => row.collapsed).map((row) => row.folder)),
+    );
+    setWorktreeFolders(
+      new Set(
+        rows.filter((row) => row.worktreeDefault).map((row) => row.folder),
+      ),
     );
   };
   const refreshFolderState = (): void => {
@@ -1430,6 +1460,8 @@ export function createAppState({
     persistFolderOrder,
     collapsedFolders,
     setFolderCollapsed,
+    worktreeDefault,
+    setFolderWorktree,
     recentFoldersList,
     modelMenuOpen,
     setModelMenuOpen,
