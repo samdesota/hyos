@@ -337,7 +337,9 @@ export const agentStyles = String.raw`
   .message.user .message-body { padding: 13px 15px; border-radius: 13px; background: #292b26; }
   .message.assistant .message-body { color: #dddcd6; }
   .message.commentary { margin-bottom: 16px; color: #c9c8c1; }
-  .message.commentary .message-body { line-height: 1.55; }
+  .message.commentary .message-body {
+    max-height: 80vh; overflow-y: auto; overscroll-behavior: contain; line-height: 1.55;
+  }
   .message-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.62; }
   .markdown { white-space: normal; }
   .markdown > :first-child { margin-top: 0; }
