@@ -15,6 +15,13 @@ export type ElectronWindows = Readonly<{
 }>;
 
 /**
+ * Where the native macOS traffic lights sit when revealed. Re-applied after
+ * every `setWindowButtonVisibility` because Electron resets the buttons to
+ * the default position when they are hidden and shown again.
+ */
+export const TRAFFIC_LIGHT_POSITION = { x: 16, y: 28 };
+
+/**
  * Single-window shell: the app UI renders in its own `WebContentsView`
  * layered inside the base window. Browser tab views are appended to the
  * same `contentView` afterwards, so they composite above the UI; a modal
@@ -40,11 +47,10 @@ export function createElectronWindows(
     height: config.height,
     minWidth: 720,
     minHeight: 520,
-    // Frameless with native traffic lights. Y is tuned so the revealed
-    // native lights sit centered on the ghost dots' animated position
-    // (dots center at y≈28; the button group is ~12px tall).
+    // Frameless with native traffic lights, positioned to sit centered on
+    // the ghost dots' animated position (dots center at y≈28).
     titleBarStyle: "hidden",
-    trafficLightPosition: { x: 16, y: 28 },
+    trafficLightPosition: TRAFFIC_LIGHT_POSITION,
     title: config.title,
     // Theme-colored (not cream) so regions where the transparent UI shows
     // through to the window still read as the app background.
@@ -102,6 +108,7 @@ export type WindowControlsTarget = Pick<
   | "isMaximized"
   | "close"
   | "setWindowButtonVisibility"
+  | "setWindowButtonPosition"
 >;
 
 /**
@@ -131,10 +138,13 @@ export function windowControlsImplementation(
     },
     // Reveals the real macOS traffic lights (with their native long-press
     // menus) while the sidebar's hover-expanded controls are active.
+    // `setWindowButtonVisibility` resets the lights to the default position,
+    // so the custom position is re-applied after every toggle.
     setButtonsVisible: (visible) => {
       if (baseWindow.isDestroyed()) return;
       if (process.platform !== "darwin") return;
       baseWindow.setWindowButtonVisibility(visible);
+      baseWindow.setWindowButtonPosition({ ...TRAFFIC_LIGHT_POSITION });
     },
   };
 }
