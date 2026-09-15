@@ -16,6 +16,8 @@ export type WhiteboardBoardCard = Readonly<{
 /** A board's full card list plus its media (data URLs), loaded or saved as one unit. */
 export type WhiteboardBoard = Readonly<{
   boardId: string;
+  /** Nullable: boards saved before titles existed (or never titled) read null. */
+  title: string | null;
   cards: readonly WhiteboardBoardCard[];
   /** Media rows keyed by id; values are image data URLs. */
   media: Readonly<Record<string, string>>;
@@ -30,6 +32,11 @@ export const whiteboardCapability = defineRemoteCapability({
     /** Replace a board's whole card list with the given one. */
     saveBoard: remoteMethod<
       readonly [boardId: string, cards: readonly WhiteboardBoardCard[]],
+      void
+    >(),
+    /** Set a board's title; a board row is created if none exists yet. */
+    renameBoard: remoteMethod<
+      readonly [boardId: string, title: string],
       void
     >(),
     /** Store one image (a data URL) referenced by a card's mediaId. */

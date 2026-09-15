@@ -37,6 +37,7 @@ export = defineModule<WhiteboardMainConfig>({
         saveBoard: (boardId, cards) => store.saveBoard(boardId, cards),
         saveBoardMedia: (boardId, mediaId, data) =>
           store.saveBoardMedia(boardId, mediaId, data),
+        renameBoard: (boardId, title) => store.renameBoard(boardId, title),
       }),
     );
   },

@@ -103,6 +103,32 @@ const saveBoardCommand = hydb.command({
   },
 });
 
+// Renaming a board writes the title on its row, creating the row if the
+// board was never saved — a title must not depend on a prior card save.
+const renameBoardCommand = hydb.command({
+  input: z.object({
+    boardId: z.string(),
+    title: z.string(),
+    now: z.date(),
+  }),
+  async handler(transaction, input) {
+    const existing = await transaction.get(whiteboardBoards, [input.boardId]);
+    if (existing === undefined) {
+      await transaction.insert(whiteboardBoards, {
+        id: input.boardId,
+        title: input.title,
+        createdAt: input.now,
+        updatedAt: input.now,
+      });
+    } else {
+      await transaction.update(whiteboardBoards, [input.boardId], {
+        title: input.title,
+        updatedAt: input.now,
+      });
+    }
+  },
+});
+
 // One image per media row, written as soon as the renderer pastes it —
 // before the card that references it is saved.
 const saveBoardMediaCommand = hydb.command({
@@ -141,11 +167,19 @@ export interface WhiteboardStore {
   ): Promise<void>;
   /** Store one image (a data URL) referenced by a card's mediaId. */
   saveBoardMedia(boardId: string, mediaId: string, data: string): Promise<void>;
+  /** Set a board's title; a board row is created if none exists yet. */
+  renameBoard(boardId: string, title: string): Promise<void>;
 }
 
 export function createWhiteboardStore(database: Database): WhiteboardStore {
   return {
     async loadBoard(boardId) {
+      const [row] = await database.fetch(
+        hydb
+          .query(whiteboardBoards)
+          .where((board) => board.id.eq(boardId))
+          .many(),
+      );
       const rows = await database.fetch(
         hydb
           .query(whiteboardBoardCards)
@@ -161,6 +195,7 @@ export function createWhiteboardStore(database: Database): WhiteboardStore {
       );
       return {
         boardId,
+        title: row?.title ?? null,
         cards: rows.map((row) => ({
           id: row.id,
           x: row.x,
@@ -211,6 +246,14 @@ export function createWhiteboardStore(database: Database): WhiteboardStore {
         boardId,
         mediaId,
         data,
+        now: now(),
+      });
+    },
+
+    async renameBoard(boardId, title) {
+      await database.execute(renameBoardCommand, {
+        boardId,
+        title,
         now: now(),
       });
     },
