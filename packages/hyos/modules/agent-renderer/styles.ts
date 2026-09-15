@@ -436,7 +436,7 @@ export const agentStyles = String.raw`
     margin: 4px 0 20px; padding: 13px 15px; border: 1px solid #30322c; border-radius: 10px;
     background: #1b1c19;
   }
-  .plan-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .plan-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .plan-toggle {
     display: inline-flex; align-items: center; gap: 7px; padding: 0; border: 0; background: none; cursor: pointer;
   }
