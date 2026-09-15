@@ -444,35 +444,29 @@ export const agentStyles = String.raw`
   .message.assistant .message-body { color: #dddcd6; }
   .message.commentary { margin-bottom: 16px; color: #c9c8c1; }
   .message.commentary .message-body { line-height: 1.55; }
-  /* A thinking (commentary) block caps at 60vh with overflow hidden (never
-     scrollable); its content is anchored to the bottom so the newest streamed
-     text stays visible while older text is clipped above the cap, behind a
-     top fade-out gradient. "Show all thinking" removes the cap entirely. */
-  .commentary-capped {
+  /* A run of agent activity (thinking + commands) is the single capped
+     region: 60vh, overflow hidden, never scrollable. Its content is anchored
+     to the bottom so the newest streamed activity stays visible while older
+     activity clips above the cap, behind a top fade-out gradient. "Show all
+     activity" removes the cap entirely. */
+  .activity-capped {
     position: relative;
     max-height: 60vh; overflow: hidden;
     display: flex; flex-direction: column; justify-content: flex-end;
   }
-  .commentary-capped.expanded { max-height: none; }
-  .commentary-capped-inner { flex-shrink: 0; }
-  .commentary-fade {
+  .activity-capped.expanded { max-height: none; }
+  .activity-capped-inner { flex-shrink: 0; }
+  .activity-fade {
     position: absolute; top: 0; left: 0; right: 0; height: 64px;
     background: linear-gradient(to bottom, #171816, rgba(23, 24, 22, 0));
     pointer-events: none;
   }
-  .commentary-expand {
+  .activity-expand {
     position: absolute; top: 8px; left: 0;
     padding: 3px 9px; border: 1px solid #3a3c35; border-radius: 7px;
     color: #b5b7ac; background: #1d1e1be8; font-size: 11px; cursor: pointer;
   }
-  .commentary-expand:hover { color: #eceae5; background: #30312d; }
-  /* A run of agent activity (thinking + commands) is capped so the previous
-     prompt stays visible while the agent works; it scrolls internally and
-     stays pinned to its newest content. */
-  .activity-capped {
-    max-height: 80vh; overflow-y: auto; overscroll-behavior: contain;
-    scrollbar-gutter: stable;
-  }
+  .activity-expand:hover { color: #eceae5; background: #30312d; }
   .message-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.62; }
   .markdown { white-space: normal; }
   .markdown > :first-child { margin-top: 0; }

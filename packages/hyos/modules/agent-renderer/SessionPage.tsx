@@ -77,61 +77,31 @@ const isActivityEntry = (entry: TimelineEntry): boolean =>
   entry.type === "tools" ||
   (entry.type === "message" && entry.message.activity?.type === "commentary");
 
-/**
- * A thinking (commentary) block capped at 60vh with overflow hidden — never
- * scrollable. The content is anchored to the bottom of the cap so the newest
- * streamed thinking stays visible while older text is clipped above, behind a
- * top fade-out gradient. "Show all thinking" removes the max-height entirely
- * (still no scrolling).
- */
+/** A thinking (commentary) block, rendered plainly — never capped or clipped. */
 const CommentaryBody: Component<{
   content: string;
   app: AppState;
-}> = (props) => {
-  let capped!: HTMLDivElement;
-  let inner!: HTMLDivElement;
-  const [expanded, setExpanded] = createSignal(false);
-  const [clipped, setClipped] = createSignal(false);
-  createEffect(() => {
-    // Track the streamed text so the fade appears only once content actually
-    // overflows the 60vh cap.
-    void props.content.length;
-    void expanded();
-    setClipped(inner.offsetHeight > capped.clientHeight + 1);
-  });
-  return (
-    <div
-      class="commentary-capped"
-      classList={{ expanded: expanded() }}
-      ref={capped}
-    >
-      <div class="commentary-capped-inner" ref={inner}>
-        <MarkdownBody content={props.content} app={props.app} />
-      </div>
-      <Show when={!expanded() && clipped()}>
-        <div class="commentary-fade" />
-        <button class="commentary-expand" onClick={() => setExpanded(true)}>
-          Show all thinking
-        </button>
-      </Show>
-    </div>
-  );
-};
+}> = (props) => <MarkdownBody content={props.content} app={props.app} />;
 
 /**
- * A run of live agent activity (thinking commentary + tool commands) capped at
- * 80vh with internal scroll, so the previous prompt stays visible while the
- * agent works. The region stays pinned to its newest content while streaming
- * unless the user scrolls up into the older activity.
+ * A run of live agent activity (thinking commentary + tool commands) — the
+ * single capped region for the whole run: 60vh, overflow hidden, never
+ * scrollable. The inner content keeps its full height and anchors to the
+ * bottom of the cap so the newest streamed activity stays visible while older
+ * activity clips above, behind a top fade-out gradient. "Show all activity"
+ * removes the max-height entirely (still no scrolling).
  */
 const ActivityRegion: Component<{
   entries: readonly TimelineEntry[];
   app: AppState;
 }> = (props) => {
   let region!: HTMLDivElement;
+  let inner!: HTMLDivElement;
+  const [expanded, setExpanded] = createSignal(false);
+  const [clipped, setClipped] = createSignal(false);
   createEffect(() => {
     // Track content size (tool details and streaming commentary text) so the
-    // region follows the newest activity as it grows.
+    // fade appears only once content actually overflows the 60vh cap.
     const sizes = props.entries.map((entry) => {
       if (entry.type === "tools")
         return entry.messages.map(
@@ -151,14 +121,26 @@ const ActivityRegion: Component<{
       return 0;
     });
     void sizes;
-    if (region.scrollHeight - region.scrollTop - region.clientHeight < 40)
-      region.scrollTop = region.scrollHeight;
+    void expanded();
+    setClipped(inner.offsetHeight > region.clientHeight + 1);
   });
   return (
-    <div class="activity-capped" ref={region}>
-      <For each={props.entries}>
-        {(entry) => <TimelineEntryView entry={entry} app={props.app} />}
-      </For>
+    <div
+      class="activity-capped"
+      classList={{ expanded: expanded() }}
+      ref={region}
+    >
+      <div class="activity-capped-inner" ref={inner}>
+        <For each={props.entries}>
+          {(entry) => <TimelineEntryView entry={entry} app={props.app} />}
+        </For>
+      </div>
+      <Show when={!expanded() && clipped()}>
+        <div class="activity-fade" />
+        <button class="activity-expand" onClick={() => setExpanded(true)}>
+          Show all activity
+        </button>
+      </Show>
     </div>
   );
 };
