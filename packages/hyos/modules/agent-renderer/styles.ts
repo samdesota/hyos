@@ -36,7 +36,7 @@ export const agentStyles = String.raw`
     background: #20211e;
   }
   .sidebar-head { padding: 20px 16px 14px; }
-  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
   .brand-mark {
     display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px;
     color: #171816; background: #d9ff62; font-weight: 850; letter-spacing: -0.08em;
