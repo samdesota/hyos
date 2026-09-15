@@ -29,7 +29,6 @@ import type {
   KeybindingClient,
 } from "./client.js";
 import { createAutoScrollController } from "./auto-scroll.js";
-import { renderLog, describeActivity } from "./render-log.js";
 import {
   MAX_PENDING_IMAGES,
   type PendingImage,

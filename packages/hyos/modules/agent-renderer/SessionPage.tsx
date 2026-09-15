@@ -31,7 +31,6 @@ import {
 } from "./composer-attachments.js";
 import { httpLinkUrl, mountMarkdown } from "./markdown.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
-import { renderLog } from "./render-log.js";
 import { supportsIncremental } from "./mode-selection.js";
 import {
   isPinnedSideTab,
@@ -422,20 +421,7 @@ export const SessionPage: Component<SessionPageProps> = (props) => {
   const session = props.session;
   const [patchPanelWidth, setPatchPanelWidth] = createSignal(520);
   let followupPicker: HTMLDivElement | undefined;
-  const timelineGroups = createMemo(() => {
-    const groups = groupTimeline(app.timeline());
-    // [agent-render] diagnostic: number of activity regions about to render.
-    const regions = groups.filter((group) => group.kind === "activity");
-    renderLog(
-      `groups total=${groups.length} activityRegions=${regions.length} ` +
-        `sizes=[${regions
-          .map((group) =>
-            group.kind === "activity" ? group.entries.length : 0,
-          )
-          .join(",")}]`,
-    );
-    return groups;
-  });
+  const timelineGroups = createMemo(() => groupTimeline(app.timeline()));
 
   const allowImageDrop = (event: DragEvent): void => {
     event.preventDefault();
