@@ -5,7 +5,6 @@ import {
   createMemo,
   createSignal,
   onCleanup,
-  onMount,
   type Component,
   type JSX,
 } from "solid-js";
@@ -49,7 +48,6 @@ export type SessionPageProps = Readonly<{
 const MarkdownBody: Component<{
   content: string;
   app: AppState;
-  bodyRef?: (element: HTMLDivElement) => void;
 }> = (props) => {
   let element!: HTMLDivElement;
   // Links in agent replies open as browser tabs in the session's side panel
@@ -67,74 +65,94 @@ const MarkdownBody: Component<{
     onCleanup(dispose);
   });
   return (
-    <div
-      class="message-body markdown"
-      ref={(el) => {
-        element = el;
-        props.bodyRef?.(el);
-      }}
-      onClick={handleClick}
-    />
+    <div class="message-body markdown" ref={element} onClick={handleClick} />
   );
 };
 
+const isActivityEntry = (entry: TimelineEntry): boolean =>
+  entry.type === "tools" ||
+  (entry.type === "message" && entry.message.activity?.type === "commentary");
+
 /**
- * Thinking (commentary) content capped at 80vh with internal scroll. While the
- * cap is active, the block fades out at the bottom and a "Show all thinking"
- * button sits above the fade to expand it in place.
+ * A run of live agent activity (thinking commentary + tool commands) capped at
+ * 80vh with internal scroll, so the previous prompt stays visible while the
+ * agent works. The region stays pinned to its newest content while streaming
+ * unless the user scrolls up into the older activity.
  */
-const CommentaryBody: Component<{ content: string; app: AppState }> = (
-  props,
-) => {
-  let body!: HTMLDivElement;
-  const [capped, setCapped] = createSignal(false);
-  const [expanded, setExpanded] = createSignal(false);
-  const measure = (): void => {
-    setCapped(body.scrollHeight > body.clientHeight + 1);
-  };
+const ActivityRegion: Component<{
+  entries: readonly TimelineEntry[];
+  app: AppState;
+}> = (props) => {
+  let region!: HTMLDivElement;
   createEffect(() => {
-    const dispose = mountMarkdown(body, stripPlanBlocks(props.content));
-    onCleanup(dispose);
-  });
-  onMount(() => {
-    measure();
-    const resizeObserver = new ResizeObserver(measure);
-    resizeObserver.observe(body);
-    // Markdown updates don't always resize the capped body, so watch the
-    // content itself for streaming growth.
-    const mutationObserver = new MutationObserver(measure);
-    mutationObserver.observe(body, { childList: true, subtree: true });
-    const onResize = (): void => measure();
-    window.addEventListener("resize", onResize);
-    onCleanup(() => {
-      resizeObserver.disconnect();
-      mutationObserver.disconnect();
-      window.removeEventListener("resize", onResize);
+    // Track content size (tool details and streaming commentary text) so the
+    // region follows the newest activity as it grows.
+    const sizes = props.entries.map((entry) => {
+      if (entry.type === "tools")
+        return entry.messages.map(
+          (message) =>
+            message.content.length +
+            (message.activity?.type === "tool"
+              ? message.activity.detail.length
+              : 0),
+        );
+      if (entry.type === "message")
+        return (
+          entry.message.content.length +
+          (entry.message.activity?.type === "commentary"
+            ? entry.message.activity.text.length
+            : 0)
+        );
+      return 0;
     });
+    void sizes;
+    if (region.scrollHeight - region.scrollTop - region.clientHeight < 40)
+      region.scrollTop = region.scrollHeight;
   });
   return (
-    <div
-      class="commentary-capped"
-      classList={{ capped: capped() && !expanded() }}
-    >
-      <MarkdownBody
-        content={props.content}
-        app={props.app}
-        bodyRef={(el) => {
-          body = el;
-        }}
-      />
-      <Show when={capped() && !expanded()}>
-        <button
-          class="commentary-show-all"
-          type="button"
-          onClick={() => setExpanded(true)}
-        >
-          Show all thinking
-        </button>
-      </Show>
+    <div class="activity-capped" ref={region}>
+      <For each={props.entries}>
+        {(entry) => <TimelineEntryView entry={entry} app={props.app} />}
+      </For>
     </div>
   );
+};
+
+type TimelineGroup =
+  | Readonly<{
+      kind: "activity";
+      entries: readonly TimelineEntry[];
+      start: number;
+      end: number;
+    }>
+  | Readonly<{ kind: "single"; entry: TimelineEntry; index: number }>;
+
+/** Group consecutive work items (commentary + tool runs) into one region. */
+const groupTimeline = (entries: readonly TimelineEntry[]): TimelineGroup[] => {
+  const groups: TimelineGroup[] = [];
+  let pending: TimelineEntry[] = [];
+  let pendingStart = 0;
+  const flush = (nextIndex: number): void => {
+    if (!pending.length) return;
+    groups.push({
+      kind: "activity",
+      entries: pending,
+      start: pendingStart,
+      end: nextIndex - 1,
+    });
+    pending = [];
+  };
+  entries.forEach((entry, index) => {
+    if (isActivityEntry(entry)) {
+      if (!pending.length) pendingStart = index;
+      pending.push(entry);
+      return;
+    }
+    flush(index);
+    groups.push({ kind: "single", entry, index });
+  });
+  flush(entries.length);
+  return groups;
 };
 
 const PlanPanel: Component<{
@@ -289,7 +307,7 @@ const TimelineEntryView: Component<{
     </details>
   ) : entry.message.activity?.type === "commentary" ? (
     <article class="message commentary">
-      <CommentaryBody content={entry.message.activity.text} app={app} />
+      <MarkdownBody content={entry.message.activity.text} app={app} />
       <Show when={entry.message.status === "streaming"}>
         <span class="streaming-caret" />
       </Show>
@@ -337,6 +355,7 @@ export const SessionPage: Component<SessionPageProps> = (props) => {
   const session = props.session;
   const [patchPanelWidth, setPatchPanelWidth] = createSignal(520);
   let followupPicker: HTMLDivElement | undefined;
+  const timelineGroups = createMemo(() => groupTimeline(app.timeline()));
 
   const closeMenusOnPointerDown = (event: PointerEvent): void => {
     if (
@@ -425,15 +444,22 @@ export const SessionPage: Component<SessionPageProps> = (props) => {
           <Show when={app.loadingFeed()}>
             <div class="loading-older">Loading session…</div>
           </Show>
-          <For each={app.timeline()}>
-            {(entry, index) => (
+          <For each={timelineGroups()}>
+            {(group) => (
               <>
-                <TimelineEntryView entry={entry} app={app} />
+                {group.kind === "activity" ? (
+                  <ActivityRegion entries={group.entries} app={app} />
+                ) : (
+                  <TimelineEntryView entry={group.entry} app={app} />
+                )}
                 <Show
                   when={
                     app.activePlan() &&
                     session().status !== "running" &&
-                    index() === app.planAfterIndex()
+                    (group.kind === "single"
+                      ? group.index === app.planAfterIndex()
+                      : app.planAfterIndex() >= group.start &&
+                        app.planAfterIndex() <= group.end)
                   }
                 >
                   <PlanPanel

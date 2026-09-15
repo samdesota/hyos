@@ -368,21 +368,13 @@ export const agentStyles = String.raw`
   .message.assistant .message-body { color: #dddcd6; }
   .message.commentary { margin-bottom: 16px; color: #c9c8c1; }
   .message.commentary .message-body { line-height: 1.55; }
-  .commentary-capped { position: relative; }
-  .commentary-capped.capped .message-body {
+  /* A run of agent activity (thinking + commands) is capped so the previous
+     prompt stays visible while the agent works; it scrolls internally and
+     stays pinned to its newest content. */
+  .activity-capped {
     max-height: 80vh; overflow-y: auto; overscroll-behavior: contain;
+    scrollbar-gutter: stable;
   }
-  .commentary-capped.capped::before {
-    content: ""; position: absolute; inset: auto 0 0; height: 64px; z-index: 1;
-    background: linear-gradient(transparent, #161714f0); pointer-events: none;
-  }
-  .commentary-show-all {
-    position: absolute; bottom: 10px; left: 0; z-index: 2;
-    padding: 3px 10px; border: 1px solid #3b3d37; border-radius: 7px;
-    color: #b5b7ac; background: #20221eee; font-size: 11px; font-weight: 600;
-    cursor: pointer;
-  }
-  .commentary-show-all:hover { color: #eceae5; border-color: #55584f; }
   .message-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.62; }
   .markdown { white-space: normal; }
   .markdown > :first-child { margin-top: 0; }
@@ -469,6 +461,9 @@ export const agentStyles = String.raw`
   .work-pane > summary::-webkit-details-marker { display: none; }
   .work-pane > summary:hover { color: #b9bbb1; }
   .work-pane-items { margin: 8px 0 0 9px; padding-left: 14px; border-left: 1px solid #353730; }
+  .work-pane[open] > .work-pane-items {
+    max-height: 80vh; overflow-y: auto; overscroll-behavior: contain;
+  }
   .work-pane-items .tool-group:last-child,
   .work-pane-items .message.commentary:last-child { margin-bottom: 0; }
   .tool-group summary {
