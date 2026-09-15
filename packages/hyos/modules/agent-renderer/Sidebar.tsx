@@ -47,16 +47,26 @@ const SessionFolderList: Component<{
       props.savedFolderOrder ?? null,
     ),
   );
-  // Folder drag-and-drop: the same pointer-lift model as session rows, minus
-  // the ghost — crossing the threshold reorders headings live as the pointer
-  // crosses a sibling's midpoint, and the drop commits the order through the
-  // host's reorder-folders command. The override stays visible until the
+  // Folder drag-and-drop: the same pointer-lift model as session rows — a
+  // ghost chip of the collapsed heading follows the pointer, the in-flow
+  // heading leaves an invisible landing gap, displaced groups FLIP-animate
+  // into their new slots, and the drop commits the order through the host's
+  // reorder-folders command. The order override stays visible until the
   // host's published order catches up (or a safety timer fires), so the
   // list never snaps back mid-round-trip.
   const [dragFolder, setDragFolder] = createSignal<string | null>(null);
   const [dragOrder, setDragOrder] = createSignal<readonly string[] | null>(
     null,
   );
+  // Transient, never-persisted collapse: the dragged group shrinks to just
+  // its heading while dragged, so it travels as a compact chip.
+  const [dragCollapsed, setDragCollapsed] = createSignal<ReadonlySet<string>>(
+    new Set<string>(),
+  );
+  let ghostEl: HTMLDivElement | undefined;
+  // Scoped hit-testing/FLIP root: with the active and archived lists sharing
+  // heading markup, queries must never cross lists.
+  let listEl: HTMLDivElement | undefined;
 
   const effectiveFolders = createMemo(() => {
     const computed = groups().map(({ folder }) => folder);
@@ -81,6 +91,44 @@ const SessionFolderList: Component<{
       setDragOrder(null);
   });
 
+  // FLIP siblings: after each reorder the DOM is already in its final layout,
+  // so measure headings, diff against the previous frame's rects, and animate
+  // the delta back to identity. Re-running animate() replaces the previous
+  // animation, which keeps slides retargetable mid-flight.
+  let folderRects = new Map<string, number>();
+  createEffect(() => {
+    if (!dragFolder() || !listEl) {
+      folderRects = new Map();
+      return;
+    }
+    effectiveFolders();
+    const next = new Map<string, number>();
+    for (const heading of Array.from(
+      listEl.querySelectorAll<HTMLElement>(
+        ".session-folder-heading[data-folder]",
+      ),
+    )) {
+      const folder = heading.dataset.folder;
+      if (folder) next.set(folder, heading.getBoundingClientRect().top);
+    }
+    for (const [folder, top] of next) {
+      const previous = folderRects.get(folder);
+      if (previous === undefined || previous === top) continue;
+      listEl
+        .querySelector<HTMLElement>(
+          `.session-folder-heading[data-folder="${CSS.escape(folder)}"]`,
+        )
+        ?.animate(
+          [
+            { transform: `translateY(${previous - top}px)` },
+            { transform: "translateY(0)" },
+          ],
+          { duration: 180, easing: "cubic-bezier(0.2, 0, 0, 1)" },
+        );
+    }
+    folderRects = next;
+  });
+
   const moveFolderTo = (dragged: string, index: number): void => {
     const current = effectiveFolders();
     const others = current.filter((folder) => folder !== dragged);
@@ -99,7 +147,7 @@ const SessionFolderList: Component<{
   const folderIndexAt = (dragged: string, y: number): number => {
     const others = effectiveFolders().filter((folder) => folder !== dragged);
     for (let index = 0; index < others.length; index++) {
-      const heading = document.querySelector<HTMLElement>(
+      const heading = listEl?.querySelector<HTMLElement>(
         `.session-folder-heading[data-folder="${CSS.escape(others[index])}"]`,
       );
       if (!heading) continue;
@@ -111,16 +159,41 @@ const SessionFolderList: Component<{
 
   const startFolderDrag = (folder: string, event: PointerEvent): void => {
     if (event.button !== 0) return;
+    const heading = event.currentTarget as HTMLElement;
     const startY = event.clientY;
     let dragging = false;
+    let grabDx = 0;
+    let grabDy = 0;
+    let pointerX = event.clientX;
+    let pointerY = event.clientY;
+    const placeGhost = (): void => {
+      if (!ghostEl) return;
+      ghostEl.style.width = `${heading.getBoundingClientRect().width}px`;
+      ghostEl.style.transform = `translate(${pointerX - grabDx}px, ${pointerY - grabDy}px)`;
+    };
+    const engage = (): void => {
+      dragging = true;
+      const rect = heading.getBoundingClientRect();
+      grabDx = pointerX - rect.left;
+      grabDy = pointerY - rect.top;
+      setDragFolder(folder);
+      // Visually collapse just the dragged group (transient override — the
+      // persisted collapse state is untouched) so it travels as a chip.
+      setDragCollapsed((current) => new Set(current).add(folder));
+      // The ghost node is created synchronously by the signal write; style it
+      // on the next tick so it never flashes at its untransformed position.
+      queueMicrotask(placeGhost);
+    };
     const move = (moveEvent: PointerEvent): void => {
+      pointerX = moveEvent.clientX;
+      pointerY = moveEvent.clientY;
       if (!dragging) {
-        if (Math.abs(moveEvent.clientY - startY) < 5) return;
-        dragging = true;
-        setDragFolder(folder);
+        if (Math.abs(pointerY - startY) < 5) return;
+        engage();
       }
       moveEvent.preventDefault();
-      moveFolderTo(folder, folderIndexAt(folder, moveEvent.clientY));
+      placeGhost();
+      moveFolderTo(folder, folderIndexAt(folder, pointerY));
     };
     const cleanup = (): void => {
       window.removeEventListener("pointermove", move);
@@ -131,6 +204,11 @@ const SessionFolderList: Component<{
       cleanup();
       if (!dragging) return;
       setDragFolder(null);
+      setDragCollapsed((current) => {
+        const next = new Set(current);
+        next.delete(folder);
+        return next;
+      });
       const ordered = dragOrder();
       if (ordered) {
         props.onReorderFolders([...ordered]);
@@ -145,6 +223,11 @@ const SessionFolderList: Component<{
       cleanup();
       if (!dragging) return;
       setDragFolder(null);
+      setDragCollapsed((current) => {
+        const next = new Set(current);
+        next.delete(folder);
+        return next;
+      });
       setDragOrder(null);
     };
     window.addEventListener("pointermove", move);
@@ -152,64 +235,91 @@ const SessionFolderList: Component<{
     window.addEventListener("pointercancel", cancel);
   };
 
+  const ghostFolder = createMemo(() => {
+    const folder = dragFolder();
+    return folder
+      ? (groups().find((group) => group.folder === folder) ?? null)
+      : null;
+  });
+
+  // Collapse shown for a group: the persisted state plus the transient drag
+  // override (never written back to the host).
+  const isCollapsed = (folder: string): boolean =>
+    props.collapsedFolders.has(folder) || dragCollapsed().has(folder);
+
   return (
-    <For each={effectiveFolders()}>
-      {(folder) => (
-        <Show when={groups().find((group) => group.folder === folder)}>
-          {(group) => {
-            const collapsed = () => props.collapsedFolders.has(group().folder);
-            return (
-              <section
-                class="session-folder-group"
-                classList={{ collapsed: collapsed() }}
-                aria-label={group().folder || group().label}
-              >
-                <h3
-                  class="session-folder-heading"
-                  classList={{ dragging: dragFolder() === group().folder }}
-                  data-folder={group().folder}
-                  title={group().folder || group().label}
-                  onPointerDown={(event) =>
-                    startFolderDrag(group().folder, event)
-                  }
+    <div class="session-folder-list" ref={listEl}>
+      <For each={effectiveFolders()}>
+        {(folder) => (
+          <Show when={groups().find((group) => group.folder === folder)}>
+            {(group) => {
+              const collapsed = () => isCollapsed(group().folder);
+              return (
+                <section
+                  class="session-folder-group"
+                  classList={{ collapsed: collapsed() }}
+                  aria-label={group().folder || group().label}
                 >
-                  <button
-                    type="button"
-                    class="session-folder-toggle"
-                    aria-expanded={!collapsed()}
-                    aria-label={
-                      collapsed()
-                        ? `Expand ${group().label}`
-                        : `Collapse ${group().label}`
+                  <h3
+                    class="session-folder-heading"
+                    classList={{ dragging: dragFolder() === group().folder }}
+                    data-folder={group().folder}
+                    title={group().folder || group().label}
+                    onPointerDown={(event) =>
+                      startFolderDrag(group().folder, event)
                     }
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      props.onToggleCollapse(group().folder, !collapsed());
-                    }}
                   >
-                    <i class="session-folder-chevron" aria-hidden="true">
-                      {collapsed() ? "▸" : "▾"}
-                    </i>
-                  </button>
-                  <span class="session-folder-name">{group().label}</span>
-                  <Show when={group().parentPath}>
-                    <span class="session-folder-parent">
-                      {group().parentPath}
-                    </span>
+                    <button
+                      type="button"
+                      class="session-folder-toggle"
+                      aria-expanded={!collapsed()}
+                      aria-label={
+                        collapsed()
+                          ? `Expand ${group().label}`
+                          : `Collapse ${group().label}`
+                      }
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        props.onToggleCollapse(group().folder, !collapsed());
+                      }}
+                    >
+                      <i class="session-folder-chevron" aria-hidden="true">
+                        {collapsed() ? "▸" : "▾"}
+                      </i>
+                    </button>
+                    <span class="session-folder-name">{group().label}</span>
+                    <Show when={group().parentPath}>
+                      <span class="session-folder-parent">
+                        {group().parentPath}
+                      </span>
+                    </Show>
+                  </h3>
+                  <Show when={!collapsed()}>
+                    <For each={group().sessions.map(({ id }) => id)}>
+                      {(id) => props.children(() => byId().get(id)!)}
+                    </For>
                   </Show>
-                </h3>
-                <Show when={!collapsed()}>
-                  <For each={group().sessions.map(({ id }) => id)}>
-                    {(id) => props.children(() => byId().get(id)!)}
-                  </For>
-                </Show>
-              </section>
-            );
-          }}
-        </Show>
-      )}
-    </For>
+                </section>
+              );
+            }}
+          </Show>
+        )}
+      </For>
+      <Show when={ghostFolder()}>
+        {(group) => (
+          <div class="session-folder-heading drag-ghost" ref={ghostEl}>
+            <i class="session-folder-chevron" aria-hidden="true">
+              ▸
+            </i>
+            <span class="session-folder-name">{group().label}</span>
+            <Show when={group().parentPath}>
+              <span class="session-folder-parent">{group().parentPath}</span>
+            </Show>
+          </div>
+        )}
+      </Show>
+    </div>
   );
 };
 
