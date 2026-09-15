@@ -9,6 +9,13 @@ const { app, ipcMain } = require("electron");
 const devtoolsPort = Number(process.env.HYOS_DEVTOOLS_PORT ?? "");
 if (Number.isInteger(devtoolsPort) && devtoolsPort > 0) {
   app.commandLine.appendSwitch("remote-debugging-port", String(devtoolsPort));
+  // Chromium 111+ rejects WebSocket upgrades carrying an Origin header unless
+  // the origin is allow-listed — the bundled devtools frontend served from
+  // this port always sends Origin: http://localhost:<port>.
+  app.commandLine.appendSwitch(
+    "remote-allow-origins",
+    `http://localhost:${devtoolsPort}`,
+  );
   console.log(`[devtools] CDP listening on http://localhost:${devtoolsPort}`);
 }
 const { ModuleHost } = require("./runtime");
