@@ -6,6 +6,10 @@ export type ArchivePageProps = Readonly<{
   onBack: () => void;
   /** All archived sessions, in any order; the page sorts and filters them. */
   sessions: readonly AgentSessionSummary[];
+  /** Open a session in place — it stays archived. */
+  onOpen: (sessionId: string) => void;
+  /** Unarchive a session (removes it from this list). */
+  onUnarchive: (sessionId: string) => void;
 }>;
 
 /** Newest archive time first; sessions without a timestamp fall back to
@@ -72,8 +76,24 @@ export const ArchivePage: Component<ArchivePageProps> = (props) => {
             <For each={visible()}>
               {(session) => (
                 <li class="archive-row">
-                  <span class="archive-row-title">{session.title}</span>
-                  <span class="archive-row-folder">{session.folder}</span>
+                  <button
+                    type="button"
+                    class="archive-row-open"
+                    title={`Open "${session.title}"`}
+                    onClick={() => props.onOpen(session.id)}
+                  >
+                    <span class="archive-row-title">{session.title}</span>
+                    <span class="archive-row-folder">{session.folder}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="archive-row-unarchive"
+                    aria-label={`Unarchive "${session.title}"`}
+                    title="Unarchive session"
+                    onClick={() => props.onUnarchive(session.id)}
+                  >
+                    ↩
+                  </button>
                 </li>
               )}
             </For>

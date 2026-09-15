@@ -120,6 +120,10 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
             <ArchivePage
               onBack={() => navigate(-1)}
               sessions={app.archivedSessions()}
+              onOpen={(sessionId) => void app.selectSession(sessionId)}
+              onUnarchive={(sessionId) =>
+                void app.setSessionArchived(sessionId, false)
+              }
             />
           </Show>
           <Show when={!archiveMatch()}>

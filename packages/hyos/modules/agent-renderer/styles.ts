@@ -257,8 +257,21 @@ export const agentStyles = String.raw`
     padding: 9px 10px; border-radius: 8px; font-size: 13px;
   }
   .archive-row:hover { background: #262723; }
+  .archive-row-open {
+    display: flex; align-items: baseline; gap: 10px; flex: 1; min-width: 0;
+    padding: 0; border: 0; background: transparent; cursor: pointer; text-align: left; font: inherit;
+  }
+  .archive-row-open:focus-visible { outline: 2px solid #b2cb8c; outline-offset: 2px; border-radius: 4px; }
   .archive-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #f2f0ea; }
   .archive-row-folder { flex: none; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #777a71; font-size: 11px; }
+  .archive-row-unarchive {
+    flex: none; align-self: center; width: 26px; height: 26px; margin: 0; padding: 0;
+    border: 0; border-radius: 7px; color: #8e9087; background: transparent; cursor: pointer;
+    font-size: 14px; line-height: 1; opacity: 0; transition: opacity .12s, background .12s, color .12s;
+  }
+  .archive-row:hover .archive-row-unarchive, .archive-row:focus-within .archive-row-unarchive { opacity: 1; }
+  .archive-row-unarchive:hover { color: #eceae5; background: #3b3d37; }
+  .archive-row-unarchive:focus-visible { outline: 2px solid #b2cb8c; }
   .archive-empty { padding: 26px 0; color: #777a71; font-size: 12px; }
   .starter { padding: 18px; border: 1px solid #343630; border-radius: 16px; background: #20211e; }
   .prompt {
