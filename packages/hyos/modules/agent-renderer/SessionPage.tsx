@@ -22,6 +22,10 @@ import type { BrowserViewModule } from "../browser-view/types.js";
 import { BrowserTabContent } from "./browser-tab.js";
 import { SideAddMenu } from "./cdp-inspect.js";
 import { DiffViewer } from "./DiffViewer.js";
+import {
+  pendingImagesFromDataTransfer,
+  pendingImagesFromPaste,
+} from "./composer-attachments.js";
 import { httpLinkUrl, mountMarkdown } from "./markdown.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
 import { supportsIncremental } from "./mode-selection.js";
@@ -357,6 +361,22 @@ export const SessionPage: Component<SessionPageProps> = (props) => {
   let followupPicker: HTMLDivElement | undefined;
   const timelineGroups = createMemo(() => groupTimeline(app.timeline()));
 
+  const allowImageDrop = (event: DragEvent): void => {
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+  };
+  const dropImages = (event: DragEvent): void => {
+    event.preventDefault();
+    void pendingImagesFromDataTransfer(event.dataTransfer).then((images) =>
+      app.addPendingImages(images),
+    );
+  };
+  const pasteImages = (event: ClipboardEvent): void => {
+    void pendingImagesFromPaste(event.clipboardData).then((images) => {
+      if (images.length > 0) app.addPendingImages(images);
+    });
+  };
+
   const closeMenusOnPointerDown = (event: PointerEvent): void => {
     if (
       event.target instanceof Node &&
@@ -481,11 +501,31 @@ export const SessionPage: Component<SessionPageProps> = (props) => {
         </div>
       </div>
       <div class="composer-shell">
-        <div class="composer">
+        <div class="composer" onDragOver={allowImageDrop} onDrop={dropImages}>
+          <Show when={app.pendingImages().length > 0}>
+            <div class="composer-attachments">
+              <For each={app.pendingImages()}>
+                {(image) => (
+                  <div class="attachment-chip" title={image.name}>
+                    <img src={image.dataUrl} alt={image.name} />
+                    <button
+                      type="button"
+                      class="attachment-remove"
+                      aria-label={`Remove ${image.name}`}
+                      onClick={() => app.removePendingImage(image.id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
           <textarea
             aria-label="Message the agent"
             value={app.prompt()}
             onInput={(event) => app.setPrompt(event.currentTarget.value)}
+            onPaste={pasteImages}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();

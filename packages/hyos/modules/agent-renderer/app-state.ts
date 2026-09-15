@@ -30,6 +30,10 @@ import type {
 } from "./client.js";
 import { createAutoScrollController } from "./auto-scroll.js";
 import {
+  MAX_PENDING_IMAGES,
+  type PendingImage,
+} from "./composer-attachments.js";
+import {
   bootDebug,
   perfLog,
   perfNow,
@@ -129,6 +133,20 @@ export function createAppState({
   const [loadingFeed, setLoadingFeed] = createSignal(false);
   const [loadingOlder, setLoadingOlder] = createSignal(false);
   const [prompt, setPrompt] = createSignal("");
+  // Composer image attachments staged for the next message. Purely renderer
+  // state for now — a later step sends them with the message.
+  const [pendingImages, setPendingImages] = createSignal<
+    readonly PendingImage[]
+  >([]);
+  const addPendingImages = (images: readonly PendingImage[]): void => {
+    if (images.length === 0) return;
+    setPendingImages((current) =>
+      [...current, ...images].slice(0, MAX_PENDING_IMAGES),
+    );
+  };
+  const removePendingImage = (id: string): void => {
+    setPendingImages((current) => current.filter((image) => image.id !== id));
+  };
   const [folder, setFolder] = createSignal("");
   const [providerId, setProviderId] = createSignal("");
   const [modelId, setModelId] = createSignal("");
@@ -1378,6 +1396,9 @@ export function createAppState({
     loadingOlder,
     prompt,
     setPrompt,
+    pendingImages,
+    addPendingImages,
+    removePendingImage,
     folder,
     setFolder,
     providerId,

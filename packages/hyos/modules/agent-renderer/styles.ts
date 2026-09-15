@@ -594,6 +594,11 @@ export const agentStyles = String.raw`
   .composer-shell { padding: 14px 22px 18px; background: linear-gradient(transparent, #171816 28%); }
   .composer { display: flex; flex-direction: column; width: min(820px, 100%); margin: auto; border: 1px solid #3a3c35; border-radius: 14px; background: #22231f; }
   .composer textarea { flex: 1; min-height: 42px; max-height: 160px; padding: 12px 14px 8px; resize: none; border: 0; outline: 0; color: #f2f0ea; background: transparent; }
+  .composer-attachments { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px 0; }
+  .attachment-chip { position: relative; width: 56px; height: 56px; border: 1px solid #3a3c35; border-radius: 8px; overflow: hidden; background: #171816; }
+  .attachment-chip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .attachment-remove { position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%; background: rgba(0,0,0,.65); color: #f2f0ea; font-size: 11px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .attachment-remove:hover { background: rgba(0,0,0,.85); }
   .composer-bar { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-top: 1px solid #33342f; }
   .composer-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
   .composer .model-picker { flex: none; }
