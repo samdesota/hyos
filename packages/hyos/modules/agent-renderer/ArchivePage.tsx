@@ -71,8 +71,8 @@ function groupByRecency(
 const PAGE_SIZE = 50;
 
 /**
- * The `/archive` route: a centered title with a search bar beneath it, and
- * the archived sessions listed newest-archived first under recency headers
+ * The `/archive` route: a header row (title on the left, search bar on the
+ * right) and the archived sessions listed newest-archived first under recency headers
  * (Today, Yesterday, Last 7 days, Last month, Older). Rows render lazily in
  * pages as the list is scrolled.
  */

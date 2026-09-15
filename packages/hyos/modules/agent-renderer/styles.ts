@@ -234,12 +234,12 @@ export const agentStyles = String.raw`
   .welcome { display: grid; place-items: center; width: 100%; height: 100%; padding: 38px; overflow-y: auto; }
   .welcome-card { width: min(760px, 100%); }
   .archive-page { display: flex; justify-content: center; width: 100%; height: 100%; min-height: 0; padding: 22px 26px; }
-  .archive-column { display: flex; flex-direction: column; width: 100%; max-width: 760px; min-height: 0; }
-  .archive-header { display: flex; flex-direction: column; align-items: center; gap: 12px; padding-bottom: 18px; }
+  .archive-column { display: flex; flex-direction: column; width: 100%; max-width: 880px; min-height: 0; }
+  .archive-header { display: flex; align-items: center; gap: 12px; padding-bottom: 18px; }
   .archive-title { margin: 0; font-size: 15px; font-weight: 600; color: #eceae5; }
   .archive-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; }
   .archive-search {
-    width: 100%; height: 28px; padding: 0 10px;
+    flex: 1; max-width: 340px; margin-left: auto; height: 28px; padding: 0 10px;
     border: 1px solid #3b3d37; border-radius: 8px;
     color: #f2f0ea; background: #292a27; font-size: 12px; outline: none;
   }
