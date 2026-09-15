@@ -1,7 +1,15 @@
-import { For, Show, createSignal, type Component } from "solid-js";
+import {
+  For,
+  Show,
+  createEffect,
+  createSignal,
+  onCleanup,
+  type Component,
+} from "solid-js";
 
 import type { CdpTarget } from "../../capabilities/browser.js";
 import { defaultCdpEndpoint } from "../../capabilities/browser.js";
+import { setModalOverlayActive } from "../browser-view/modal-overlay.js";
 import type { AppState } from "./app-state.js";
 
 const defaultEndpointText = `${defaultCdpEndpoint.host}:${defaultCdpEndpoint.port}`;
@@ -17,6 +25,12 @@ const defaultEndpointText = `${defaultCdpEndpoint.host}:${defaultCdpEndpoint.por
 export const SideAddMenu: Component<{ app: AppState }> = (props) => {
   const [open, setOpen] = createSignal(false);
   const [stage, setStage] = createSignal<"menu" | "cdp">("menu");
+
+  // While the dropdown is open the UI view must composite above any embedded
+  // browser view behind it, so raise the modal overlay (and drop it on close
+  // or unmount) — the same contract Modal.tsx uses for overBrowser modals.
+  createEffect(() => setModalOverlayActive(open()));
+  onCleanup(() => setModalOverlayActive(false));
 
   const close = (): void => {
     setOpen(false);
@@ -43,6 +57,7 @@ export const SideAddMenu: Component<{ app: AppState }> = (props) => {
               class="cdp-inspect-popover side-add-menu"
               role="menu"
               aria-label="Add tab"
+              data-browser-overlay
             >
               <button
                 type="button"
@@ -110,6 +125,7 @@ const CdpInspectPanel: Component<{
       class="cdp-inspect-popover"
       role="dialog"
       aria-label="Inspect CDP endpoint"
+      data-browser-overlay
     >
       <div class="cdp-inspect-row">
         <input
