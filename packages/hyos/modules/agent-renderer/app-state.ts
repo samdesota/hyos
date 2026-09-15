@@ -43,6 +43,9 @@ import {
   reconcileSideTabs,
   restoreSessionTabs,
   unadoptedHostTab,
+  unadoptedDevToolsTab,
+  sideTabHostTabId,
+  sideTabForHostTab,
   adoptCreatedSideTab,
   type SessionTabPlacement,
   type SideTab,
@@ -333,10 +336,11 @@ export function createAppState({
   const stripTabEntries = (): AgentSessionTab[] => {
     const byTabId = new Map(browserState().tabs.map((tab) => [tab.id, tab]));
     return sideTabs().flatMap((tab) => {
-      if (tab.kind !== "browser") return [];
-      const hostTab = byTabId.get(tab.tabId);
+      const tabId = sideTabHostTabId(tab);
+      if (tabId === null) return [];
+      const hostTab = byTabId.get(tabId);
       return hostTab
-        ? [{ kind: "browser" as const, tabId: tab.tabId, url: hostTab.url }]
+        ? [{ kind: "browser" as const, tabId, url: hostTab.url }]
         : [];
     });
   };
@@ -402,7 +406,7 @@ export function createAppState({
   );
   const activeBrowserTab = createMemo(() => {
     const tab = sideActive();
-    return tab?.kind === "browser" ? tab : null;
+    return tab?.kind === "browser" || tab?.kind === "devtools" ? tab : null;
   });
   const activePlan = createMemo(() => activeSession()?.plan ?? null);
   const planAfterIndex = createMemo(() =>
@@ -487,7 +491,8 @@ export function createAppState({
   // yields so the two strips cannot fight over activation.
   createEffect(() => {
     const tab = sideActive();
-    if (tab?.kind !== "browser" || focusedGlobalTab()) return;
+    if (tab?.kind !== "browser" && tab?.kind !== "devtools") return;
+    if (focusedGlobalTab()) return;
     if (browserState().activeTabId === tab.tabId) return;
     void runBrowser({ type: "activate-tab", tabId: tab.tabId });
   });
@@ -510,10 +515,23 @@ export function createAppState({
     if (adoptable) {
       setSideTabs((tabs) => [
         ...tabs,
-        { id: adoptable.id, kind: "browser", tabId: adoptable.id },
+        sideTabForHostTab(adoptable.id, adoptable.url),
       ]);
       setActiveSideTabId(adoptable.id);
       recordTabOpened(adoptable.id, adoptable.url);
+      setSideCollapsed(false);
+      return;
+    }
+    // Every page tab is already in the strip: adopt a DevTools frontend tab
+    // the host holds (an openCdpTarget pane) before creating a fresh page.
+    const devtools = unadoptedDevToolsTab(browserState(), sideTabs());
+    if (devtools) {
+      setSideTabs((tabs) => [
+        ...tabs,
+        sideTabForHostTab(devtools.id, devtools.url),
+      ]);
+      setActiveSideTabId(devtools.id);
+      recordTabOpened(devtools.id, devtools.url);
       setSideCollapsed(false);
       return;
     }
@@ -551,7 +569,7 @@ export function createAppState({
     }
     // Closing the host tab releases its presentation and, when it was the
     // last one, makes the host recreate a fresh tab for the next `+` click.
-    if (tab.kind === "browser") {
+    if (tab.kind === "browser" || tab.kind === "devtools") {
       const sessionId = activeId();
       if (sessionId) tabsRecorder.closed(sessionId, tab.tabId);
       createLedger.forget(tab.tabId);
@@ -770,14 +788,19 @@ export function createAppState({
   ): void => {
     setSideTabs((tabs) => {
       const shown = new Set(
-        tabs.flatMap((tab) => (tab.kind === "browser" ? [tab.tabId] : [])),
+        tabs.flatMap((tab) =>
+          tab.kind === "browser" || tab.kind === "devtools" ? [tab.tabId] : [],
+        ),
+      );
+      const byTabId = new Map(
+        browserState().tabs.map((hostTab) => [hostTab.id, hostTab]),
       );
       const additions = tabIds
         .filter((tabId): tabId is TabId => tabId !== null && !shown.has(tabId))
-        .map((tabId) => ({ id: tabId, kind: "browser" as const, tabId }));
+        .map((tabId) => sideTabForHostTab(tabId, byTabId.get(tabId)?.url));
       tabsDebug(
         `adopt: shown=[${[...shown].join(",")}] additions=[${additions
-          .map((a) => a.tabId)
+          .map((a) => sideTabHostTabId(a))
           .join(",")}] focus=${focusedId}`,
       );
       return additions.length === 0 ? tabs : [...tabs, ...additions];
@@ -1144,9 +1167,10 @@ export function createAppState({
   const closeSessionBrowserTabs = async (sessionId: string): Promise<void> => {
     let tabIds: readonly TabId[] = [];
     if (activeId() === sessionId) {
-      tabIds = sideTabs().flatMap((tab) =>
-        tab.kind === "browser" ? [tab.tabId] : [],
-      );
+      tabIds = sideTabs().flatMap((tab) => {
+        const hostTabId = sideTabHostTabId(tab);
+        return hostTabId ? [hostTabId] : [];
+      });
       setSideTabs(pinnedSideTabs);
       setActiveSideTabId("patches");
     } else {

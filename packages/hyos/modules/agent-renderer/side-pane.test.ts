@@ -8,6 +8,7 @@ import {
   activeSideTab,
   adoptCreatedSideTab,
   createdHostTabId,
+  isDevToolsTabUrl,
   isPinnedSideTab,
   neighborSideTabId,
   pinnedSideTabs,
@@ -17,6 +18,9 @@ import {
   sideTabDescriptors,
   urlMatches,
   sideTabLabel,
+  sideTabForHostTab,
+  sideTabHostTabId,
+  unadoptedDevToolsTab,
   unadoptedHostTab,
   type SideTab,
 } from "./side-pane.js";
@@ -24,6 +28,12 @@ import {
 const browserSideTab = (tabId: TabId): SideTab => ({
   id: tabId,
   kind: "browser",
+  tabId,
+});
+
+const devtoolsSideTab = (tabId: TabId): SideTab => ({
+  id: tabId,
+  kind: "devtools",
   tabId,
 });
 
@@ -65,11 +75,76 @@ test("the pane shows the active tab, falling back to a pinned tab on a stale id"
 });
 
 test("every tab kind has a strip descriptor with a label and glyph", () => {
-  for (const kind of ["patches", "browser"] as const) {
+  for (const kind of ["patches", "browser", "devtools"] as const) {
     const descriptor = sideTabDescriptors[kind];
     assert.ok(descriptor.label.length > 0);
     assert.ok(descriptor.icon.length > 0);
   }
+});
+
+test("devtools frontend urls are classified as devtools panes", () => {
+  assert.equal(
+    isDevToolsTabUrl(
+      "http://localhost:9333/devtools/inspector.html?ws=localhost:9333/devtools/page/1",
+    ),
+    true,
+  );
+  assert.equal(
+    isDevToolsTabUrl("https://chrome-devtools.example/devtools/inspector.html"),
+    true,
+  );
+  // Ordinary pages — even on a debugging port — stay browser tabs.
+  assert.equal(isDevToolsTabUrl("http://localhost:9333/json/list"), false);
+  assert.equal(isDevToolsTabUrl("https://example.com/"), false);
+  assert.equal(isDevToolsTabUrl("not a url"), false);
+});
+
+test("sideTabForHostTab classifies by url and sideTabHostTabId reads either kind back", () => {
+  const frontend =
+    "http://localhost:9333/devtools/inspector.html?ws=localhost:9333/devtools/page/1";
+  assert.deepEqual(sideTabForHostTab("tab-1", frontend), {
+    id: "tab-1",
+    kind: "devtools",
+    tabId: "tab-1",
+  });
+  assert.deepEqual(sideTabForHostTab("tab-2", "https://example.com/"), {
+    id: "tab-2",
+    kind: "browser",
+    tabId: "tab-2",
+  });
+  // Unknown url (tab not yet in a published state) falls back to a page tab.
+  assert.deepEqual(sideTabForHostTab("tab-3", undefined), {
+    id: "tab-3",
+    kind: "browser",
+    tabId: "tab-3",
+  });
+  assert.equal(sideTabHostTabId(devtoolsSideTab("tab-1")), "tab-1");
+  assert.equal(sideTabHostTabId({ id: "patches", kind: "patches" }), null);
+});
+
+test("the devtools pane is labelled by its page title with a devtools fallback", () => {
+  const state = hostState(
+    ["tab-1"],
+    [
+      {
+        id: "tab-1",
+        url: "http://localhost:9333/devtools/inspector.html?ws=x",
+        title: "DevTools - example.com",
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        error: null,
+      },
+    ],
+  );
+  assert.equal(
+    sideTabLabel(devtoolsSideTab("tab-1"), state),
+    "DevTools - example.com",
+  );
+  assert.equal(
+    sideTabLabel(devtoolsSideTab("tab-9"), hostState([])),
+    "DevTools",
+  );
 });
 
 test("+ adopts the first host tab the strip does not already show", () => {
@@ -89,6 +164,41 @@ test("+ adopts the first host tab the strip does not already show", () => {
   );
   // A host with no tabs at all has nothing to adopt.
   assert.equal(unadoptedHostTab(emptyBrowserState, pinnedSideTabs), null);
+});
+
+test("+ adoption skips devtools tabs; the devtools finder surfaces them", () => {
+  const frontend =
+    "http://localhost:9333/devtools/inspector.html?ws=localhost:9333/devtools/page/1";
+  const state = hostState(
+    ["dev-1"],
+    [
+      {
+        id: "dev-1",
+        url: frontend,
+        title: "DevTools - example.com",
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        error: null,
+      },
+    ],
+  );
+  // A devtools frontend tab is never adopted as an ordinary page tab.
+  assert.equal(unadoptedHostTab(state, pinnedSideTabs), null);
+  // It is exactly what the devtools pane finder surfaces.
+  assert.equal(unadoptedDevToolsTab(state, pinnedSideTabs)?.id, "dev-1");
+  // Once the strip shows it, nothing remains unadopted.
+  assert.equal(
+    unadoptedDevToolsTab(state, [...pinnedSideTabs, devtoolsSideTab("dev-1")]),
+    null,
+  );
+});
+
+test("reconciliation drops devtools panes the host no longer knows", () => {
+  const tabs = [...pinnedSideTabs, devtoolsSideTab("dev-1")];
+  const reloaded = reconcileSideTabs(tabs, hostState([]));
+  assert.deepEqual(reloaded, pinnedSideTabs);
+  assert.equal(reconcileSideTabs(tabs, hostState(["dev-1"])), tabs);
 });
 
 test("reconciliation drops browser tabs the host no longer knows", () => {

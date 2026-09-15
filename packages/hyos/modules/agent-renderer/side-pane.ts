@@ -13,7 +13,8 @@ import type { AgentSessionTabs } from "../../capabilities/agent.js";
  */
 export type SideTab =
   | Readonly<{ id: string; kind: "patches" }>
-  | Readonly<{ id: string; kind: "browser"; tabId: TabId }>;
+  | Readonly<{ id: string; kind: "browser"; tabId: TabId }>
+  | Readonly<{ id: string; kind: "devtools"; tabId: TabId }>;
 
 export type SideTabKind = SideTab["kind"];
 
@@ -23,7 +24,41 @@ export const sideTabDescriptors: Readonly<
 > = {
   patches: { label: "Patches", icon: "±" },
   browser: { label: "Browser", icon: "◉" },
+  devtools: { label: "DevTools", icon: "⚒" },
 };
+
+/**
+ * Whether a host tab url is a Chrome DevTools frontend page — the inspector
+ * a CDP endpoint serves for one of its targets (opened from
+ * `openCdpTarget`). Such tabs render through the same browser presentation
+ * flow, but the strip labels them as DevTools panes instead of pages.
+ */
+export function isDevToolsTabUrl(url: string): boolean {
+  try {
+    const path = new URL(url).pathname;
+    return path.startsWith("/devtools/") && path.endsWith("inspector.html");
+  } catch {
+    return false;
+  }
+}
+
+/** The host tab a strip entry presents, for kinds that present one. */
+export function sideTabHostTabId(tab: SideTab): TabId | null {
+  return tab.kind === "browser" || tab.kind === "devtools" ? tab.tabId : null;
+}
+
+/**
+ * Classify a host tab into the strip kind its url calls for — a DevTools
+ * frontend page becomes a `devtools` pane, everything else a `browser` tab.
+ */
+export function sideTabForHostTab(
+  tabId: TabId,
+  url: string | undefined,
+): SideTab {
+  return url !== undefined && isDevToolsTabUrl(url)
+    ? { id: tabId, kind: "devtools", tabId }
+    : { id: tabId, kind: "browser", tabId };
+}
 
 /** Tabs that are always present in the strip and cannot be closed. */
 export const pinnedSideTabs: readonly SideTab[] = [
@@ -53,16 +88,44 @@ export function activeSideTab(
 /**
  * The first host browser tab the strip does not already show — the one a
  * `+` click focuses instead of creating a duplicate. Null once every host
- * tab is already in the strip.
+ * tab is already in the strip. DevTools frontend pages are excluded: they
+ * join the strip only through a DevTools pane (`unadoptedDevToolsTab`), so
+ * a stray inspector tab is never adopted as an ordinary page.
  */
 export function unadoptedHostTab(
   state: BrowserState,
   tabs: readonly SideTab[],
 ): BrowserTabState | null {
   const adopted = new Set(
-    tabs.flatMap((tab) => (tab.kind === "browser" ? [tab.tabId] : [])),
+    tabs.flatMap((tab) =>
+      tab.kind === "browser" || tab.kind === "devtools" ? [tab.tabId] : [],
+    ),
   );
-  return state.tabs.find(({ id }) => !adopted.has(id)) ?? null;
+  return (
+    state.tabs.find(
+      ({ id, url }) => !adopted.has(id) && !isDevToolsTabUrl(url),
+    ) ?? null
+  );
+}
+
+/**
+ * The first unshown DevTools frontend tab in the host state — the one a
+ * DevTools pane click adopts. Null once every devtools tab is in the strip.
+ */
+export function unadoptedDevToolsTab(
+  state: BrowserState,
+  tabs: readonly SideTab[],
+): BrowserTabState | null {
+  const adopted = new Set(
+    tabs.flatMap((tab) =>
+      tab.kind === "browser" || tab.kind === "devtools" ? [tab.tabId] : [],
+    ),
+  );
+  return (
+    state.tabs.find(
+      ({ id, url }) => !adopted.has(id) && isDevToolsTabUrl(url),
+    ) ?? null
+  );
 }
 
 /**
@@ -77,7 +140,7 @@ export function reconcileSideTabs(
 ): readonly SideTab[] {
   const known = new Set(state.tabs.map(({ id }) => id));
   const kept = tabs.filter(
-    (tab) => tab.kind !== "browser" || known.has(tab.tabId),
+    (tab) => tab.kind === "patches" || known.has(tab.tabId),
   );
   return kept.length === tabs.length ? tabs : kept;
 }
@@ -244,7 +307,7 @@ export function adoptCreatedSideTab(
   tabs: readonly SideTab[],
   tabId: TabId,
 ): readonly SideTab[] {
-  return tabs.some((tab) => tab.kind === "browser" && tab.tabId === tabId)
+  return tabs.some((tab) => sideTabHostTabId(tab) === tabId)
     ? tabs
     : [...tabs, { id: tabId, kind: "browser", tabId }];
 }
@@ -266,9 +329,9 @@ export function neighborSideTabId(
 
 /** Strip label: the pinned descriptor label, or the presented page title. */
 export function sideTabLabel(tab: SideTab, state: BrowserState): string {
-  if (tab.kind !== "browser") return sideTabDescriptors[tab.kind].label;
+  if (tab.kind === "patches") return sideTabDescriptors.patches.label;
+  const fallback = sideTabDescriptors[tab.kind].label;
   return (
-    state.tabs.find(({ id }) => id === tab.tabId)?.title.trim() ||
-    sideTabDescriptors.browser.label
+    state.tabs.find(({ id }) => id === tab.tabId)?.title.trim() || fallback
   );
 }
