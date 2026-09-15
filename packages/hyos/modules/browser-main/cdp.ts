@@ -15,8 +15,12 @@ const string = (value: unknown): string =>
 /**
  * Resolve a discovered target's devtools frontend to an absolute HTTP(S) URL
  * the browser host can load. Chrome and Electron report relative paths like
- * `/devtools/inspector.html?ws=host:port/devtools/page/<id>`; absolute
- * `http(s)://` urls pass through unchanged.
+ * `/devtools/inspector.html?ws=host:port/devtools/page/<id>`. Electron may
+ * report an absolute `chrome-devtools-frontend.appspot.com` url instead, but
+ * its `serve_rev` revision is not published for Electron builds (it 404s) —
+ * the debug server itself serves the bundled frontend matching the browser's
+ * exact Chromium build, so such urls are rewritten to the endpoint origin,
+ * keeping the query (the `ws=` target).
  */
 export function resolveCdpFrontendUrl(
   endpoint: CdpEndpoint,
@@ -30,7 +34,17 @@ export function resolveCdpFrontendUrl(
   }
   const origin = `http://${endpoint.host}:${endpoint.port}`;
   if (frontend.startsWith("/")) return `${origin}${frontend}`;
-  if (/^https?:\/\//i.test(frontend)) return frontend;
+  if (/^https?:\/\//i.test(frontend)) {
+    try {
+      const url = new URL(frontend);
+      if (url.hostname.endsWith("chrome-devtools-frontend.appspot.com")) {
+        return `${origin}/devtools/inspector.html${url.search}`;
+      }
+    } catch {
+      // Not parseable — hand the reported url to the host as-is.
+    }
+    return frontend;
+  }
   throw new Error(`Unsupported devtools frontend URL: ${frontend}`);
 }
 
