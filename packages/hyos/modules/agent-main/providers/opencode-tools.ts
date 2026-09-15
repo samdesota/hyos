@@ -3,6 +3,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { editFile, writeWholeFile } from "./claude-edit-tools.js";
+import { resolveRgBinary } from "./ripgrep.js";
 
 const MAX_OUTPUT = 60_000;
 const MAX_READ_BYTES = 50 * 1024;
@@ -90,6 +91,7 @@ function run(
   cwd: string,
   signal: AbortSignal,
   timeout = 120_000,
+  options: Readonly<{ noMatchesIsSuccess?: boolean }> = {},
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, [...args], {
@@ -119,10 +121,28 @@ function run(
       signal.removeEventListener("abort", abort);
       const result = output.slice(0, MAX_OUTPUT).trimEnd();
       if (signal.aborted) reject(new Error("Cancelled"));
-      else if (code === 0 || (command === "rg" && code === 1)) resolve(result);
+      else if (
+        code === 0 ||
+        (code === 1 && options.noMatchesIsSuccess === true)
+      )
+        resolve(result);
       else reject(new Error(result || `${command} exited with code ${code}`));
     });
   });
+}
+
+/**
+ * Run the ripgrep binary bundled with the app (@vscode/ripgrep), falling back
+ * to a system `rg` on PATH. Exit code 1 means "no matches", which is a
+ * successful empty result for search tools.
+ */
+async function runRg(
+  args: readonly string[],
+  cwd: string,
+  signal: AbortSignal,
+): Promise<string> {
+  const rg = await resolveRgBinary();
+  return run(rg, args, cwd, signal, 120_000, { noMatchesIsSuccess: true });
 }
 
 const objectSchema = (
@@ -213,8 +233,7 @@ export const openCodeTools: readonly OpenCodeTool[] = [
         typeof input.path === "string" ? input.path : ".",
       );
       return {
-        output: await run(
-          "rg",
+        output: await runRg(
           ["--files", "-g", requiredString(input, "pattern")],
           cwd,
           signal,
@@ -259,7 +278,7 @@ export const openCodeTools: readonly OpenCodeTool[] = [
       ];
       if (typeof input.include === "string")
         args.splice(4, 0, "--glob", input.include);
-      return { output: await run("rg", args, folder, signal) };
+      return { output: await runRg(args, folder, signal) };
     },
   },
   {
