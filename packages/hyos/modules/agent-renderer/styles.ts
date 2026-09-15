@@ -235,7 +235,7 @@ export const agentStyles = String.raw`
   .welcome-card { width: min(760px, 100%); }
   .archive-page { display: flex; justify-content: center; width: 100%; height: 100%; min-height: 0; padding: 22px 26px; }
   .archive-column { display: flex; flex-direction: column; width: 100%; max-width: 880px; min-height: 0; }
-  .archive-header { display: flex; align-items: center; gap: 12px; padding-bottom: 18px; }
+  .archive-header { display: flex; align-items: center; gap: 12px; padding: 0 10px 18px; }
   .archive-title { margin: 0; font-size: 15px; font-weight: 600; color: #eceae5; }
   .archive-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; }
   .archive-search {
