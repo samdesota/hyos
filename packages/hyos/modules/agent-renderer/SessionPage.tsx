@@ -80,18 +80,43 @@ const isActivityEntry = (entry: TimelineEntry): boolean =>
 /**
  * A thinking (commentary) block capped at 60vh with overflow hidden — never
  * scrollable. The content is anchored to the bottom of the cap so the newest
- * streamed thinking stays visible while older text is clipped above.
+ * streamed thinking stays visible while older text is clipped above, behind a
+ * top fade-out gradient. "Show all thinking" removes the max-height entirely
+ * (still no scrolling).
  */
 const CommentaryBody: Component<{
   content: string;
   app: AppState;
-}> = (props) => (
-  <div class="commentary-capped">
-    <div class="commentary-capped-inner">
-      <MarkdownBody content={props.content} app={props.app} />
+}> = (props) => {
+  let capped!: HTMLDivElement;
+  let inner!: HTMLDivElement;
+  const [expanded, setExpanded] = createSignal(false);
+  const [clipped, setClipped] = createSignal(false);
+  createEffect(() => {
+    // Track the streamed text so the fade appears only once content actually
+    // overflows the 60vh cap.
+    void props.content.length;
+    void expanded();
+    setClipped(inner.offsetHeight > capped.clientHeight + 1);
+  });
+  return (
+    <div
+      class="commentary-capped"
+      classList={{ expanded: expanded() }}
+      ref={capped}
+    >
+      <div class="commentary-capped-inner" ref={inner}>
+        <MarkdownBody content={props.content} app={props.app} />
+      </div>
+      <Show when={!expanded() && clipped()}>
+        <div class="commentary-fade" />
+        <button class="commentary-expand" onClick={() => setExpanded(true)}>
+          Show all thinking
+        </button>
+      </Show>
     </div>
-  </div>
-);
+  );
+};
 
 /**
  * A run of live agent activity (thinking commentary + tool commands) capped at

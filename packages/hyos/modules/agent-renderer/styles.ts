@@ -427,12 +427,26 @@ export const agentStyles = String.raw`
   .message.commentary .message-body { line-height: 1.55; }
   /* A thinking (commentary) block caps at 60vh with overflow hidden (never
      scrollable); its content is anchored to the bottom so the newest streamed
-     text stays visible while older text is clipped above the cap. */
+     text stays visible while older text is clipped above the cap, behind a
+     top fade-out gradient. "Show all thinking" removes the cap entirely. */
   .commentary-capped {
+    position: relative;
     max-height: 60vh; overflow: hidden;
     display: flex; flex-direction: column; justify-content: flex-end;
   }
+  .commentary-capped.expanded { max-height: none; }
   .commentary-capped-inner { min-height: 0; }
+  .commentary-fade {
+    position: absolute; top: 0; left: 0; right: 0; height: 64px;
+    background: linear-gradient(to bottom, #171816, rgba(23, 24, 22, 0));
+    pointer-events: none;
+  }
+  .commentary-expand {
+    position: absolute; top: 8px; left: 0;
+    padding: 3px 9px; border: 1px solid #3a3c35; border-radius: 7px;
+    color: #b5b7ac; background: #1d1e1be8; font-size: 11px; cursor: pointer;
+  }
+  .commentary-expand:hover { color: #eceae5; background: #30312d; }
   /* A run of agent activity (thinking + commands) is capped so the previous
      prompt stays visible while the agent works; it scrolls internally and
      stays pinned to its newest content. */
