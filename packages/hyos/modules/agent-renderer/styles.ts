@@ -35,8 +35,8 @@ export const agentStyles = String.raw`
     border-right: 1px solid #30312d;
     background: #20211e;
   }
-  .sidebar-head { padding: 20px 16px 14px; }
-  .brand { display: flex; align-items: center; margin-bottom: 6px; }
+  .sidebar-head { padding: 0 16px 14px 80px; }
+  .brand { display: flex; align-items: center; height: 28px; margin-top: 14px; margin-bottom: 6px; }
   .brand strong { font-size: 14px; letter-spacing: .02em; }
   .brand-new, .primary, .folder-button, .send, .cancel {
     border: 0; border-radius: 9px; cursor: pointer; transition: background .15s, opacity .15s;
