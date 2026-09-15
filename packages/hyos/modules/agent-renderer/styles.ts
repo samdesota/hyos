@@ -443,7 +443,7 @@ export const agentStyles = String.raw`
   .plan-caret { color: #6f7268; font-size: 54px; line-height: 1; }
   .plan-toggle:hover .plan-caret { color: #d9ff62; }
   .plan-toggle strong { color: #95978e; font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
-  .plan-head span { color: #6f7268; font-size: 10px; font-variant-numeric: tabular-nums; }
+  .plan-head > span { color: #6f7268; font-size: 10px; font-variant-numeric: tabular-nums; }
   .plan-show-all {
     display: block; margin: 10px 0 0; padding: 4px 0; border: 0; background: none;
     color: #6f7268; font-size: 11px; font-weight: 600; cursor: pointer; text-align: left;
