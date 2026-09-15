@@ -180,6 +180,12 @@ export class ImmutableBPlusTree {
     }
   }
 
+  /** Owned child IDs for reachability tracing; leaves have no children. */
+  async pageChildren(id: PageId): Promise<readonly PageId[]> {
+    const page = await this.#cache.get(id);
+    return page.kind === "internal" ? [...page.children] : [];
+  }
+
   /** Copies a forest while preserving structural sharing between its roots. */
   async copyRootsTo(
     roots: readonly TreeRoot[],

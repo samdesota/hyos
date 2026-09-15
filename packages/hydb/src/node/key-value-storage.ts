@@ -6,7 +6,6 @@ import {
   type ChangeStreamOptions,
   type CommitBatch,
   type CommitRequest,
-  type GarbageCollectionReport,
   type RetentionPolicy,
   type SnapshotSelector,
   type StorageDatabase,
@@ -33,33 +32,21 @@ import {
   type TableMetadata,
 } from "./tree-storage-model.js";
 
-type Branch = { head: string; base: string; sequence: number };
-type Metadata = {
-  format: "hydb-kv-1";
-  schema: string;
-  nextPageId: number;
-  revision: number;
-  retention: RetentionPolicy;
-};
-type Subscriber = {
-  branch: string;
-  after: number;
-  retainAfter: number;
-  queue: CommitBatch[];
-  wake?: () => void;
-};
-const metadataKey = "metadata";
-const commitKey = (id: string) => `commit/${id}`;
-const branchKey = (name: string) => `branch/${encodeURIComponent(name)}`;
-const historyPrefix = (name: string) => `history/${encodeURIComponent(name)}/`;
-const historyKey = (name: string, sequence: number) =>
-  `${historyPrefix(name)}${sequence.toString().padStart(16, "0")}`;
-const retainKey = (name: string) => `retain/${encodeURIComponent(name)}`;
-const put = (key: string, value: unknown): KeyValueOperation => ({
-  type: "put",
-  key,
-  value: encodeValue(value),
-});
+import {
+  type Branch,
+  type Metadata,
+  type Subscriber,
+  metadataKey,
+  commitKey,
+  branchKey,
+  historyKey,
+  retainKey,
+  put,
+} from "./key-value-layout.js";
+import {
+  collectKeyValueGarbage,
+  type KeyValueGarbageCollectionReport,
+} from "./key-value-gc.js";
 
 export type KeyValueStorageOptions = Readonly<{
   schema: AnySchema;
@@ -67,6 +54,8 @@ export type KeyValueStorageOptions = Readonly<{
   cacheBytes?: number;
   maxEntries?: number;
   memory?: MemoryManager;
+  /** Maximum records/pages per GC slice (default 128). */
+  gcBatchSize?: number;
 }> &
   (
     | Readonly<{ directory: string; store?: never }>
@@ -78,12 +67,17 @@ export type KeyValueStorageOptions = Readonly<{
  * Directory opens use LMDB. An injected store is owned and closed by this engine.
  * One active writer per database; a metadata condition rejects stale publication
  * from another instance. Existing file databases and schema migrations are not
- * imported. Reclamation is deliberately deferred to step 3.
+ * imported. GC reader protection is local to this instance.
  */
 export class KeyValueStorageDatabase implements StorageDatabase {
   private readonly branches = new Map<string, Branch>();
   private readonly pins = new Map<string, number>();
   private readonly subscribers = new Set<Subscriber>();
+  private readonly retains = new Map<string, string>();
+  private readonly retiring = new Set<string>();
+  private readonly pendingFloors = new Map<string, number>();
+  private collection?: Promise<KeyValueGarbageCollectionReport>;
+  private readonly gcBatchSize: number;
   private readonly pages: KeyValuePages;
   private readonly tree: ImmutableBPlusTree;
   private queue: Promise<void> = Promise.resolve();
@@ -98,6 +92,7 @@ export class KeyValueStorageDatabase implements StorageDatabase {
     private readonly tables: ReadonlyMap<string, TableMetadata>,
     options: KeyValueStorageOptions,
   ) {
+    this.gcBatchSize = options.gcBatchSize ?? 128;
     this.pages = new KeyValuePages(store, metadata.nextPageId);
     this.tree = new ImmutableBPlusTree(this.pages, options);
   }
@@ -105,6 +100,12 @@ export class KeyValueStorageDatabase implements StorageDatabase {
   static async open(
     options: KeyValueStorageOptions,
   ): Promise<KeyValueStorageDatabase> {
+    if (
+      !Number.isSafeInteger(options.gcBatchSize ?? 128) ||
+      (options.gcBatchSize ?? 128) < 1 ||
+      (options.gcBatchSize ?? 128) > 4096
+    )
+      throw new TypeError("gcBatchSize must be an integer between 1 and 4096");
     const requested =
       options.retention === undefined
         ? undefined
@@ -187,6 +188,9 @@ export class KeyValueStorageDatabase implements StorageDatabase {
         await database.readCommit(branch.head);
         database.branches.set(name, branch);
       }
+      for await (const entry of store.scan("retain/")) {
+        database.retains.set(entry.key, decodeValue(entry.value) as string);
+      }
       if (!database.branches.has("main"))
         throw new Error("Missing main branch");
       if (
@@ -219,6 +223,7 @@ export class KeyValueStorageDatabase implements StorageDatabase {
       selector !== undefined && "commit" in selector
         ? selector.commit
         : branch!.head;
+    if (this.retiring.has(id)) throw new HistoryUnavailableError(id);
     this.pins.set(id, (this.pins.get(id) ?? 0) + 1);
     const release = async () => {
       const count = this.pins.get(id)!;
@@ -321,7 +326,14 @@ export class KeyValueStorageDatabase implements StorageDatabase {
     const branch = options.branch ?? "main";
     if (!Number.isSafeInteger(options.after) || options.after < 0)
       throw new TypeError("Change cursor must be a nonnegative integer");
-    const through = this.branch(branch).sequence;
+    const state = this.branch(branch);
+    const floor = Math.max(
+      state.floor ?? 0,
+      this.pendingFloors.get(branch) ?? 0,
+    );
+    if (options.after < floor)
+      throw new HistoryUnavailableError(undefined, floor);
+    const through = state.sequence;
     const subscriber: Subscriber = {
       branch,
       after: Math.max(through, options.after),
@@ -369,6 +381,7 @@ export class KeyValueStorageDatabase implements StorageDatabase {
       if (existing !== undefined && decodeValue(existing) !== request.commit)
         throw new TypeError(`Retention already exists: ${request.name}`);
       await this.publish([put(key, request.commit)]);
+      this.retains.set(key, request.commit);
     });
   }
 
@@ -378,18 +391,37 @@ export class KeyValueStorageDatabase implements StorageDatabase {
       if ((await this.store.get(key)) === undefined)
         throw new TypeError(`Unknown retention: ${name}`);
       await this.publish([{ type: "delete", key }]);
+      this.retains.delete(key);
     });
   }
 
-  async collectGarbage(): Promise<GarbageCollectionReport> {
+  collectGarbage(): Promise<KeyValueGarbageCollectionReport> {
     this.assertOpen();
-    throw new Error(
-      "Incremental key-value garbage collection is not implemented yet (step 3)",
-    );
+    return (this.collection ??= collectKeyValueGarbage({
+      store: this.store,
+      tree: this.tree,
+      branches: this.branches,
+      pins: this.pins,
+      retains: this.retains,
+      subscribers: this.subscribers,
+      retiring: this.retiring,
+      pendingFloors: this.pendingFloors,
+      batchSize: this.gcBatchSize,
+      enqueue: (operation) => this.enqueue(operation),
+      publish: (operations) => this.publish(operations),
+      checkpoint: () => this.assertOpen(),
+      capture: () => ({
+        nextPageId: this.pages.nextId,
+        retention: this.metadata.retention,
+      }),
+    }).finally(() => {
+      this.collection = undefined;
+    }));
   }
 
   close(): Promise<void> {
     return (this.closing ??= (async () => {
+      await this.collection?.catch(() => undefined);
       await this.queue;
       this.closed = true;
       for (const subscriber of this.subscribers) subscriber.wake?.();

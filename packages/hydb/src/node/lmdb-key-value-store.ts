@@ -3,6 +3,7 @@ import {
   checkValue,
   keyBytes,
   prepareBatch,
+  scanBounds,
   type KeyValueStore,
 } from "./key-value-store.js";
 
@@ -39,13 +40,17 @@ export function openLmdbKeyValueStore(directory: string): KeyValueStore {
         value === undefined ? undefined : Uint8Array.from(value),
       );
     },
-    async *scan(prefix = "") {
+    async *scan(prefix = "", options = {}) {
       assertOpen();
-      const start = keyBytes(prefix, true);
+      const bounds = scanBounds(prefix, options);
+      const start = bounds.start;
+      let count = 0;
       for (const { key, value } of db.getRange({ start, snapshot: true })) {
-        if (!key.subarray(0, start.length).equals(start)) break;
+        if (!key.subarray(0, bounds.prefix.length).equals(bounds.prefix)) break;
+        if (bounds.after && Buffer.compare(key, bounds.after) <= 0) continue;
         assertOpen();
         yield { key: key.toString("utf8"), value: Uint8Array.from(value) };
+        if (++count >= bounds.limit) break;
       }
     },
     async batch(operations, conditions = []) {

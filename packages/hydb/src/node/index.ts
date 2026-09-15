@@ -55,3 +55,5 @@ export {
   openKeyValueStorage,
 } from "./key-value-storage.js";
 export type { KeyValueStorageOptions } from "./key-value-storage.js";
+
+export type { KeyValueGarbageCollectionReport } from "./key-value-gc.js";

@@ -163,7 +163,7 @@ export interface StorageDatabase {
   retain(request: { name: string; commit: CommitId }): Promise<void>;
   /** Removes a named root; reclamation occurs on a later collection. */
   releaseRetention(name: string): Promise<void>;
-  /** Copies reachable data into a compact generation and publishes it. */
+  /** Reclaims unreachable storage using the backend's collection strategy. */
   collectGarbage(): Promise<GarbageCollectionReport>;
   close(): Promise<void>;
 }

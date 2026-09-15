@@ -281,7 +281,7 @@ test("a stale writer cannot overwrite committed pages or metadata", async () => 
   }
 });
 
-test("schema mismatches and unrelated stores are rejected; GC remains explicitly deferred", async () => {
+test("schema mismatches and unrelated stores are rejected", async () => {
   const unrelated = memoryKeyValueStore();
   await unrelated.batch([
     { type: "put", key: "unrelated", value: Uint8Array.of(1) },
@@ -293,7 +293,7 @@ test("schema mismatches and unrelated stores are rejected; GC remains explicitly
   const directory = await mkdtemp(join(tmpdir(), "hydb-kv-schema-"));
   try {
     const storage = await openKeyValueStorage({ schema, directory });
-    await assert.rejects(storage.collectGarbage(), /step 3/);
+    assert.equal((await storage.collectGarbage()).commitsCollected, 0);
     await storage.close();
     await assert.rejects(
       openKeyValueStorage({ schema: hydb.schema({}), directory }),

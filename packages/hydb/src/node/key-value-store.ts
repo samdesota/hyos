@@ -11,7 +11,8 @@ export type KeyValueCondition = Readonly<{
 /**
  * Binary values indexed by UTF-8 keys (1–480 bytes). Reads return owned copies.
  * getMany preserves input order, but does not promise a cross-key snapshot.
- * scan is a snapshot in UTF-8 byte order, taken when iteration begins. Callers
+ * scan is a snapshot in UTF-8 byte order, taken when iteration begins.
+ * after is exclusive; limit bounds the number of returned records. Callers
  * must finish/return the iterator promptly to release backend reader pins.
  *
  * batch atomically checks conditions and applies ordered edits. It owns copies
@@ -25,6 +26,7 @@ export interface KeyValueStore {
   getMany(keys: readonly string[]): Promise<(Uint8Array | undefined)[]>;
   scan(
     prefix?: string,
+    options?: Readonly<{ after?: string; limit?: number }>,
   ): AsyncIterable<Readonly<{ key: string; value: Uint8Array }>>;
   batch(
     operations: readonly KeyValueOperation[],
@@ -89,4 +91,22 @@ export function checkValue(
   ) {
     throw new KeyValueConflictError(condition.key);
   }
+}
+
+export function scanBounds(
+  prefix: string,
+  options: { after?: string; limit?: number },
+) {
+  const start = keyBytes(prefix, true);
+  const after =
+    options.after === undefined ? undefined : keyBytes(options.after);
+  const limit = options.limit ?? Number.MAX_SAFE_INTEGER;
+  if (!Number.isSafeInteger(limit) || limit < 1)
+    throw new TypeError("Scan limit must be a positive safe integer");
+  return {
+    prefix: start,
+    start: after && Buffer.compare(after, start) > 0 ? after : start,
+    after,
+    limit,
+  };
 }

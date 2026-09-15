@@ -2,6 +2,7 @@ import {
   checkValue,
   keyBytes,
   prepareBatch,
+  scanBounds,
   type KeyValueStore,
 } from "./key-value-store.js";
 
@@ -23,14 +24,20 @@ export function memoryKeyValueStore(): KeyValueStore {
       keys.forEach((key) => keyBytes(key));
       return keys.map((key) => values.get(key)?.slice());
     },
-    async *scan(prefix = "") {
+    async *scan(prefix = "", options = {}) {
       assertOpen();
-      keyBytes(prefix, true);
+      const bounds = scanBounds(prefix, options);
       // Batch replaces values rather than mutating them, so these references
       // describe a stable snapshot without copying the entire value payloads.
       const snapshot = [...values]
-        .filter(([key]) => key.startsWith(prefix))
-        .sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+        .filter(
+          ([key]) =>
+            key.startsWith(prefix) &&
+            (!bounds.after ||
+              Buffer.compare(Buffer.from(key), bounds.after) > 0),
+        )
+        .sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
+        .slice(0, bounds.limit);
       for (const [key, value] of snapshot) {
         assertOpen();
         yield { key, value: value.slice() };

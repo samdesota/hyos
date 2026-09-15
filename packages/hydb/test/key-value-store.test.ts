@@ -78,6 +78,20 @@ for (const backend of ["memory", "lmdb"] as const) {
         (await collect(store.scan("é"))).map((entry) => entry.key),
         ["é"],
       );
+      assert.deepEqual(
+        (await collect(store.scan("a/", { after: "a/1", limit: 1 }))).map(
+          (entry) => entry.key,
+        ),
+        ["a/2"],
+      );
+      assert.deepEqual(
+        await collect(store.scan("a/", { after: "z", limit: 1 })),
+        [],
+      );
+      await assert.rejects(
+        collect(store.scan("a/", { limit: 0 })),
+        /positive safe integer/,
+      );
       await store.batch([
         { type: "put", key: "ordered", value },
         { type: "delete", key: "ordered" },
