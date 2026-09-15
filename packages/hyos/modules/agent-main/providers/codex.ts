@@ -79,7 +79,7 @@ export function createCodexProvider(
         environmentPrompt(input.folder, input.modelId),
       );
       const { offered, byName } = agentToolbelt(input, search);
-      const inputItems: unknown[] = [userMessage(policy.prompt)];
+      const inputItems: unknown[] = [userMessage(policy.prompt, input.images)];
       let round = 0;
       while (true) {
         if (signal.aborted) throw new Error("Cancelled");

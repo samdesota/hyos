@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { z } from "zod";
 
+import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+
 import type {
   AgentActivity,
   AgentToolCategory,
@@ -227,10 +229,44 @@ export function createClaudeProvider(
       let queryPrompt = summary
         ? input.prompt
         : `${promptWithPatchContract(input.prompt)}\n\n${claudePatchToolInstruction}\n\n${claudeCompletionInstruction}`;
+      /**
+       * Composer images ride on the opening user message as native base64
+       * image blocks; the SDK prompt switches from a string to a one-message
+       * async iterable when they are present.
+       */
+      const withImages = (text: string): AsyncIterable<SDKUserMessage> => {
+        const images = input.images ?? [];
+        return (async function* () {
+          yield {
+            type: "user" as const,
+            message: {
+              role: "user" as const,
+              content: [
+                { type: "text" as const, text },
+                ...images.map((image) => ({
+                  type: "image" as const,
+                  source: {
+                    type: "base64" as const,
+                    // The media store only saves png/jpeg/gif/webp, so the
+                    // runtime value always satisfies the SDK's media-type
+                    // union; string survives the capability boundary.
+                    media_type: image.mimeType as "image/png",
+                    data: image.base64,
+                  },
+                })),
+              ],
+            },
+            parent_tool_use_id: null,
+          };
+        })();
+      };
       try {
         while (!completionConfirmed) {
           const stream = query({
-            prompt: queryPrompt,
+            prompt:
+              !summary && input.images && input.images.length > 0
+                ? withImages(queryPrompt)
+                : queryPrompt,
             options: {
               abortController,
               cwd: input.folder,

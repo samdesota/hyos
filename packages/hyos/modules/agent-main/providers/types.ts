@@ -9,8 +9,23 @@ import type {
 } from "../../../capabilities/agent.js";
 import type { BrowserClient } from "../../browser-client/types.js";
 
+/**
+ * One composer image attached to this turn, read from the media store by the
+ * host and delivered as base64 so each provider can build its native image
+ * part.
+ */
+export type AgentRunImage = Readonly<{
+  mimeType: string;
+  base64: string;
+}>;
+
 export type AgentRunInput = Readonly<{
   prompt: string;
+  /**
+   * Images attached to the current turn's user message, in composer order.
+   * Only the opening message carries them; provider follow-up rounds do not.
+   */
+  images?: readonly AgentRunImage[];
   /** The session the run belongs to, when the run is session-backed. */
   sessionId?: string;
   mode?: AgentMode;

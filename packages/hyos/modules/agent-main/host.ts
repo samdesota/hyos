@@ -528,6 +528,7 @@ export function createAgentHost(options: {
     prompt: string,
     firstTurn = false,
     intent?: "implement" | "investigate" | "summary",
+    images?: readonly StoredImage[],
   ): void => {
     const controller = new AbortController();
     const done = (async () => {
@@ -554,6 +555,17 @@ export function createAgentHost(options: {
         const result = await provider.run(
           {
             prompt: providerPrompt,
+            // Read the turn's attached image files so each provider can
+            // build its native image parts. A missing file drops that
+            // image rather than failing the turn.
+            images: await Promise.all(
+              (images ?? []).map(async (image) => ({
+                mimeType: image.mimeType,
+                base64: (await readFile(media.pathFor(image.file))).toString(
+                  "base64",
+                ),
+              })),
+            ),
             sessionId,
             mode: session.mode,
             intent,
@@ -757,7 +769,14 @@ export function createAgentHost(options: {
       prompt,
       turn.previousResponse,
     );
-    runTurn(turn.sessionId, turn.assistantMessageId, prompt, false, intent);
+    runTurn(
+      turn.sessionId,
+      turn.assistantMessageId,
+      prompt,
+      false,
+      intent,
+      images,
+    );
     return { type: "accepted" };
   };
 
@@ -887,6 +906,7 @@ export function createAgentHost(options: {
         command.prompt,
         true,
         command.intent,
+        images,
       );
       return { type: "session-started", sessionId: turn.sessionId };
     }

@@ -23,7 +23,16 @@ type ToolCall = {
 };
 
 type ChatMessage =
-  | { role: "system" | "user" | "tool"; content: string; tool_call_id?: string }
+  | {
+      role: "system" | "user" | "tool";
+      content:
+        | string
+        | readonly Readonly<
+            | { type: "text"; text: string }
+            | { type: "image_url"; image_url: { url: string } }
+          >[];
+      tool_call_id?: string;
+    }
   | {
       role: "assistant";
       content: string;
@@ -327,7 +336,23 @@ export function createGlmProvider(
           role: "system",
           content: policy.systemPrompt,
         },
-        { role: "user", content: policy.prompt },
+        {
+          role: "user",
+          // Composer images ride on the opening user message as native
+          // image_url parts (data URLs); text-only turns stay a plain string.
+          content:
+            input.images && input.images.length > 0
+              ? [
+                  { type: "text" as const, text: policy.prompt },
+                  ...input.images.map((image) => ({
+                    type: "image_url" as const,
+                    image_url: {
+                      url: `data:${image.mimeType};base64,${image.base64}`,
+                    },
+                  })),
+                ]
+              : policy.prompt,
+        },
       ];
       let round = 0;
       while (true) {

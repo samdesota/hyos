@@ -3,6 +3,7 @@ import type {
   AgentMessageStatus,
   AgentReasoningEffort,
 } from "../../../capabilities/agent.js";
+import type { AgentRunImage } from "./types.js";
 import type { OpenCodeTool } from "./opencode-tools.js";
 
 /** ChatGPT-subscription Responses API endpoint the codex CLI talks to. */
@@ -32,10 +33,10 @@ export type ResponsesInputItem =
   | Readonly<{
       type: "message";
       role: "user" | "assistant" | "system" | "developer";
-      content: readonly Readonly<{
-        type: "input_text" | "output_text";
-        text: string;
-      }>[];
+      content: readonly Readonly<
+        | { type: "input_text" | "output_text"; text: string }
+        | { type: "input_image"; image_url: string }
+      >[];
     }>
   | Readonly<{
       type: "function_call";
@@ -49,11 +50,20 @@ export type ResponsesInputItem =
       output: string;
     }>;
 
-export function userMessage(text: string): ResponsesInputItem {
+export function userMessage(
+  text: string,
+  images?: readonly AgentRunImage[],
+): ResponsesInputItem {
   return {
     type: "message",
     role: "user",
-    content: [{ type: "input_text", text }],
+    content: [
+      { type: "input_text", text },
+      ...(images ?? []).map((image) => ({
+        type: "input_image" as const,
+        image_url: `data:${image.mimeType};base64,${image.base64}`,
+      })),
+    ],
   };
 }
 
