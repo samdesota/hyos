@@ -12,9 +12,11 @@ import {
 import type { AgentSound } from "../agent-sound-renderer/types.js";
 import type { AgentSessionSummary } from "../../capabilities/agent.js";
 import type { AppState } from "./app-state.js";
+import type { WindowControlsClient } from "./client.js";
 import { globalTabDescriptors, globalTabLabel } from "./global-tabs.js";
 import { Modal } from "./Modal.js";
 import { ROUTE_PATHS } from "./session-route.js";
+import { WindowControls } from "./WindowControls.js";
 import {
   groupSessionsByFolder,
   orderedFolderGroups,
@@ -465,9 +467,11 @@ const SessionMeta: Component<{ session: AgentSessionSummary }> = (props) => (
 );
 
 /** App sidebar: brand, global tab strip, session list, finish-sound toggle. */
-export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
-  props,
-) => {
+export const Sidebar: Component<{
+  app: AppState;
+  sound: AgentSound;
+  windowControls: WindowControlsClient;
+}> = (props) => {
   const { sound } = props;
   const navigate = useNavigate();
   const location = useLocation();
@@ -762,6 +766,7 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
   return (
     <aside class="agent-sidebar">
       <div class="sidebar-head">
+        <WindowControls controls={props.windowControls} />
         <div class="brand">
           <strong>hyos</strong>
           <div class="brand-new-wrap">

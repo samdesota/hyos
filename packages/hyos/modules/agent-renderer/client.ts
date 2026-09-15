@@ -19,6 +19,7 @@ import {
   type KeybindingAccelerator,
   type KeybindingAction,
 } from "../../capabilities/keybinding.js";
+import { windowControlsCapability } from "../../capabilities/window-controls.js";
 import type {
   RemoteConsumer,
   RendererRemoteCapabilities,
@@ -65,6 +66,25 @@ export function createKeybindingClient(
       unsubscribe();
       listener = null;
     },
+  };
+}
+
+/** Renderer handle over the `window-controls` capability: shell window actions. */
+export interface WindowControlsClient {
+  minimize(): Promise<void>;
+  toggleMaximize(): Promise<void>;
+  close(): Promise<void>;
+}
+
+export function createWindowControlsClient(
+  remote: RendererRemoteCapabilities,
+): WindowControlsClient {
+  const controls: RemoteConsumer<typeof windowControlsCapability> =
+    remote.consume(windowControlsCapability);
+  return {
+    minimize: () => controls.call("minimize"),
+    toggleMaximize: () => controls.call("toggleMaximize"),
+    close: () => controls.call("close"),
   };
 }
 

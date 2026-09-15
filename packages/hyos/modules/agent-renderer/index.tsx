@@ -7,7 +7,11 @@ import type { BrowserClient } from "../browser-client/types.js";
 import type { BrowserViewModule } from "../browser-view/types.js";
 import type { WhiteboardViewModule } from "../whiteboard/renderer/types.js";
 import { AgentApp } from "./AgentApp.js";
-import { createAgentClient, createKeybindingClient } from "./client.js";
+import {
+  createAgentClient,
+  createKeybindingClient,
+  createWindowControlsClient,
+} from "./client.js";
 import { ROUTE_PATHS } from "./session-route.js";
 
 const { defineModule, registerModule } = globalThis.PrototypeModules;
@@ -37,10 +41,11 @@ registerModule(
       if (!mount) throw new Error("Missing Solid application mount");
       const client = createAgentClient(remote);
       const keybindingClient = createKeybindingClient(remote);
+      const windowControls = createWindowControlsClient(remote);
       const dispose = render(
         () => (
           // Hash-mode router shell. Routes mirror the AppRoute model
-          // (`/`, `/session/:id`, `/tabs/:id`); the URL is authoritative —
+          // (`/`, `/session/:id`, `/tabs/:id`, `/archive`); the URL is authoritative —
           // AgentApp derives its open view from the matched route.
           <HashRouter
             root={() => (
@@ -48,6 +53,7 @@ registerModule(
                 root={root}
                 client={client}
                 keybindingClient={keybindingClient}
+                windowControls={windowControls}
                 browserClient={browserClient}
                 BrowserView={BrowserView}
                 WhiteboardPage={WhiteboardPage}
@@ -58,6 +64,7 @@ registerModule(
             <Route path={ROUTE_PATHS.new} />
             <Route path={ROUTE_PATHS.session} />
             <Route path={ROUTE_PATHS.globalTabs} />
+            <Route path={ROUTE_PATHS.archive} />
             {/* Unrecognized hashes land here and read as `/`. */}
             <Route path="*" />
           </HashRouter>

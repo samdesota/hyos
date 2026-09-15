@@ -5,7 +5,11 @@ import type { AgentSound } from "../agent-sound-renderer/types.js";
 import type { BrowserClient } from "../browser-client/types.js";
 import type { BrowserViewModule } from "../browser-view/types.js";
 import type { WhiteboardViewModule } from "../whiteboard/renderer/types.js";
-import type { AgentClient, KeybindingClient } from "./client.js";
+import type {
+  AgentClient,
+  KeybindingClient,
+  WindowControlsClient,
+} from "./client.js";
 import { agentStyles } from "./styles.js";
 import { bootDebug } from "./perf-time.js";
 import { ArchivePage } from "./ArchivePage.js";
@@ -20,6 +24,7 @@ type AgentAppProps = Readonly<{
   root: Document;
   client: AgentClient;
   keybindingClient: KeybindingClient;
+  windowControls: WindowControlsClient;
   browserClient: BrowserClient;
   BrowserView: BrowserViewModule["BrowserView"];
   WhiteboardPage: WhiteboardViewModule["WhiteboardPage"];
@@ -107,7 +112,11 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
         <code id="main-state" hidden />
         <code id="renderer-state" hidden />
         <div class="window-drag-region" aria-hidden="true" />
-        <Sidebar app={app} sound={props.sound} />
+        <Sidebar
+          app={app}
+          sound={props.sound}
+          windowControls={props.windowControls}
+        />
 
         <main class="agent-main">
           <GlobalTabPage

@@ -35,7 +35,26 @@ export const agentStyles = String.raw`
     border-right: 1px solid #30312d;
     background: #20211e;
   }
-  .sidebar-head { padding: 0 16px 14px 80px; }
+  .sidebar-head { position: relative; padding: 0 16px 14px 80px; }
+  /* Arc-style window controls: collapsed dim dots expand into the macOS
+     traffic lights on hover or keyboard focus, replacing the native buttons
+     hidden by the main process. Sits where the native lights were
+     (left 16px, vertically centered at 28px). */
+  .win-controls {
+    position: absolute; left: 16px; top: 14px; height: 28px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .win-dot {
+    width: 5px; height: 5px; padding: 0; border: 0; border-radius: 50%;
+    background: #6b6d64; cursor: pointer;
+    transition: width .16s ease, height .16s ease, background .16s ease;
+  }
+  .win-controls:hover .win-dot, .win-controls:focus-within .win-dot {
+    width: 12px; height: 12px;
+  }
+  .win-controls:hover .win-dot-close, .win-controls:focus-within .win-dot-close { background: #ff5f57; }
+  .win-controls:hover .win-dot-minimize, .win-controls:focus-within .win-dot-minimize { background: #febc2e; }
+  .win-controls:hover .win-dot-maximize, .win-controls:focus-within .win-dot-maximize { background: #28c840; }
   .brand { display: flex; align-items: center; height: 28px; margin-top: 14px; margin-bottom: 6px; }
   .brand strong { font-size: 14px; letter-spacing: .02em; }
   .brand-new, .primary, .folder-button, .send, .cancel {
