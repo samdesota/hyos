@@ -438,10 +438,10 @@ export const agentStyles = String.raw`
   }
   .plan-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
   .plan-toggle {
-    display: inline-flex; align-items: baseline; gap: 5px; padding: 0; border: 0; background: none; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 7px; padding: 0; border: 0; background: none; cursor: pointer;
   }
-  .plan-caret { color: #6f7268; font-size: 9px; }
-  .plan-toggle:hover .plan-caret { color: #b9bbb1; }
+  .plan-caret { color: #6f7268; font-size: 18px; line-height: 1; }
+  .plan-toggle:hover .plan-caret { color: #d9ff62; }
   .plan-toggle strong { color: #95978e; font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
   .plan-head span { color: #6f7268; font-size: 10px; font-variant-numeric: tabular-nums; }
   .plan-show-all {
