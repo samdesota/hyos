@@ -8,6 +8,7 @@ import type { WhiteboardViewModule } from "../whiteboard/renderer/types.js";
 import type { AgentClient, KeybindingClient } from "./client.js";
 import { agentStyles } from "./styles.js";
 import { bootDebug } from "./perf-time.js";
+import { ArchivePage } from "./ArchivePage.js";
 import { createAppState } from "./app-state.js";
 import { GlobalTabPage } from "./GlobalTabPage.js";
 import { NewSessionPage } from "./NewSessionPage.js";
@@ -81,6 +82,10 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
   // can be focused — a stale or unknown id (a reload, a just-closed tab)
   // focuses nothing rather than inventing a selection.
   const tabsMatch = useMatch(() => ROUTE_PATHS.globalTabs);
+  // `/archive` shows the archive page beside the sidebar without touching
+  // the underlying session or tab selection — like the other non-session
+  // routes, it leaves the open view state alone.
+  const archiveMatch = useMatch(() => ROUTE_PATHS.archive);
   createEffect(() => {
     const route = routeFromParams("global-tabs", tabsMatch()?.params.id);
     if (route.kind === "global-tabs") {
@@ -111,19 +116,27 @@ export const AgentApp: Component<AgentAppProps> = (props) => {
             BrowserView={props.BrowserView}
             WhiteboardPage={props.WhiteboardPage}
           />
-          <Show
-            when={!focusedGlobalTab() && activeSession()}
-            fallback={<NewSessionPage app={app} />}
-          >
-            {(session) => (
-              <SessionPage
-                app={app}
-                client={props.client}
-                session={session}
-                root={props.root}
-                BrowserView={props.BrowserView}
-              />
-            )}
+          <Show when={archiveMatch()}>
+            <ArchivePage
+              onBack={() => navigate(-1)}
+              sessions={app.archivedSessions()}
+            />
+          </Show>
+          <Show when={!archiveMatch()}>
+            <Show
+              when={!focusedGlobalTab() && activeSession()}
+              fallback={<NewSessionPage app={app} />}
+            >
+              {(session) => (
+                <SessionPage
+                  app={app}
+                  client={props.client}
+                  session={session}
+                  root={props.root}
+                  BrowserView={props.BrowserView}
+                />
+              )}
+            </Show>
           </Show>
         </main>
       </div>

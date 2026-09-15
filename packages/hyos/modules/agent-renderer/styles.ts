@@ -244,6 +244,21 @@ export const agentStyles = String.raw`
   .archive-back:focus-visible { outline: 2px solid #b2cb8c; }
   .archive-title { margin: 0; font-size: 15px; font-weight: 600; color: #eceae5; }
   .archive-body { display: flex; flex-direction: column; min-height: 0; }
+  .archive-search {
+    flex: 1; max-width: 320px; height: 28px; margin-left: auto; padding: 0 10px;
+    border: 1px solid #3b3d37; border-radius: 8px;
+    color: #f2f0ea; background: #292a27; font-size: 12px; outline: none;
+  }
+  .archive-search:focus { border-color: #55584e; background: #30312d; }
+  .archive-search:focus-visible { outline: 2px solid #b2cb8c; outline-offset: -2px; }
+  .archive-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+  .archive-row {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 9px 10px; border-radius: 8px; font-size: 13px;
+  }
+  .archive-row:hover { background: #262723; }
+  .archive-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #f2f0ea; }
+  .archive-row-folder { flex: none; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #777a71; font-size: 11px; }
   .archive-empty { padding: 26px 0; color: #777a71; font-size: 12px; }
   .starter { padding: 18px; border: 1px solid #343630; border-radius: 16px; background: #20211e; }
   .prompt {
