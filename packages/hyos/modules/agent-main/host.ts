@@ -27,6 +27,7 @@ import type { AgentStore } from "./store.js";
 import type { MediaStore, StoredImage } from "./media-store.js";
 import { createCommentaryWriter } from "./commentary-writer.js";
 import { perfLog, perfNow } from "./perf-time.js";
+import { resolveWorktree } from "./worktree.js";
 import { parsePlanBlock } from "../../capabilities/plan.js";
 
 /**
@@ -829,6 +830,11 @@ export function createAgentHost(options: {
     }
     if (command.type === "start-session") {
       await assertFolder(command.folder);
+      // Worktree sessions run in ~/.hyos/worktrees/<repo-slug> (created or
+      // reused) while the origin folder stays the session's sidebar identity.
+      const sessionFolder = command.worktree
+        ? await resolveWorktree(command.folder)
+        : command.folder;
       const provider = providers.get(command.providerId);
       if (!provider)
         throw new Error(`Unknown agent provider: ${command.providerId}`);
@@ -856,6 +862,10 @@ export function createAgentHost(options: {
       const images = await media.saveImages(command.images ?? []);
       const turn = await store.createSession({
         ...command,
+        // The worktree path is the session's working folder (cwd for every
+        // provider tool); grouping it under the origin folder comes with the
+        // sidebar-grouping change.
+        folder: sessionFolder,
         images,
       });
       // Best-effort title generation: the session starts under the raw prompt

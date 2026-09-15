@@ -230,6 +230,12 @@ export type AgentCommand =
       mode?: AgentMode;
       intent?: "implement" | "investigate";
       /**
+       * Start the session in a git worktree under `~/.hyos/worktrees/<slug>`
+       * (created on demand, reused when it exists) instead of the origin
+       * folder itself.
+       */
+      worktree?: boolean;
+      /**
        * Composer image attachments as `data:<mime>;base64,…` URLs. The host
        * persists them as media files and references them by id; data URLs
        * never enter the database.
@@ -289,7 +295,7 @@ export type AgentCommandResult =
 
 export const agentCapability = defineRemoteCapability({
   id: "agent",
-  version: 13,
+  version: 14,
   methods: {
     execute: remoteMethod<
       readonly [command: AgentCommand],

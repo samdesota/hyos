@@ -1202,6 +1202,7 @@ export function createAppState({
         reasoningEffort: reasoningEffort(),
         mode: initialMode(),
         intent: "investigate",
+        worktree: worktreeDefault(),
         images: images.map((image) => image.dataUrl),
       });
       if (result.type === "session-started") {
