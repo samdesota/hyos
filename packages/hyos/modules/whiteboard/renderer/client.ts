@@ -18,6 +18,7 @@ export interface WhiteboardClient {
     boardId: string,
     cards: readonly WhiteboardBoardCard[],
   ): Promise<void>;
+  renameBoard(boardId: string, title: string): Promise<void>;
   saveBoardMedia(boardId: string, mediaId: string, data: string): Promise<void>;
 }
 
@@ -29,6 +30,8 @@ export function createWhiteboardClient(
   return {
     board: (boardId) => whiteboard.call("board", boardId),
     saveBoard: (boardId, cards) => whiteboard.call("saveBoard", boardId, cards),
+    renameBoard: (boardId, title) =>
+      whiteboard.call("renameBoard", boardId, title),
     saveBoardMedia: (boardId, mediaId, data) =>
       whiteboard.call("saveBoardMedia", boardId, mediaId, data),
   };
