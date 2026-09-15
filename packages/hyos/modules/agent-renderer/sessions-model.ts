@@ -217,6 +217,34 @@ export function groupSessionsByFolder(
 }
 
 /**
+ * Order folder groups by the saved manual folder order: saved folders keep
+ * their order, unsaved (new) folders keep their group order at the end.
+ */
+export function orderedFolderGroups(
+  groups: readonly SessionFolderGroup[],
+  savedOrder: readonly string[] | null,
+): readonly SessionFolderGroup[] {
+  if (!savedOrder || savedOrder.length === 0) return groups;
+  const byFolder = new Map(groups.map((group) => [group.folder, group]));
+  const ordered: SessionFolderGroup[] = [];
+  const seen = new Set<string>();
+  for (const folder of savedOrder) {
+    const group = byFolder.get(folder);
+    if (group && !seen.has(folder)) {
+      seen.add(folder);
+      ordered.push(group);
+    }
+  }
+  for (const group of groups) {
+    if (!seen.has(group.folder)) {
+      seen.add(group.folder);
+      ordered.push(group);
+    }
+  }
+  return ordered;
+}
+
+/**
  * Move a dragged session within its folder group without breaking folder
  * contiguity: returns the full new active-session id order (ready for the
  * host's reorder-sessions command), or null when the drop is a no-op — same

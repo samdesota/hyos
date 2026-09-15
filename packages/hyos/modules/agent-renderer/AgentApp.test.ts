@@ -12,6 +12,7 @@ import {
   implementNextPrompt,
   loadFolderOrder,
   nextPlanTask,
+  orderedFolderGroups,
   orderedFolders,
   partitionSessions,
   planPanelIndex,
@@ -197,6 +198,46 @@ test("orderedFolders respects the saved order and appends new folders", () => {
   assert.deepEqual(orderedFolders(recent, ["/tmp/alpha", "/tmp/alpha"]), [
     "/tmp/alpha",
     "/tmp/beta",
+    "/tmp/gamma",
+  ]);
+});
+
+test("orderedFolderGroups orders groups by the saved folder order", () => {
+  const sessions = [
+    { ...sessionSummary("a", null), folder: "/tmp/alpha" },
+    { ...sessionSummary("b", null), folder: "/tmp/beta" },
+    { ...sessionSummary("c", null), folder: "/tmp/gamma" },
+  ];
+  const groups = groupSessionsByFolder(sessions);
+  const folders = (gs: typeof groups) => gs.map((g) => g.folder);
+
+  // No saved order keeps the group order as-is.
+  assert.deepEqual(folders(orderedFolderGroups(groups, null)), [
+    "/tmp/alpha",
+    "/tmp/beta",
+    "/tmp/gamma",
+  ]);
+  assert.deepEqual(folders(orderedFolderGroups(groups, [])), [
+    "/tmp/alpha",
+    "/tmp/beta",
+    "/tmp/gamma",
+  ]);
+  // Saved order wins; unsaved groups append in group order.
+  assert.deepEqual(folders(orderedFolderGroups(groups, ["/tmp/gamma", "/tmp/alpha"])), [
+    "/tmp/gamma",
+    "/tmp/alpha",
+    "/tmp/beta",
+  ]);
+  // Saved entries that no longer exist are dropped, without duplicating.
+  assert.deepEqual(folders(orderedFolderGroups(groups, ["/tmp/beta", "/tmp/gone"])), [
+    "/tmp/beta",
+    "/tmp/alpha",
+    "/tmp/gamma",
+  ]);
+  // A single saved entry moves that group to the front.
+  assert.deepEqual(folders(orderedFolderGroups(groups, ["/tmp/beta"])), [
+    "/tmp/beta",
+    "/tmp/alpha",
     "/tmp/gamma",
   ]);
 });

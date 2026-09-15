@@ -13,10 +13,15 @@ import type { AgentSessionSummary } from "../../capabilities/agent.js";
 import type { AppState } from "./app-state.js";
 import { globalTabDescriptors, globalTabLabel } from "./global-tabs.js";
 import { Modal } from "./Modal.js";
-import { groupSessionsByFolder } from "./sessions-model.js";
+import {
+  groupSessionsByFolder,
+  orderedFolderGroups,
+} from "./sessions-model.js";
 
 const SessionFolderList: Component<{
   sessions: readonly AgentSessionSummary[];
+  /** Persisted manual folder order; folders absent from it keep group order. */
+  savedFolderOrder?: readonly string[] | null;
   children: (session: () => AgentSessionSummary) => JSX.Element;
 }> = (props) => {
   // Key-stable rendering: folder sections are keyed by folder string and
@@ -30,7 +35,12 @@ const SessionFolderList: Component<{
     () =>
       new Map(props.sessions.map((session) => [session.id, session] as const)),
   );
-  const groups = createMemo(() => groupSessionsByFolder(props.sessions));
+  const groups = createMemo(() =>
+    orderedFolderGroups(
+      groupSessionsByFolder(props.sessions),
+      props.savedFolderOrder ?? null,
+    ),
+  );
   return (
     <For each={groups().map(({ folder }) => folder)}>
       {(folder) => (
@@ -603,7 +613,10 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
       </Show>
       <div class="session-label">Sessions</div>
       <div class="session-list" id="agent-session-list">
-        <SessionFolderList sessions={effectiveSessions()}>
+        <SessionFolderList
+          sessions={effectiveSessions()}
+          savedFolderOrder={props.app.folderOrder()}
+        >
           {(session) => (
             <Show when={session()}>
               {(s) => (
@@ -663,7 +676,10 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
             <i class="archived-chevron">{archivedOpen() ? "▾" : "▸"}</i>
           </button>
           <Show when={archivedOpen()}>
-            <SessionFolderList sessions={archivedSessions()}>
+            <SessionFolderList
+              sessions={archivedSessions()}
+              savedFolderOrder={props.app.folderOrder()}
+            >
               {(session) => (
                 <Show when={session()}>
                   {(s) => (
