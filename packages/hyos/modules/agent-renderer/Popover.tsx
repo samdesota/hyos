@@ -9,10 +9,12 @@ import {
 import { Portal } from "solid-js/web";
 
 import { bindOverlayLifecycle } from "./overlay-lifecycle.js";
-
-const viewportMargin = 8;
-
-type PanelPosition = { left: number; top: number };
+import {
+  computePanelPosition,
+  isDismissKey,
+  isOutsideOverlay,
+  type PanelPosition,
+} from "./popover-layout.js";
 
 /**
  * Shared floating-panel primitive next to Modal: a portal-mounted panel
@@ -40,7 +42,10 @@ export const Popover: Component<{
     () => !!props.overBrowser,
   );
 
-  const [position, setPosition] = createSignal<PanelPosition | null>(null);
+  const [position, setPosition] = createSignal<{
+    left: number;
+    top: number;
+  } | null>(null);
   let panel: HTMLDivElement | undefined;
 
   // Position (and re-position, e.g. when content size changes) relative to
@@ -50,22 +55,11 @@ export const Popover: Component<{
     if (!props.anchor || !panel) return;
     const anchorRect = props.anchor.getBoundingClientRect();
     const panelRect = panel.getBoundingClientRect();
-    const viewportWidth = document.documentElement.clientWidth;
-    const viewportHeight = document.documentElement.clientHeight;
-    let left = anchorRect.left;
-    let top = anchorRect.bottom + viewportMargin;
-    if (top + panelRect.height > viewportHeight - viewportMargin) {
-      top = anchorRect.top - panelRect.height - viewportMargin;
-    }
-    top = Math.max(
-      viewportMargin,
-      Math.min(top, viewportHeight - viewportMargin - panelRect.height),
-    );
-    left = Math.max(
-      viewportMargin,
-      Math.min(left, viewportWidth - viewportMargin - panelRect.width),
-    );
-    setPosition({ left: Math.round(left), top: Math.round(top) });
+    const { left, top } = computePanelPosition(anchorRect, panelRect, {
+      width: document.documentElement.clientWidth,
+      height: document.documentElement.clientHeight,
+    });
+    setPosition({ left, top });
   };
 
   createEffect(() => {
@@ -85,18 +79,11 @@ export const Popover: Component<{
   createEffect(() => {
     if (!props.open) return;
     const onPointerDown = (event: PointerEvent): void => {
-      const target = event.target;
-      if (
-        !(target instanceof Node) ||
-        panel?.contains(target) ||
-        props.anchor?.contains(target)
-      ) {
-        return;
-      }
+      if (!isOutsideOverlay(event.target, panel, props.anchor)) return;
       props.onClose();
     };
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") props.onClose();
+      if (isDismissKey(event.key)) props.onClose();
     };
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("keydown", onKeyDown);
