@@ -11,7 +11,7 @@ import {
   integer,
   storageMutation,
 } from "../src/index.js";
-import { openNodeStorage } from "../src/node/index.js";
+import { ddl, defineMigration, openNodeStorage } from "../src/node/index.js";
 
 const oldRows = hydb.table("rows", {
   id: id().primaryKey(),
@@ -36,9 +36,15 @@ for (const intermediate of [false, true]) {
       promptTokens: integer(),
     });
     const latest = hydb.schema({ rows: latestRows });
-    const nullableColumnMigrations = [
-      { rows: ["archivedAt"] },
-      { rows: ["promptTokens"] },
+    const columnMigrations = [
+      defineMigration({
+        id: "0001-archived-at",
+        steps: [ddl.addColumn("rows", "archivedAt", timestamp())],
+      }),
+      defineMigration({
+        id: "0002-prompt-tokens",
+        steps: [ddl.addColumn("rows", "promptTokens", integer())],
+      }),
     ];
     const archivedAt = new Date("2026-09-01T00:00:00Z");
     try {
@@ -65,7 +71,7 @@ for (const intermediate of [false, true]) {
       storage = await openNodeStorage({
         directory,
         schema: latest,
-        nullableColumnMigrations,
+        migrations: columnMigrations,
       });
       for (const branch of ["main", "work"]) {
         const snapshot = await storage.snapshot({ branch });
@@ -88,7 +94,7 @@ for (const intermediate of [false, true]) {
       storage = await openNodeStorage({
         directory,
         schema: latest,
-        nullableColumnMigrations,
+        migrations: columnMigrations,
       });
       assert.equal(await storage.head(), migrated);
       await storage.close();
@@ -282,3 +288,82 @@ test("ordered table migrations resume from an intermediate schema", async () => 
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+for (const afterTables of [false, true]) {
+  test(`nullable migration after added tables upgrades ${afterTables ? "post-table" : "original"} schema`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "hydb-post-table-column-"));
+    const original = hydb.table("chain_sessions", {
+      id: id().primaryKey(),
+      title: text().notNull(),
+    });
+    const withEarlierColumn = hydb.table("chain_sessions", {
+      id: id().primaryKey(),
+      title: text().notNull(),
+      archivedAt: timestamp(),
+    });
+    const latestSessions = hydb.table("chain_sessions", {
+      id: id().primaryKey(),
+      title: text().notNull(),
+      archivedAt: timestamp(),
+      seenStatusDetail: text(),
+    });
+    const tabs = hydb.table("chain_tabs", { id: id().primaryKey() });
+    const latest = hydb.schema({ sessions: latestSessions, tabs });
+    const migrations = [
+      defineMigration({
+        id: "0001-archived-at",
+        steps: [ddl.addColumn("chain_sessions", "archivedAt", timestamp())],
+      }),
+      defineMigration({
+        id: "0002-chain-tabs",
+        steps: [ddl.addTable(tabs)],
+      }),
+      defineMigration({
+        id: "0003-seen-status-detail",
+        steps: [ddl.addColumn("chain_sessions", "seenStatusDetail", text())],
+      }),
+    ];
+    const archivedAt = new Date("2026-09-01T00:00:00Z");
+    try {
+      let storage = await openNodeStorage({
+        directory,
+        schema: afterTables
+          ? hydb.schema({ sessions: withEarlierColumn, tabs })
+          : hydb.schema({ sessions: original }),
+      });
+      const head = await storage.head();
+      await storage.commit({
+        branch: "main",
+        expectedHead: head,
+        mutations: [
+          afterTables
+            ? storageMutation.insert(withEarlierColumn, {
+                id: "saved",
+                title: "Keep",
+                archivedAt,
+              })
+            : storageMutation.insert(original, { id: "saved", title: "Keep" }),
+        ],
+      });
+      await storage.close();
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        storage = await openNodeStorage({
+          directory,
+          schema: latest,
+          migrations,
+        });
+        const snapshot = await storage.snapshot();
+        assert.deepEqual(await snapshot.get(latestSessions, ["saved"]), {
+          id: "saved",
+          title: "Keep",
+          archivedAt: afterTables ? archivedAt : null,
+          seenStatusDetail: null,
+        });
+        await snapshot.close();
+        await storage.close();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
