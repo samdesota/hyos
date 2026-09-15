@@ -38,7 +38,7 @@ export const agentStyles = String.raw`
   /* The brand text hugs the collapsed dot cluster and shifts right as the
      dots expand toward the native lights' slot (ends at x≈79). */
   .sidebar-head {
-    position: relative; padding: 0 16px 14px 58px;
+    position: relative; padding: 0 16px 14px 56px;
     transition: padding-left .16s ease;
   }
   .sidebar-head:has(.win-controls:hover),
@@ -46,9 +46,10 @@ export const agentStyles = String.raw`
   /* Arc-style window controls: collapsed dim dots expand into the macOS
      traffic lights on hover or keyboard focus, replacing the native buttons
      hidden by the main process. Geometry measured from the native lights
-     (macOS Tahoe): expanded centers at x 27/50/73, vertical center 29. */
+     (macOS Tahoe), nudged 2px left so the expanded dots land exactly on
+     the revealed native buttons: expanded centers at x 25/48/71. */
   .win-controls {
-    position: absolute; left: 21px; top: 15px; height: 28px;
+    position: absolute; left: 19px; top: 15px; height: 28px;
     display: flex; align-items: center; gap: 5px;
     transition: gap .16s ease;
   }
