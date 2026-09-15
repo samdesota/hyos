@@ -441,6 +441,36 @@ export function folderName(folder: string): string {
   return index === -1 ? trimmed : trimmed.slice(index + 1);
 }
 
+/** The parent path of a folder path, or "" when there is no parent. */
+export function folderPathPrefix(folder: string): string {
+  const trimmed = folder.replace(/\/+$/, "");
+  const index = trimmed.lastIndexOf("/");
+  return index === -1 ? "" : trimmed.slice(0, index);
+}
+
+/**
+ * Names that appear more than once in a list of folder paths, so their
+ * entries need a path prefix to stay distinguishable.
+ */
+export function duplicateFolderNames(folders: readonly string[]): Set<string> {
+  const counts = new Map<string, number>();
+  for (const folder of folders) {
+    const name = folderName(folder);
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  const duplicates = new Set<string>();
+  for (const [name, count] of counts) {
+    if (count > 1) duplicates.add(name);
+  }
+  return duplicates;
+}
+
+/** Shorten a path from the left, keeping its distinguishing tail. */
+export function truncatePathStart(path: string, max = 34): string {
+  if (path.length <= max) return path;
+  return "…" + path.slice(path.length - (max - 1));
+}
+
 const sameDate = (a: Date | null, b: Date | null): boolean =>
   a === b || (a !== null && b !== null && a.getTime() === b.getTime());
 

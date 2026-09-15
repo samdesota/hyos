@@ -7,7 +7,9 @@ import type {
 } from "../../capabilities/agent.js";
 import {
   collapseWorkRuns,
+  duplicateFolderNames,
   folderName,
+  folderPathPrefix,
   groupSessionsByFolder,
   implementNextPrompt,
   nextPlanTask,
@@ -17,6 +19,7 @@ import {
   planPanelIndex,
   recentFolders,
   timelineEntries,
+  truncatePathStart,
   workPaneLabel,
 } from "./sessions-model.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
@@ -243,6 +246,37 @@ test("folderName extracts the basename of a folder path", () => {
   assert.equal(folderName("/Users/sam/projects/hyos"), "hyos");
   assert.equal(folderName("/Users/sam/projects/hyos/"), "hyos");
   assert.equal(folderName("hyos"), "hyos");
+});
+
+test("folderPathPrefix returns the parent path of a folder", () => {
+  assert.equal(
+    folderPathPrefix("/Users/sam/projects/hyos"),
+    "/Users/sam/projects",
+  );
+  assert.equal(
+    folderPathPrefix("/Users/sam/projects/hyos/"),
+    "/Users/sam/projects",
+  );
+  assert.equal(folderPathPrefix("hyos"), "");
+});
+
+test("duplicateFolderNames finds names used by multiple folder paths", () => {
+  const duplicates = duplicateFolderNames([
+    "/Users/sam/work/hyos",
+    "/Users/sam/Documents/ChatGPT/hyos",
+    "/tmp/other",
+  ]);
+  assert.deepEqual([...duplicates], ["hyos"]);
+  assert.deepEqual([...duplicateFolderNames(["/tmp/a", "/tmp/b"])], []);
+});
+
+test("truncatePathStart keeps the path tail and marks the cut", () => {
+  const path = "/Users/sam/Documents/ChatGPT/projects/nested/very-long-folder";
+  const truncated = truncatePathStart(path, 20);
+  assert.equal(truncated.length, 20);
+  assert.ok(truncated.startsWith("…"));
+  assert.ok(path.endsWith(truncated.slice(1)));
+  assert.equal(truncatePathStart("/short/path", 20), "/short/path");
 });
 
 test("terminal assistant failures remain visible without response text", () => {

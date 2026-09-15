@@ -1,7 +1,12 @@
-import { For, Show, onCleanup, type Component } from "solid-js";
+import { For, Show, createMemo, onCleanup, type Component } from "solid-js";
 
 import { supportsIncremental } from "./mode-selection.js";
-import { folderName } from "./sessions-model.js";
+import {
+  duplicateFolderNames,
+  folderName,
+  folderPathPrefix,
+  truncatePathStart,
+} from "./sessions-model.js";
 import type { AppState } from "./app-state.js";
 
 export type NewSessionPageProps = Readonly<{
@@ -32,6 +37,11 @@ export const NewSessionPage: Component<NewSessionPageProps> = (props) => {
       app.setFolderMenuOpen(false);
     }
   };
+
+  // Recent folders sharing a name need their path shown to stay distinguishable.
+  const duplicateNames = createMemo(() =>
+    duplicateFolderNames(app.recentFoldersList()),
+  );
   document.addEventListener("pointerdown", closeMenusOnPointerDown);
   document.addEventListener("keydown", closeMenusOnKeyDown);
   onCleanup(() => {
@@ -107,7 +117,14 @@ export const NewSessionPage: Component<NewSessionPageProps> = (props) => {
                               app.setFolderMenuOpen(false);
                             }}
                           >
-                            {folderName(recent)}
+                            <Show
+                              when={duplicateNames().has(folderName(recent))}
+                            >
+                              <span class="folder-menu-item-path">
+                                {truncatePathStart(folderPathPrefix(recent))}/
+                              </span>
+                            </Show>
+                            <span>{folderName(recent)}</span>
                           </button>
                         )}
                       </For>

@@ -351,12 +351,16 @@ export const agentStyles = String.raw`
   .folder-menu-list { max-height: 260px; overflow-y: auto; padding: 7px; }
   .folder-menu-empty { padding: 10px 13px 12px; color: #777a71; font-size: 11px; }
   .folder-menu-item {
-    display: block; width: 100%; min-height: 32px; padding: 6px 8px; border: 0; border-radius: 7px;
-    color: #c9c8c2; background: transparent; cursor: pointer; text-align: left; font-size: 12px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    display: flex; align-items: baseline; gap: 5px; width: 100%; min-height: 32px; padding: 6px 8px;
+    border: 0; border-radius: 7px; color: #c9c8c2; background: transparent; cursor: pointer;
+    text-align: left; font-size: 12px; overflow: hidden; white-space: nowrap;
   }
   .folder-menu-item:hover { background: #30322d; }
   .folder-menu-item.selected { color: #eff0e8; background: #36382f; }
+  .folder-menu-item-path {
+    overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0;
+    color: #777a71; font-size: 11px;
+  }
   .model-picker { position: relative; }
   .model-picker-trigger {
     display: flex; align-items: center; gap: 4px; max-width: 220px; padding: 0 8px 0 10px;
