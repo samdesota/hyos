@@ -562,16 +562,13 @@ export const agentStyles = String.raw`
   }
   .side-tab-add:hover { color: #eceae5; background: #292b26; }
   .cdp-inspect { position: relative; flex: none; }
-  .side-add-option {
-    display: block; width: 100%; padding: 6px 8px; text-align: left; border: 0;
-    border-radius: 7px; color: #c9c8c1; background: transparent; cursor: pointer; font-size: 11px;
+  .menu-item {
+    display: block; width: 100%; padding: 7px 10px; text-align: left; border: 0;
+    border-radius: 7px; color: #c9c8c1; background: transparent; cursor: pointer; font-size: 12px;
   }
-  .side-add-option:hover { color: #eceae5; background: #2e3029; }
+  .menu-item:hover { color: #eceae5; background: #34362f; }
   .cdp-inspect-popover {
-    position: absolute; z-index: 30; top: 34px; left: 0; width: 300px;
-    display: flex; flex-direction: column; gap: 8px; padding: 10px;
-    border: 1px solid #3a3c35; border-radius: 10px; background: #23241f;
-    box-shadow: 0 10px 26px #00000066;
+    display: flex; flex-direction: column; gap: 8px;
   }
   .cdp-inspect-row { display: flex; gap: 6px; }
   .cdp-inspect-endpoint {

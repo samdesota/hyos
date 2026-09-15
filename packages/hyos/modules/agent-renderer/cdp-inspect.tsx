@@ -1,16 +1,9 @@
-import {
-  For,
-  Show,
-  createEffect,
-  createSignal,
-  onCleanup,
-  type Component,
-} from "solid-js";
+import { For, Show, createSignal, type Component, type JSX } from "solid-js";
 
 import type { CdpTarget } from "../../capabilities/browser.js";
 import { defaultCdpEndpoint } from "../../capabilities/browser.js";
-import { setModalOverlayActive } from "../browser-view/modal-overlay.js";
 import type { AppState } from "./app-state.js";
+import { Popover } from "./Popover.js";
 
 const defaultEndpointText = `${defaultCdpEndpoint.host}:${defaultCdpEndpoint.port}`;
 
@@ -18,19 +11,16 @@ const defaultEndpointText = `${defaultCdpEndpoint.host}:${defaultCdpEndpoint.por
  * The side strip's single add affordance: a "+" button that opens a small
  * dropdown offering "Browser tab" and "Dev tools". "Browser tab" opens a
  * browser tab directly; "Dev tools" switches the dropdown to the CDP inspect
- * flow (endpoint + target discovery) in the same popover. All transport goes
- * through the injected app state; this component owns only its local menu
- * state (open flag, stage, endpoint draft, discovered targets, error).
+ * flow (endpoint + target discovery) in the same panel. Both stages render
+ * through the shared Popover primitive (click-outside, Escape, overlay
+ * lifecycle, viewport clamping); all transport goes through the injected
+ * app state, and this component owns only its local menu state (open flag,
+ * stage, endpoint draft, discovered targets, error).
  */
 export const SideAddMenu: Component<{ app: AppState }> = (props) => {
   const [open, setOpen] = createSignal(false);
   const [stage, setStage] = createSignal<"menu" | "cdp">("menu");
-
-  // While the dropdown is open the UI view must composite above any embedded
-  // browser view behind it, so raise the modal overlay (and drop it on close
-  // or unmount) — the same contract Modal.tsx uses for overBrowser modals.
-  createEffect(() => setModalOverlayActive(open()));
-  onCleanup(() => setModalOverlayActive(false));
+  let addButton: HTMLButtonElement | undefined;
 
   const close = (): void => {
     setOpen(false);
@@ -40,50 +30,58 @@ export const SideAddMenu: Component<{ app: AppState }> = (props) => {
   return (
     <div class="cdp-inspect">
       <button
+        ref={addButton}
         type="button"
         class="side-tab-add"
         aria-label="Add tab"
         title="Add tab"
         aria-expanded={open()}
+        aria-haspopup="menu"
         onClick={() => setOpen((current) => !current)}
       >
         +
       </button>
-      <Show when={open()} fallback={null}>
-        <Show
-          when={stage() === "cdp"}
-          fallback={
-            <div
-              class="cdp-inspect-popover side-add-menu"
-              role="menu"
-              aria-label="Add tab"
-              data-browser-overlay
-            >
-              <button
-                type="button"
-                class="side-add-option"
-                role="menuitem"
-                onClick={() => {
-                  close();
-                  void props.app.openBrowserSideTab();
-                }}
-              >
-                Browser tab
-              </button>
-              <button
-                type="button"
-                class="side-add-option"
-                role="menuitem"
-                onClick={() => setStage("cdp")}
-              >
-                Dev tools
-              </button>
-            </div>
-          }
-        >
-          <CdpInspectPanel app={props.app} onClose={close} />
-        </Show>
-      </Show>
+      <Popover
+        open={open() && stage() === "menu"}
+        onClose={close}
+        anchor={addButton}
+        label="Add tab"
+        class="side-add-menu"
+        overBrowser
+      >
+        <div role="menu" aria-label="Add tab">
+          <button
+            type="button"
+            class="menu-item"
+            role="menuitem"
+            onClick={() => {
+              close();
+              void props.app.openBrowserSideTab();
+            }}
+          >
+            Browser tab
+          </button>
+          <button
+            type="button"
+            class="menu-item"
+            role="menuitem"
+            onClick={() => setStage("cdp")}
+          >
+            Dev tools
+          </button>
+        </div>
+      </Popover>
+      <Popover
+        open={open() && stage() === "cdp"}
+        onClose={close}
+        anchor={addButton}
+        label="Inspect CDP endpoint"
+        class="cdp-inspect-popover"
+        width={300}
+        overBrowser
+      >
+        <CdpInspectPanel app={props.app} onClose={close} />
+      </Popover>
     </div>
   );
 };
@@ -121,12 +119,7 @@ const CdpInspectPanel: Component<{
   };
 
   return (
-    <div
-      class="cdp-inspect-popover"
-      role="dialog"
-      aria-label="Inspect CDP endpoint"
-      data-browser-overlay
-    >
+    <>
       <div class="cdp-inspect-row">
         <input
           class="cdp-inspect-endpoint"
@@ -183,6 +176,6 @@ const CdpInspectPanel: Component<{
           </For>
         </div>
       </Show>
-    </div>
+    </>
   );
 };
