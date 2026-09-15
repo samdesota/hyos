@@ -555,6 +555,35 @@ export const agentStyles = String.raw`
     cursor: pointer; font-size: 14px; line-height: 1;
   }
   .side-tab-add:hover { color: #eceae5; background: #292b26; }
+  .cdp-inspect { position: relative; flex: none; }
+  .cdp-inspect-popover {
+    position: absolute; z-index: 30; top: 34px; left: 0; width: 300px;
+    display: flex; flex-direction: column; gap: 8px; padding: 10px;
+    border: 1px solid #3a3c35; border-radius: 10px; background: #23241f;
+    box-shadow: 0 10px 26px #00000066;
+  }
+  .cdp-inspect-row { display: flex; gap: 6px; }
+  .cdp-inspect-endpoint {
+    flex: 1; min-width: 0; height: 26px; padding: 0 8px;
+    border: 1px solid #3a3c35; border-radius: 7px; outline: 0;
+    color: #eceae5; background: #1d1e1b; font-size: 11px;
+  }
+  .cdp-inspect-endpoint:focus { border-color: #55584e; }
+  .cdp-inspect-go {
+    padding: 0 10px; border: 0; border-radius: 7px;
+    color: #171816; background: #d9ff62; cursor: pointer; font-size: 11px; font-weight: 700;
+  }
+  .cdp-inspect-go:hover { background: #e5ff91; }
+  .cdp-inspect-error { color: #ff8f83; font-size: 11px; white-space: pre-wrap; }
+  .cdp-inspect-empty { color: #72746c; font-size: 11px; }
+  .cdp-inspect-targets { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto; }
+  .cdp-inspect-target {
+    display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; text-align: left;
+    border: 0; border-radius: 7px; color: #c9c8c1; background: transparent; cursor: pointer; font-size: 11px;
+  }
+  .cdp-inspect-target:hover { color: #eceae5; background: #2e3029; }
+  .cdp-inspect-target-type { flex: none; color: #8e9087; font-size: 10px; text-transform: uppercase; }
+  .cdp-inspect-target-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .side-collapse {
     margin-left: auto; display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
     border: 0; border-radius: 7px; color: #8e9087; background: transparent;

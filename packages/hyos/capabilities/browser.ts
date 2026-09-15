@@ -60,6 +60,33 @@ export type CdpTarget = Readonly<{
   webSocketDebuggerUrl: string | null;
 }>;
 
+/** The CDP endpoint inspect affordances default to: HyOS-style debug port. */
+export const defaultCdpEndpoint: CdpEndpoint = {
+  host: "localhost",
+  port: 9333,
+};
+
+/**
+ * Parse a user- or agent-supplied endpoint reference — `host:port`, bare
+ * `:port`, or an `http(s)://host:port` origin — into a CDP endpoint. Null
+ * when the text names no usable host/port.
+ */
+export function parseCdpEndpoint(text: string): CdpEndpoint | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const withScheme = /^[a-z]+:\/\//i.test(trimmed)
+    ? trimmed
+    : `http://${trimmed}`;
+  try {
+    const url = new URL(withScheme);
+    const port = Number(url.port);
+    if (!url.hostname || !Number.isInteger(port) || port <= 0) return null;
+    return { host: url.hostname, port };
+  } catch {
+    return null;
+  }
+}
+
 /** A request to open one discovered target's devtools frontend as a tab. */
 export type CdpTargetRequest = Readonly<{
   endpoint: CdpEndpoint;

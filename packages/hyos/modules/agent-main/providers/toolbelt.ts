@@ -2,6 +2,10 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 
 import type { AgentActivity } from "../../../capabilities/agent.js";
+import {
+  defaultCdpEndpoint,
+  parseCdpEndpoint,
+} from "../../../capabilities/browser.js";
 import { contentDiff, createPatchActivity } from "./patches.js";
 import {
   openCodeTool,
@@ -43,6 +47,13 @@ export function toolActivity(toolName: string, detail: string): AgentActivity {
       type: "tool",
       category: "command",
       label: "Opened browser tab",
+      detail,
+    };
+  if (toolName === "browser_inspect_cdp")
+    return {
+      type: "tool",
+      category: "command",
+      label: "Inspected CDP endpoint",
       detail,
     };
   const tool = openCodeTool(toolName);
@@ -140,6 +151,75 @@ function browserOpenTabTool(input: AgentRunInput): OpenCodeTool | null {
   };
 }
 
+function browserInspectCdpTool(input: AgentRunInput): OpenCodeTool | null {
+  if (!input.browserClient) return null;
+  return {
+    name: "browser_inspect_cdp",
+    description:
+      "Inspect a Chrome DevTools Protocol endpoint (default localhost:9333) to list its debug targets, or open one target's DevTools frontend as a side pane tab. Pass targetId to open; omit it to list.",
+    category: "command",
+    parameters: {
+      type: "object",
+      properties: {
+        endpoint: {
+          type: "string",
+          description:
+            "CDP endpoint as host:port or http://host:port (default localhost:9333)",
+        },
+        targetId: {
+          type: "string",
+          description:
+            "Target id to open its DevTools frontend for; omit to only list targets",
+        },
+      },
+      additionalProperties: false,
+    },
+    async execute(_folder, args) {
+      const endpointText =
+        typeof args.endpoint === "string" ? args.endpoint : "";
+      const endpoint = endpointText
+        ? parseCdpEndpoint(endpointText)
+        : defaultCdpEndpoint;
+      if (!endpoint) throw new Error(`Invalid CDP endpoint: ${endpointText}`);
+      const client = input.browserClient!;
+      if (typeof args.targetId === "string" && args.targetId) {
+        const opened = await client.openCdpTarget({
+          endpoint,
+          targetId: args.targetId,
+        });
+        const frontend = opened.target.devtoolsFrontendUrl ?? "";
+        if (input.appendSessionTab && frontend) {
+          try {
+            await input.appendSessionTab({
+              kind: "browser",
+              tabId: opened.tabId,
+              url: frontend,
+            });
+          } catch {
+            // Ignore — the strip converges on the next write.
+          }
+        }
+        return {
+          output: `Opened DevTools for "${opened.target.title || opened.target.id}" (${opened.target.url}) as tab ${opened.tabId}`,
+        };
+      }
+      const targets = await client.inspectCdp(endpoint);
+      if (targets.length === 0)
+        return {
+          output: `No debug targets on ${endpoint.host}:${endpoint.port}`,
+        };
+      const lines = targets.map(
+        (target) =>
+          `${target.id} [${target.type}] ${target.title || "(untitled)"} — ${target.url}`,
+      );
+      return {
+        output:
+          `Targets on ${endpoint.host}:${endpoint.port}:\n` + lines.join("\n"),
+      };
+    },
+  };
+}
+
 /**
  * The tools a model may call in a run: the OpenCode toolset, parallel web
  * search, and — when the host can serve transcripts — the session transcript
@@ -166,7 +246,8 @@ export function agentToolbelt(
     ? sessionTranscriptTool(input)
     : null;
   const browserTool = browserOpenTabTool(input);
-  const extraTools = [transcriptTool, browserTool].filter(
+  const cdpTool = browserInspectCdpTool(input);
+  const extraTools = [transcriptTool, browserTool, cdpTool].filter(
     (tool): tool is OpenCodeTool => tool !== null,
   );
   return {

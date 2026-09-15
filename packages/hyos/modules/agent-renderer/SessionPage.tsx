@@ -21,6 +21,7 @@ import { stripPlanBlocks } from "../../capabilities/plan.js";
 import type { AgentClient } from "./client.js";
 import type { BrowserViewModule } from "../browser-view/types.js";
 import { BrowserTabContent } from "./browser-tab.js";
+import { CdpInspectPopover } from "./cdp-inspect.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { httpLinkUrl, mountMarkdown } from "./markdown.js";
 import { resizedPatchPanelWidth } from "./patch-panel.js";
@@ -705,6 +706,7 @@ export const SessionPage: Component<SessionPageProps> = (props) => {
           >
             +
           </button>
+          <CdpInspectPopover app={app} />
           <button
             type="button"
             class="side-collapse"

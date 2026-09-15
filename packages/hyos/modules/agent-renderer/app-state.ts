@@ -15,7 +15,12 @@ import type {
 import type {
   BrowserCommand,
   BrowserState,
+  CdpTarget,
   TabId,
+} from "../../capabilities/browser.js";
+import {
+  defaultCdpEndpoint,
+  parseCdpEndpoint,
 } from "../../capabilities/browser.js";
 import type { BrowserClient } from "../browser-client/types.js";
 import type {
@@ -543,6 +548,38 @@ export function createAppState({
       setActiveSideTabId(tabId);
       recordTabOpened(tabId, next?.tabs.find(({ id }) => id === tabId)?.url);
     });
+  };
+
+  // CDP inspect affordance: discover debug targets on an endpoint (default
+  // localhost:9333) and open one as a DevTools pane. Errors surface to the
+  // caller (the inspect popover), not the browser error line — a dead
+  // endpoint is an expected outcome of poking at one.
+  const resolveCdpEndpoint = (endpointText: string) => {
+    const endpoint = endpointText.trim()
+      ? parseCdpEndpoint(endpointText)
+      : defaultCdpEndpoint;
+    if (!endpoint) throw new Error(`Invalid CDP endpoint: ${endpointText}`);
+    return endpoint;
+  };
+  const inspectCdp = (endpointText: string): Promise<readonly CdpTarget[]> =>
+    browserClient.inspectCdp(resolveCdpEndpoint(endpointText));
+  const openCdpTargetSideTab = async (
+    endpointText: string,
+    targetId: string,
+  ): Promise<void> => {
+    const opened = await browserClient.openCdpTarget({
+      endpoint: resolveCdpEndpoint(endpointText),
+      targetId,
+    });
+    const url = opened.target.devtoolsFrontendUrl ?? undefined;
+    setSideTabs((tabs) =>
+      tabs.some((tab) => sideTabHostTabId(tab) === opened.tabId)
+        ? tabs
+        : [...tabs, sideTabForHostTab(opened.tabId, url)],
+    );
+    setActiveSideTabId(opened.tabId);
+    recordTabOpened(opened.tabId, url);
+    setSideCollapsed(false);
   };
 
   // Opening a link from the session's markdown creates a host tab showing
@@ -1404,6 +1441,8 @@ export function createAppState({
     openBrowserSideTab,
     openUrlSideTab,
     closeSideTab,
+    inspectCdp,
+    openCdpTargetSideTab,
     // global tabs
     globalTabs,
     activeGlobalTabId,

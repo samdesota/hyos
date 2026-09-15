@@ -1,18 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { BrowserState } from "../../../capabilities/browser.js";
+import type {
+  BrowserState,
+  CdpEndpoint,
+  CdpTarget,
+  CdpTargetOpen,
+  CdpTargetRequest,
+} from "../../../capabilities/browser.js";
 import type { BrowserClient } from "../../browser-client/types.js";
 import type { OpenCodeTool } from "./opencode-tools.js";
 import { agentToolbelt, runToolCalls } from "./toolbelt.js";
 import type { AgentRunInput } from "./types.js";
 
 /** A browser host stub that reports one created tab per create-tab call. */
-function fakeBrowserClient(): BrowserClient & { states: BrowserState[] } {
+function fakeBrowserClient(): BrowserClient & {
+  states: BrowserState[];
+  inspectCalls: CdpEndpoint[];
+  openCalls: CdpTargetRequest[];
+} {
   const states: BrowserState[] = [];
+  const inspectCalls: CdpEndpoint[] = [];
+  const openCalls: CdpTargetRequest[] = [];
   return {
     protocol: { name: "browser", version: 1 },
     states,
+    inspectCalls,
+    openCalls,
     async execute(command) {
       if (command.type !== "create-tab")
         throw new Error(`unexpected command: ${command.type}`);
@@ -40,6 +54,33 @@ function fakeBrowserClient(): BrowserClient & { states: BrowserState[] } {
     async release() {},
     async setOverlayRegions() {},
     async setModalOverlay() {},
+    async inspectCdp(endpoint: CdpEndpoint): Promise<readonly CdpTarget[]> {
+      inspectCalls.push(endpoint);
+      return [
+        {
+          id: "target-1",
+          type: "page",
+          title: "HyOS",
+          url: "http://localhost:5173/",
+          devtoolsFrontendUrl: "/devtools/inspector.html?ws=x",
+          webSocketDebuggerUrl: null,
+        },
+      ];
+    },
+    async openCdpTarget(request: CdpTargetRequest): Promise<CdpTargetOpen> {
+      openCalls.push(request);
+      return {
+        tabId: `devtools-tab-${openCalls.length}`,
+        target: {
+          id: request.targetId,
+          type: "page",
+          title: "HyOS",
+          url: "http://localhost:5173/",
+          devtoolsFrontendUrl: "/devtools/inspector.html?ws=x",
+          webSocketDebuggerUrl: null,
+        },
+      };
+    },
     subscribe() {
       return () => undefined;
     },
@@ -67,6 +108,13 @@ function runInput(
 }
 
 async function browserOpenTabTool(input: AgentRunInput): Promise<OpenCodeTool> {
+  return toolByName(input, "browser_open_tab");
+}
+
+async function toolByName(
+  input: AgentRunInput,
+  name: string,
+): Promise<OpenCodeTool> {
   const { byName } = agentToolbelt(input, {
     name: "web_search",
     description: "",
@@ -76,10 +124,63 @@ async function browserOpenTabTool(input: AgentRunInput): Promise<OpenCodeTool> {
       return { output: "" };
     },
   });
-  const tool = byName.get("browser_open_tab");
-  assert.ok(tool, "browser_open_tab is offered");
+  const tool = byName.get(name);
+  assert.ok(tool, `${name} is offered`);
   return tool;
 }
+
+test("browser_inspect_cdp lists targets on the default endpoint", async () => {
+  const input = runInput();
+  const tool = await toolByName(input, "browser_inspect_cdp");
+  const result = await tool.execute(
+    input.folder,
+    {},
+    new AbortController().signal,
+  );
+  const client = input.browserClient as typeof input.browserClient & {
+    inspectCalls: CdpEndpoint[];
+  };
+  assert.deepEqual(client.inspectCalls, [{ host: "localhost", port: 9333 }]);
+  assert.match(result.output, /target-1/);
+  assert.match(result.output, /HyOS/);
+});
+
+test("browser_inspect_cdp opens a target's devtools frontend as a strip tab", async () => {
+  const input = runInput();
+  const tool = await toolByName(input, "browser_inspect_cdp");
+  const result = await tool.execute(
+    input.folder,
+    { endpoint: "127.0.0.1:9222", targetId: "target-1" },
+    new AbortController().signal,
+  );
+  const client = input.browserClient as typeof input.browserClient & {
+    openCalls: CdpTargetRequest[];
+  };
+  assert.deepEqual(client.openCalls, [
+    { endpoint: { host: "127.0.0.1", port: 9222 }, targetId: "target-1" },
+  ]);
+  assert.match(result.output, /Opened DevTools/);
+  assert.deepEqual(input.appended, [
+    {
+      kind: "browser",
+      tabId: "devtools-tab-1",
+      url: "/devtools/inspector.html?ws=x",
+    },
+  ]);
+});
+
+test("browser_inspect_cdp rejects an unusable endpoint", async () => {
+  const input = runInput();
+  const tool = await toolByName(input, "browser_inspect_cdp");
+  await assert.rejects(
+    tool.execute(
+      input.folder,
+      { endpoint: "nope" },
+      new AbortController().signal,
+    ),
+    /Invalid CDP endpoint/,
+  );
+});
 
 test("browser_open_tab appends the opened page to the session's strip, focused", async () => {
   const input = runInput();

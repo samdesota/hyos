@@ -339,6 +339,14 @@ export function createAgentHost(options: {
       browser.call("execute", command) as Promise<
         import("../../capabilities/browser.js").BrowserState
       >,
+    inspectCdp: (endpoint) =>
+      browser.call("inspectCdp", endpoint) as Promise<
+        readonly import("../../capabilities/browser.js").CdpTarget[]
+      >,
+    openCdpTarget: (request) =>
+      browser.call("openCdpTarget", request) as Promise<
+        import("../../capabilities/browser.js").CdpTargetOpen
+      >,
     present: (presentation) =>
       browser.call("present", presentation) as Promise<void>,
     release: (presentationId) =>
