@@ -10,6 +10,12 @@ import {
   openKeyValueStorage,
 } from "../dist/src/node/index.js";
 
+// Optional diagnostic checkpoints are outside benchmark timing regions.
+const profile = process.env.HYDB_MEMORY_PROFILE
+  ? await (
+      await import("./memory-profile.mjs")
+    ).createMemoryProfile(process.env.HYDB_MEMORY_PROFILE)
+  : undefined;
 const [engine, size] = process.argv.slice(2);
 assert.ok(["file", "lmdb"].includes(engine));
 assert.ok(["small", "large"].includes(size));
@@ -57,10 +63,27 @@ const options = {
   cacheBytes: 16 * 1024 * 1024,
   maxEntries: 64,
 };
+const diagnosticStore =
+  process.env.HYDB_MEMORY_KEYS_ONLY_SWEEP === "1"
+    ? (await import("./memory-variants.mjs")).keysOnlySweepStore
+    : undefined;
+if (diagnosticStore && !profile)
+  throw new Error(
+    "Keys-only sweep is a profiling-only experiment; set HYDB_MEMORY_PROFILE",
+  );
 const openStorage = (cacheBytes = options.cacheBytes) =>
   engine === "file"
     ? openNodeStorage({ ...options, cacheBytes })
-    : openKeyValueStorage({ ...options, cacheBytes, gcBatchSize: 128 });
+    : diagnosticStore
+      ? openKeyValueStorage({
+          schema,
+          retention: options.retention,
+          maxEntries: options.maxEntries,
+          cacheBytes,
+          gcBatchSize: 128,
+          store: diagnosticStore(directory),
+        })
+      : openKeyValueStorage({ ...options, cacheBytes, gcBatchSize: 128 });
 let storage;
 let version = 0;
 let random = 0x51eed;
@@ -99,6 +122,7 @@ let peakHeap = 0,
   peakRss = 0;
 const sampleMemory = () => {
   const m = process.memoryUsage();
+  profile?.sample(m);
   peakHeap = Math.max(peakHeap, m.heapUsed);
   peakRss = Math.max(peakRss, m.rss);
 };
@@ -106,6 +130,7 @@ const sampler = setInterval(sampleMemory, 10);
 sampler.unref();
 const phases = {};
 async function measured(name, count, action, units = count) {
+  profile?.phase(name);
   const times = [],
     start = performance.now();
   for (let i = 0; i < count; i++) {
@@ -115,6 +140,10 @@ async function measured(name, count, action, units = count) {
     sampleMemory();
   }
   phases[name] = summarize(times, performance.now() - start, units);
+  await profile?.checkpoint(
+    name,
+    ["seed", "singleWrite", "batchWrite", "churn"].includes(name),
+  );
   console.error(
     `${engine}/${size}: ${name} ${phases[name].wallMs.toFixed(0)}ms`,
   );
@@ -245,6 +274,7 @@ async function traffic(withGc) {
 }
 try {
   storage = await openStorage();
+  await profile?.checkpoint("opened");
   await measured(
     "seed",
     Math.ceil(config.rows / 64),
@@ -301,14 +331,22 @@ try {
   await storage.close();
   storage = await openStorage();
   await measured("churn", config.churn, () => writeRows(1, false, nextIndex()));
+  profile?.phase("baselineTraffic");
   const baseline = await traffic(false);
+  await profile?.checkpoint("beforeGc");
   const diskBeforeGc = await disk();
+  profile?.phase("gcTraffic");
   const withGc = await traffic(true);
+  await profile?.checkpoint("afterGc");
   const diskAfterTrafficGc = await disk();
   await verify();
+  profile?.phase("cleanup");
   const cleanupStart = performance.now();
   const cleanupReport = await storage.collectGarbage();
   const cleanupMs = performance.now() - cleanupStart;
+  await profile?.checkpoint("afterCleanup");
+  await profile?.collectJsGarbage("afterCleanupJsGc");
+  profile?.phase("reuseWrites");
   const diskAfterCleanup = await disk();
   for (let i = 0; i < 100; i++) await writeRows(1, false, i % config.rows);
   const diskAfterReuseWrites = await disk();
@@ -318,6 +356,9 @@ try {
   await verify();
   sampleMemory();
   const result = {
+    ...(profile
+      ? { diagnostic: true, keysOnlySweep: Boolean(diagnosticStore) }
+      : {}),
     engine,
     size,
     config,
@@ -340,6 +381,8 @@ try {
   };
   await storage.close();
   storage = undefined;
+  await profile?.checkpoint("closed");
+  await profile?.collectJsGarbage("closedJsGc");
   console.log(JSON.stringify(result));
 } finally {
   clearInterval(sampler);
