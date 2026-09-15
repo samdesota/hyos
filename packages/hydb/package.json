@@ -23,7 +23,8 @@
     "migration": "node scripts/migration-cli.mjs",
     "test": "npm run typecheck && npm run build && node --test dist/test/*.test.js",
     "test:coverage": "npm run build && node --experimental-test-coverage --test --test-coverage-lines=90 --test-coverage-branches=85 --test-coverage-functions=95 dist/test/*.test.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "bench:storage": "npm run build && node benchmarks/storage.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",

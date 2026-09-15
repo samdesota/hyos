@@ -1,0 +1,2621 @@
+{
+  "generatedAt": "2026-09-15T22:26:56.071Z",
+  "environment": {
+    "node": "v24.19.0",
+    "platform": "darwin",
+    "osRelease": "25.5.0",
+    "arch": "arm64",
+    "cpu": "Apple M5",
+    "logicalCpus": 10,
+    "ramBytes": 34359738368,
+    "lmdb": "3.5.6"
+  },
+  "repetitions": 3,
+  "runs": [
+    {
+      "round": 1,
+      "engine": "file",
+      "size": "small",
+      "config": {
+        "rows": 2000,
+        "payloadBytes": 256,
+        "writes": 200,
+        "batchRows": 64,
+        "batches": 12,
+        "points": 2000,
+        "uncachedPoints": 300,
+        "scans": 8,
+        "churn": 200
+      },
+      "phases": {
+        "seed": {
+          "operations": 32,
+          "wallMs": 656.6080840000001,
+          "unitsPerSecond": 3045.9570156617197,
+          "p50Ms": 20.95375,
+          "p95Ms": 24.07295900000001,
+          "p99Ms": 26.928084000000013,
+          "maxMs": 26.928084000000013
+        },
+        "singleWrite": {
+          "operations": 200,
+          "wallMs": 845.86,
+          "unitsPerSecond": 236.44574752323078,
+          "p50Ms": 4.029083000000014,
+          "p95Ms": 5.03229199999987,
+          "p99Ms": 5.2253749999999854,
+          "maxMs": 6.054459000000065
+        },
+        "batchWrite": {
+          "operations": 12,
+          "wallMs": 336.804666,
+          "unitsPerSecond": 2280.2534451823776,
+          "p50Ms": 23.895999999999958,
+          "p95Ms": 43.07479199999989,
+          "p99Ms": 43.07479199999989,
+          "maxMs": 43.07479199999989
+        },
+        "warmPointRead": {
+          "operations": 2000,
+          "wallMs": 9.522500000000036,
+          "unitsPerSecond": 210028.87897085768,
+          "p50Ms": 0.0036660000000665605,
+          "p95Ms": 0.005374999999958163,
+          "p99Ms": 0.008916999999883046,
+          "maxMs": 0.06337499999995089
+        },
+        "tableScan": {
+          "operations": 8,
+          "wallMs": 19.925958000000037,
+          "unitsPerSecond": 802972.6851777952,
+          "p50Ms": 2.07487500000002,
+          "p95Ms": 3.54950000000008,
+          "p99Ms": 3.54950000000008,
+          "maxMs": 3.54950000000008
+        },
+        "indexRead": {
+          "operations": 32,
+          "wallMs": 38.083708000000115,
+          "unitsPerSecond": 840.2543155724202,
+          "p50Ms": 1.1431669999999485,
+          "p95Ms": 1.6934579999999642,
+          "p99Ms": 1.8939170000001013,
+          "maxMs": 1.8939170000001013
+        },
+        "cacheDisabledPointRead": {
+          "operations": 300,
+          "wallMs": 17.28229199999987,
+          "unitsPerSecond": 17358.808658018406,
+          "p50Ms": 0.05300000000033833,
+          "p95Ms": 0.0799589999996897,
+          "p99Ms": 0.1354999999998654,
+          "maxMs": 0.21820900000011534
+        },
+        "churn": {
+          "operations": 200,
+          "wallMs": 890.692458,
+          "unitsPerSecond": 224.54439599622162,
+          "p50Ms": 4.076958999999988,
+          "p95Ms": 5.217583999999988,
+          "p99Ms": 8.025749999999789,
+          "maxMs": 8.811207999999624
+        }
+      },
+      "reopenMs": 9.49895800000013,
+      "baseline": {
+        "wallMs": 475.2337910000001,
+        "gcMs": 0,
+        "reads": {
+          "operations": 100,
+          "wallMs": 475.2337910000001,
+          "unitsPerSecond": 210.42274748514248,
+          "p50Ms": 0.010458000000198808,
+          "p95Ms": 0.02775000000019645,
+          "p99Ms": 0.11770900000010442,
+          "maxMs": 0.2642919999998412
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 475.2337910000001,
+          "unitsPerSecond": 210.42274748514248,
+          "p50Ms": 4.4422920000001795,
+          "p95Ms": 5.940166999999747,
+          "p99Ms": 9.07308299999977,
+          "maxMs": 9.565541999999823
+        },
+        "readsStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "writesStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 2.453503
+      },
+      "withGc": {
+        "wallMs": 512.1488749999999,
+        "gcMs": 41.894374999999854,
+        "gcReport": {
+          "commitsCollected": 559,
+          "recordsCopied": 143,
+          "bytesBefore": 85741843,
+          "bytesAfter": 1092178,
+          "bytesReclaimed": 84649665
+        },
+        "reads": {
+          "operations": 100,
+          "wallMs": 512.1488749999999,
+          "unitsPerSecond": 195.25572520295006,
+          "p50Ms": 0.004208000000289758,
+          "p95Ms": 0.013792000000194093,
+          "p99Ms": 0.05083299999978408,
+          "maxMs": 41.97437499999978
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 512.1488749999999,
+          "unitsPerSecond": 195.25572520295006,
+          "p50Ms": 4.685790999999881,
+          "p95Ms": 6.1519170000001395,
+          "p99Ms": 10.07708300000013,
+          "maxMs": 46.13845900000024
+        },
+        "readsStartedDuringGc": {
+          "operations": 1,
+          "wallMs": 41.894374999999854,
+          "unitsPerSecond": 23.869552893437447,
+          "p50Ms": 41.97437499999978,
+          "p95Ms": 41.97437499999978,
+          "p99Ms": 41.97437499999978,
+          "maxMs": 41.97437499999978
+        },
+        "writesStartedDuringGc": {
+          "operations": 1,
+          "wallMs": 41.894374999999854,
+          "unitsPerSecond": 23.869552893437447,
+          "p50Ms": 46.13845900000024,
+          "p95Ms": 46.13845900000024,
+          "p99Ms": 46.13845900000024,
+          "maxMs": 46.13845900000024
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 2.258943
+      },
+      "cleanupMs": 18.656833000000006,
+      "cleanupReport": {
+        "commitsCollected": 100,
+        "recordsCopied": 142,
+        "bytesBefore": 3586610,
+        "bytesAfter": 1090266,
+        "bytesReclaimed": 2496344
+      },
+      "diskBeforeGc": {
+        "logicalBytes": 85758003,
+        "allocatedBytes": 101437440
+      },
+      "diskAfterTrafficGc": {
+        "logicalBytes": 3602770,
+        "allocatedBytes": 3604480
+      },
+      "diskAfterCleanup": {
+        "logicalBytes": 1106426,
+        "allocatedBytes": 1110016
+      },
+      "diskAfterReuseWrites": {
+        "logicalBytes": 3600658,
+        "allocatedBytes": 3604480
+      },
+      "memory": {
+        "peakSampledHeapBytes": 99780960,
+        "peakSampledRssBytes": 321847296,
+        "maxRssBytes": 321863680
+      },
+      "verifiedRows": 2000
+    },
+    {
+      "round": 1,
+      "engine": "lmdb",
+      "size": "small",
+      "config": {
+        "rows": 2000,
+        "payloadBytes": 256,
+        "writes": 200,
+        "batchRows": 64,
+        "batches": 12,
+        "points": 2000,
+        "uncachedPoints": 300,
+        "scans": 8,
+        "churn": 200
+      },
+      "phases": {
+        "seed": {
+          "operations": 32,
+          "wallMs": 340.530416,
+          "unitsPerSecond": 5873.190487630332,
+          "p50Ms": 10.848083000000003,
+          "p95Ms": 13.166291999999999,
+          "p99Ms": 13.944833000000017,
+          "maxMs": 13.944833000000017
+        },
+        "singleWrite": {
+          "operations": 200,
+          "wallMs": 873.8900000000001,
+          "unitsPerSecond": 228.8617560562542,
+          "p50Ms": 4.05012499999998,
+          "p95Ms": 5.14608300000009,
+          "p99Ms": 6.978666999999973,
+          "maxMs": 8.363665999999967
+        },
+        "batchWrite": {
+          "operations": 12,
+          "wallMs": 138.9242499999998,
+          "unitsPerSecond": 5528.19252218386,
+          "p50Ms": 11.1875,
+          "p95Ms": 12.995666000000028,
+          "p99Ms": 12.995666000000028,
+          "maxMs": 12.995666000000028
+        },
+        "warmPointRead": {
+          "operations": 2000,
+          "wallMs": 10.385125000000016,
+          "unitsPerSecond": 192583.14175322847,
+          "p50Ms": 0.003917000000001281,
+          "p95Ms": 0.0060000000000854925,
+          "p99Ms": 0.012791000000106578,
+          "maxMs": 0.07062500000006366
+        },
+        "tableScan": {
+          "operations": 8,
+          "wallMs": 19.105792000000065,
+          "unitsPerSecond": 837442.3839639805,
+          "p50Ms": 2.1790419999999813,
+          "p95Ms": 3.4247089999998934,
+          "p99Ms": 3.4247089999998934,
+          "maxMs": 3.4247089999998934
+        },
+        "indexRead": {
+          "operations": 32,
+          "wallMs": 38.0232910000002,
+          "unitsPerSecond": 841.5894352753378,
+          "p50Ms": 1.1444169999999758,
+          "p95Ms": 1.6112920000000486,
+          "p99Ms": 1.791332999999895,
+          "maxMs": 1.791332999999895
+        },
+        "cacheDisabledPointRead": {
+          "operations": 300,
+          "wallMs": 11.01566600000001,
+          "unitsPerSecond": 27233.941188848657,
+          "p50Ms": 0.028999999999996362,
+          "p95Ms": 0.06670800000006238,
+          "p99Ms": 0.09795899999994617,
+          "maxMs": 0.3294170000001486
+        },
+        "churn": {
+          "operations": 200,
+          "wallMs": 861.5071249999999,
+          "unitsPerSecond": 232.15130112824085,
+          "p50Ms": 4.036208999999872,
+          "p95Ms": 5.822875000000295,
+          "p99Ms": 6.175750000000107,
+          "maxMs": 7.031875000000127
+        }
+      },
+      "reopenMs": 2.313374999999951,
+      "baseline": {
+        "wallMs": 460.6484999999998,
+        "gcMs": 0,
+        "reads": {
+          "operations": 100,
+          "wallMs": 460.6484999999998,
+          "unitsPerSecond": 217.08526132181055,
+          "p50Ms": 0.026207999999769527,
+          "p95Ms": 0.07695800000010422,
+          "p99Ms": 0.2225829999997586,
+          "maxMs": 0.3312500000001819
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 460.6484999999998,
+          "unitsPerSecond": 217.08526132181055,
+          "p50Ms": 4.124499999999898,
+          "p95Ms": 5.979041999999936,
+          "p99Ms": 6.585624999999709,
+          "maxMs": 8.75512499999968
+        },
+        "readsStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "writesStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 2.572287
+      },
+      "withGc": {
+        "wallMs": 1143.381375,
+        "gcMs": 1143.3332500000001,
+        "gcReport": {
+          "commitsCollected": 559,
+          "recordsCopied": 0,
+          "pagesCollected": 15673,
+          "historyEntriesCollected": 559,
+          "bytesBefore": 84086610,
+          "bytesAfter": 1088176,
+          "bytesReclaimed": 82998434,
+          "accounting": "logical-page-and-commit-payloads"
+        },
+        "reads": {
+          "operations": 100,
+          "wallMs": 1143.381375,
+          "unitsPerSecond": 87.45988187887004,
+          "p50Ms": 0.02500000000009095,
+          "p95Ms": 0.045125000000098225,
+          "p99Ms": 0.11149999999997817,
+          "maxMs": 0.7395419999998012
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 1143.381375,
+          "unitsPerSecond": 87.45988187887004,
+          "p50Ms": 9.089917000000241,
+          "p95Ms": 12.428666000000248,
+          "p99Ms": 15.79083300000002,
+          "maxMs": 15.94399999999996
+        },
+        "readsStartedDuringGc": {
+          "operations": 100,
+          "wallMs": 1143.3332500000001,
+          "unitsPerSecond": 87.46356322620723,
+          "p50Ms": 0.02500000000009095,
+          "p95Ms": 0.045125000000098225,
+          "p99Ms": 0.11149999999997817,
+          "maxMs": 0.7395419999998012
+        },
+        "writesStartedDuringGc": {
+          "operations": 100,
+          "wallMs": 1143.3332500000001,
+          "unitsPerSecond": 87.46356322620723,
+          "p50Ms": 9.089917000000241,
+          "p95Ms": 12.428666000000248,
+          "p99Ms": 15.79083300000002,
+          "maxMs": 15.94399999999996
+        },
+        "readsCompletedDuringGc": 100,
+        "writesCompletedDuringGc": 100,
+        "eventLoopMaxMs": 4.698111
+      },
+      "cleanupMs": 42.23683399999982,
+      "cleanupReport": {
+        "commitsCollected": 100,
+        "recordsCopied": 0,
+        "pagesCollected": 601,
+        "historyEntriesCollected": 100,
+        "bytesBefore": 3530738,
+        "bytesAfter": 1085303,
+        "bytesReclaimed": 2445435,
+        "accounting": "logical-page-and-commit-payloads"
+      },
+      "diskBeforeGc": {
+        "logicalBytes": 110534664,
+        "allocatedBytes": 111063040
+      },
+      "diskAfterTrafficGc": {
+        "logicalBytes": 110616584,
+        "allocatedBytes": 111063040
+      },
+      "diskAfterCleanup": {
+        "logicalBytes": 110616584,
+        "allocatedBytes": 111063040
+      },
+      "diskAfterReuseWrites": {
+        "logicalBytes": 110616584,
+        "allocatedBytes": 111063040
+      },
+      "memory": {
+        "peakSampledHeapBytes": 102833768,
+        "peakSampledRssBytes": 478248960,
+        "maxRssBytes": 478248960
+      },
+      "verifiedRows": 2000
+    },
+    {
+      "round": 1,
+      "engine": "file",
+      "size": "large",
+      "config": {
+        "rows": 256,
+        "payloadBytes": 16384,
+        "writes": 100,
+        "batchRows": 16,
+        "batches": 12,
+        "points": 500,
+        "uncachedPoints": 150,
+        "scans": 8,
+        "churn": 100
+      },
+      "phases": {
+        "seed": {
+          "operations": 4,
+          "wallMs": 690.6960839999999,
+          "unitsPerSecond": 370.6405840864736,
+          "p50Ms": 182.858291,
+          "p95Ms": 188.81266600000004,
+          "p99Ms": 188.81266600000004,
+          "maxMs": 188.81266600000004
+        },
+        "singleWrite": {
+          "operations": 100,
+          "wallMs": 657.0387499999999,
+          "unitsPerSecond": 152.19802485013253,
+          "p50Ms": 6.020915999999943,
+          "p95Ms": 9.122125000000096,
+          "p99Ms": 9.653167000000167,
+          "maxMs": 16.115958999999975
+        },
+        "batchWrite": {
+          "operations": 12,
+          "wallMs": 458.401208,
+          "unitsPerSecond": 418.84706377126304,
+          "p50Ms": 37.75324999999998,
+          "p95Ms": 42.06358399999999,
+          "p99Ms": 42.06358399999999,
+          "maxMs": 42.06358399999999
+        },
+        "warmPointRead": {
+          "operations": 500,
+          "wallMs": 6.447458000000097,
+          "unitsPerSecond": 77549.94293875081,
+          "p50Ms": 0.011458000000175161,
+          "p95Ms": 0.015124999999898137,
+          "p99Ms": 0.02433300000006966,
+          "maxMs": 0.0642089999998916
+        },
+        "tableScan": {
+          "operations": 8,
+          "wallMs": 19.84058300000015,
+          "unitsPerSecond": 103222.77324209598,
+          "p50Ms": 2.2207499999999527,
+          "p95Ms": 3.4586249999999836,
+          "p99Ms": 3.4586249999999836,
+          "maxMs": 3.4586249999999836
+        },
+        "indexRead": {
+          "operations": 32,
+          "wallMs": 8.446333000000095,
+          "unitsPerSecond": 3788.6263778612138,
+          "p50Ms": 0.2517920000000231,
+          "p95Ms": 0.4367499999998472,
+          "p99Ms": 0.5171250000000782,
+          "maxMs": 0.5171250000000782
+        },
+        "cacheDisabledPointRead": {
+          "operations": 150,
+          "wallMs": 179.20966699999985,
+          "unitsPerSecond": 837.0084187478576,
+          "p50Ms": 0.9525410000001102,
+          "p95Ms": 1.8919999999998254,
+          "p99Ms": 2.7238750000001346,
+          "maxMs": 3.0145410000000084
+        },
+        "churn": {
+          "operations": 100,
+          "wallMs": 622.7198750000002,
+          "unitsPerSecond": 160.5858492953994,
+          "p50Ms": 6.003208000000086,
+          "p95Ms": 7.979957999999897,
+          "p99Ms": 9.021874999999909,
+          "maxMs": 9.034791000000041
+        }
+      },
+      "reopenMs": 8.678333000000066,
+      "baseline": {
+        "wallMs": 583.3744590000001,
+        "gcMs": 0,
+        "reads": {
+          "operations": 100,
+          "wallMs": 583.3744590000001,
+          "unitsPerSecond": 171.41648637037773,
+          "p50Ms": 0.012124999999741704,
+          "p95Ms": 0.03208300000005693,
+          "p99Ms": 0.9320830000001479,
+          "maxMs": 1.02212499999996
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 583.3744590000001,
+          "unitsPerSecond": 171.41648637037773,
+          "p50Ms": 5.952709000000141,
+          "p95Ms": 6.1251250000000255,
+          "p99Ms": 7.974250000000211,
+          "maxMs": 7.977249999999913
+        },
+        "readsStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "writesStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 3.454975
+      },
+      "withGc": {
+        "wallMs": 666.6548749999997,
+        "gcMs": 55.418290999999954,
+        "gcReport": {
+          "commitsCollected": 331,
+          "recordsCopied": 44,
+          "bytesBefore": 676755807,
+          "bytesAfter": 8624453,
+          "bytesReclaimed": 668131354
+        },
+        "reads": {
+          "operations": 100,
+          "wallMs": 666.6548749999997,
+          "unitsPerSecond": 150.00265317192805,
+          "p50Ms": 0.01095900000018446,
+          "p95Ms": 0.05650000000014188,
+          "p99Ms": 0.960624999999709,
+          "maxMs": 56.423125000000255
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 666.6548749999997,
+          "unitsPerSecond": 150.00265317192805,
+          "p50Ms": 5.9940419999998085,
+          "p95Ms": 7.856625000000349,
+          "p99Ms": 9.109667000000172,
+          "maxMs": 62.75958300000002
+        },
+        "readsStartedDuringGc": {
+          "operations": 1,
+          "wallMs": 55.418290999999954,
+          "unitsPerSecond": 18.044583872137103,
+          "p50Ms": 56.423125000000255,
+          "p95Ms": 56.423125000000255,
+          "p99Ms": 56.423125000000255,
+          "maxMs": 56.423125000000255
+        },
+        "writesStartedDuringGc": {
+          "operations": 1,
+          "wallMs": 55.418290999999954,
+          "unitsPerSecond": 18.044583872137103,
+          "p50Ms": 62.75958300000002,
+          "p95Ms": 62.75958300000002,
+          "p99Ms": 62.75958300000002,
+          "maxMs": 62.75958300000002
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 3.192831
+      },
+      "cleanupMs": 25.754125000000386,
+      "cleanupReport": {
+        "commitsCollected": 100,
+        "recordsCopied": 45,
+        "bytesBefore": 82742729,
+        "bytesAfter": 8620837,
+        "bytesReclaimed": 74121892
+      },
+      "diskBeforeGc": {
+        "logicalBytes": 676764557,
+        "allocatedBytes": 685572096
+      },
+      "diskAfterTrafficGc": {
+        "logicalBytes": 82751479,
+        "allocatedBytes": 82755584
+      },
+      "diskAfterCleanup": {
+        "logicalBytes": 8629587,
+        "allocatedBytes": 8634368
+      },
+      "diskAfterReuseWrites": {
+        "logicalBytes": 82719158,
+        "allocatedBytes": 82722816
+      },
+      "memory": {
+        "peakSampledHeapBytes": 126180704,
+        "peakSampledRssBytes": 395427840,
+        "maxRssBytes": 397393920
+      },
+      "verifiedRows": 256
+    },
+    {
+      "round": 1,
+      "engine": "lmdb",
+      "size": "large",
+      "config": {
+        "rows": 256,
+        "payloadBytes": 16384,
+        "writes": 100,
+        "batchRows": 16,
+        "batches": 12,
+        "points": 500,
+        "uncachedPoints": 150,
+        "scans": 8,
+        "churn": 100
+      },
+      "phases": {
+        "seed": {
+          "operations": 4,
+          "wallMs": 643.01125,
+          "unitsPerSecond": 398.12678238522267,
+          "p50Ms": 165.3890419999999,
+          "p95Ms": 172.30166599999995,
+          "p99Ms": 172.30166599999995,
+          "maxMs": 172.30166599999995
+        },
+        "singleWrite": {
+          "operations": 100,
+          "wallMs": 560.0777079999999,
+          "unitsPerSecond": 178.5466526727038,
+          "p50Ms": 5.063499999999976,
+          "p95Ms": 7.095207999999957,
+          "p99Ms": 7.9102080000000115,
+          "maxMs": 8.109791000000087
+        },
+        "batchWrite": {
+          "operations": 12,
+          "wallMs": 364.06787499999996,
+          "unitsPerSecond": 527.3741881235745,
+          "p50Ms": 30.125499999999874,
+          "p95Ms": 33.338250000000016,
+          "p99Ms": 33.338250000000016,
+          "maxMs": 33.338250000000016
+        },
+        "warmPointRead": {
+          "operations": 500,
+          "wallMs": 5.855790999999954,
+          "unitsPerSecond": 85385.56106254543,
+          "p50Ms": 0.010375000000067303,
+          "p95Ms": 0.013874999999870852,
+          "p99Ms": 0.017707999999856838,
+          "maxMs": 0.06970799999999144
+        },
+        "tableScan": {
+          "operations": 8,
+          "wallMs": 17.545499999999947,
+          "unitsPerSecond": 116725.08620444023,
+          "p50Ms": 2.072832999999946,
+          "p95Ms": 2.9385839999999916,
+          "p99Ms": 2.9385839999999916,
+          "maxMs": 2.9385839999999916
+        },
+        "indexRead": {
+          "operations": 32,
+          "wallMs": 8.71895900000004,
+          "unitsPerSecond": 3670.1629173849597,
+          "p50Ms": 0.23929199999997763,
+          "p95Ms": 0.47700000000008913,
+          "p99Ms": 0.6853330000001279,
+          "maxMs": 0.6853330000001279
+        },
+        "cacheDisabledPointRead": {
+          "operations": 150,
+          "wallMs": 153.68712500000015,
+          "unitsPerSecond": 976.0088881876075,
+          "p50Ms": 0.8167080000000624,
+          "p95Ms": 1.7789169999998649,
+          "p99Ms": 3.805208999999877,
+          "maxMs": 4.051875000000109
+        },
+        "churn": {
+          "operations": 100,
+          "wallMs": 579.8008330000002,
+          "unitsPerSecond": 172.47301885128536,
+          "p50Ms": 5.112959000000046,
+          "p95Ms": 7.14083299999993,
+          "p99Ms": 8.101750000000266,
+          "maxMs": 14.123290999999881
+        }
+      },
+      "reopenMs": 2.339999999999918,
+      "baseline": {
+        "wallMs": 530.4679999999998,
+        "gcMs": 0,
+        "reads": {
+          "operations": 100,
+          "wallMs": 530.4679999999998,
+          "unitsPerSecond": 188.51278493707449,
+          "p50Ms": 0.03358299999990777,
+          "p95Ms": 0.05895800000007512,
+          "p99Ms": 0.8722500000003492,
+          "maxMs": 1.0014159999996082
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 530.4679999999998,
+          "unitsPerSecond": 188.51278493707449,
+          "p50Ms": 5.024667000000136,
+          "p95Ms": 6.843499999999949,
+          "p99Ms": 6.973833999999897,
+          "maxMs": 8.09375
+        },
+        "readsStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "writesStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 2.480127
+      },
+      "withGc": {
+        "wallMs": 807.572291,
+        "gcMs": 465.5611250000002,
+        "gcReport": {
+          "commitsCollected": 331,
+          "recordsCopied": 0,
+          "pagesCollected": 3966,
+          "historyEntriesCollected": 331,
+          "bytesBefore": 676570490,
+          "bytesAfter": 8655629,
+          "bytesReclaimed": 667914861,
+          "accounting": "logical-page-and-commit-payloads"
+        },
+        "reads": {
+          "operations": 100,
+          "wallMs": 807.572291,
+          "unitsPerSecond": 123.82792366014947,
+          "p50Ms": 0.03091699999959019,
+          "p95Ms": 0.05479199999990669,
+          "p99Ms": 0.8123749999999745,
+          "maxMs": 1.3507079999999405
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 807.572291,
+          "unitsPerSecond": 123.82792366014947,
+          "p50Ms": 5.103500000000167,
+          "p95Ms": 14.941041999999925,
+          "p99Ms": 16.04291699999976,
+          "maxMs": 21.945332999999664
+        },
+        "readsStartedDuringGc": {
+          "operations": 100,
+          "wallMs": 465.5611250000002,
+          "unitsPerSecond": 214.79456644924974,
+          "p50Ms": 0.03091699999959019,
+          "p95Ms": 0.05479199999990669,
+          "p99Ms": 0.8123749999999745,
+          "maxMs": 1.3507079999999405
+        },
+        "writesStartedDuringGc": {
+          "operations": 36,
+          "wallMs": 465.5611250000002,
+          "unitsPerSecond": 77.3260439217299,
+          "p50Ms": 12.823374999999942,
+          "p95Ms": 16.04291699999976,
+          "p99Ms": 21.945332999999664,
+          "maxMs": 21.945332999999664
+        },
+        "readsCompletedDuringGc": 100,
+        "writesCompletedDuringGc": 35,
+        "eventLoopMaxMs": 9.396223
+      },
+      "cleanupMs": 37.89454099999966,
+      "cleanupReport": {
+        "commitsCollected": 100,
+        "recordsCopied": 0,
+        "pagesCollected": 608,
+        "historyEntriesCollected": 100,
+        "bytesBefore": 82700546,
+        "bytesAfter": 8618728,
+        "bytesReclaimed": 74081818,
+        "accounting": "logical-page-and-commit-payloads"
+      },
+      "diskBeforeGc": {
+        "logicalBytes": 686170120,
+        "allocatedBytes": 686354432
+      },
+      "diskAfterTrafficGc": {
+        "logicalBytes": 687726600,
+        "allocatedBytes": 703131648
+      },
+      "diskAfterCleanup": {
+        "logicalBytes": 687726600,
+        "allocatedBytes": 703131648
+      },
+      "diskAfterReuseWrites": {
+        "logicalBytes": 687726600,
+        "allocatedBytes": 703131648
+      },
+      "memory": {
+        "peakSampledHeapBytes": 158648376,
+        "peakSampledRssBytes": 1375272960,
+        "maxRssBytes": 1377386496
+      },
+      "verifiedRows": 256
+    },
+    {
+      "round": 2,
+      "engine": "lmdb",
+      "size": "small",
+      "config": {
+        "rows": 2000,
+        "payloadBytes": 256,
+        "writes": 200,
+        "batchRows": 64,
+        "batches": 12,
+        "points": 2000,
+        "uncachedPoints": 300,
+        "scans": 8,
+        "churn": 200
+      },
+      "phases": {
+        "seed": {
+          "operations": 32,
+          "wallMs": 332.510333,
+          "unitsPerSecond": 6014.85067232482,
+          "p50Ms": 10.103208999999993,
+          "p95Ms": 12.074457999999993,
+          "p99Ms": 12.910208000000011,
+          "maxMs": 12.910208000000011
+        },
+        "singleWrite": {
+          "operations": 200,
+          "wallMs": 844.928667,
+          "unitsPerSecond": 236.70637275229294,
+          "p50Ms": 4.0302090000000135,
+          "p95Ms": 5.107250000000022,
+          "p99Ms": 5.896499999999946,
+          "maxMs": 7.056541999999922
+        },
+        "batchWrite": {
+          "operations": 12,
+          "wallMs": 138.119375,
+          "unitsPerSecond": 5560.407437406953,
+          "p50Ms": 11.084583000000066,
+          "p95Ms": 14.143624999999929,
+          "p99Ms": 14.143624999999929,
+          "maxMs": 14.143624999999929
+        },
+        "warmPointRead": {
+          "operations": 2000,
+          "wallMs": 9.939874999999802,
+          "unitsPerSecond": 201209.77376476463,
+          "p50Ms": 0.003665999999839187,
+          "p95Ms": 0.005791999999928521,
+          "p99Ms": 0.011792000000014013,
+          "maxMs": 0.08020800000008421
+        },
+        "tableScan": {
+          "operations": 8,
+          "wallMs": 18.694541999999956,
+          "unitsPerSecond": 855864.775932999,
+          "p50Ms": 2.133290999999872,
+          "p95Ms": 3.094957999999906,
+          "p99Ms": 3.094957999999906,
+          "maxMs": 3.094957999999906
+        },
+        "indexRead": {
+          "operations": 32,
+          "wallMs": 38.17279200000007,
+          "unitsPerSecond": 838.2934106575159,
+          "p50Ms": 1.1209160000000793,
+          "p95Ms": 1.5559579999999187,
+          "p99Ms": 1.848208999999997,
+          "maxMs": 1.848208999999997
+        },
+        "cacheDisabledPointRead": {
+          "operations": 300,
+          "wallMs": 9.700749999999971,
+          "unitsPerSecond": 30925.4439089762,
+          "p50Ms": 0.02816700000016681,
+          "p95Ms": 0.039874999999938154,
+          "p99Ms": 0.06437500000015461,
+          "maxMs": 0.45929100000012113
+        },
+        "churn": {
+          "operations": 200,
+          "wallMs": 813.9854170000001,
+          "unitsPerSecond": 245.70464755635786,
+          "p50Ms": 4.001666000000114,
+          "p95Ms": 4.198082999999997,
+          "p99Ms": 6.0555420000000595,
+          "maxMs": 8.03433300000006
+        }
+      },
+      "reopenMs": 2.110916999999972,
+      "baseline": {
+        "wallMs": 448.2399999999998,
+        "gcMs": 0,
+        "reads": {
+          "operations": 100,
+          "wallMs": 448.2399999999998,
+          "unitsPerSecond": 223.09477065857587,
+          "p50Ms": 0.027082999999947788,
+          "p95Ms": 0.06024999999999636,
+          "p99Ms": 0.10195799999974042,
+          "maxMs": 0.22725000000036744
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 448.2399999999998,
+          "unitsPerSecond": 223.09477065857587,
+          "p50Ms": 4.07833299999993,
+          "p95Ms": 5.880374999999731,
+          "p99Ms": 6.1222499999998945,
+          "maxMs": 7.175416999999925
+        },
+        "readsStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "writesStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 2.945023
+      },
+      "withGc": {
+        "wallMs": 1169.844333,
+        "gcMs": 1169.810333,
+        "gcReport": {
+          "commitsCollected": 559,
+          "recordsCopied": 0,
+          "pagesCollected": 15673,
+          "historyEntriesCollected": 559,
+          "bytesBefore": 84088590,
+          "bytesAfter": 1090156,
+          "bytesReclaimed": 82998434,
+          "accounting": "logical-page-and-commit-payloads"
+        },
+        "reads": {
+          "operations": 100,
+          "wallMs": 1169.844333,
+          "unitsPerSecond": 85.48145866856972,
+          "p50Ms": 0.033875000000080036,
+          "p95Ms": 0.09258300000010422,
+          "p99Ms": 0.20145800000000236,
+          "maxMs": 1.158082999999806
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 1169.844333,
+          "unitsPerSecond": 85.48145866856972,
+          "p50Ms": 9.809583000000202,
+          "p95Ms": 13.22912499999984,
+          "p99Ms": 16.590000000000146,
+          "maxMs": 20.205291000000216
+        },
+        "readsStartedDuringGc": {
+          "operations": 100,
+          "wallMs": 1169.810333,
+          "unitsPerSecond": 85.48394314790174,
+          "p50Ms": 0.033875000000080036,
+          "p95Ms": 0.09258300000010422,
+          "p99Ms": 0.20145800000000236,
+          "maxMs": 1.158082999999806
+        },
+        "writesStartedDuringGc": {
+          "operations": 100,
+          "wallMs": 1169.810333,
+          "unitsPerSecond": 85.48394314790174,
+          "p50Ms": 9.809583000000202,
+          "p95Ms": 13.22912499999984,
+          "p99Ms": 16.590000000000146,
+          "maxMs": 20.205291000000216
+        },
+        "readsCompletedDuringGc": 100,
+        "writesCompletedDuringGc": 100,
+        "eventLoopMaxMs": 5.771263
+      },
+      "cleanupMs": 36.580875000000106,
+      "cleanupReport": {
+        "commitsCollected": 100,
+        "recordsCopied": 0,
+        "pagesCollected": 601,
+        "historyEntriesCollected": 100,
+        "bytesBefore": 3530738,
+        "bytesAfter": 1085303,
+        "bytesReclaimed": 2445435,
+        "accounting": "logical-page-and-commit-payloads"
+      },
+      "diskBeforeGc": {
+        "logicalBytes": 110600200,
+        "allocatedBytes": 111276032
+      },
+      "diskAfterTrafficGc": {
+        "logicalBytes": 110714888,
+        "allocatedBytes": 111276032
+      },
+      "diskAfterCleanup": {
+        "logicalBytes": 110714888,
+        "allocatedBytes": 111276032
+      },
+      "diskAfterReuseWrites": {
+        "logicalBytes": 110714888,
+        "allocatedBytes": 111276032
+      },
+      "memory": {
+        "peakSampledHeapBytes": 110559336,
+        "peakSampledRssBytes": 482443264,
+        "maxRssBytes": 482443264
+      },
+      "verifiedRows": 2000
+    },
+    {
+      "round": 2,
+      "engine": "file",
+      "size": "small",
+      "config": {
+        "rows": 2000,
+        "payloadBytes": 256,
+        "writes": 200,
+        "batchRows": 64,
+        "batches": 12,
+        "points": 2000,
+        "uncachedPoints": 300,
+        "scans": 8,
+        "churn": 200
+      },
+      "phases": {
+        "seed": {
+          "operations": 32,
+          "wallMs": 621.534666,
+          "unitsPerSecond": 3217.841432516332,
+          "p50Ms": 19.83583299999998,
+          "p95Ms": 21.892417000000023,
+          "p99Ms": 22.987792000000013,
+          "maxMs": 22.987792000000013
+        },
+        "singleWrite": {
+          "operations": 200,
+          "wallMs": 882.0072910000001,
+          "unitsPerSecond": 226.75549515383764,
+          "p50Ms": 4.081749999999943,
+          "p95Ms": 5.131333000000041,
+          "p99Ms": 5.804750000000013,
+          "maxMs": 7.241749999999911
+        },
+        "batchWrite": {
+          "operations": 12,
+          "wallMs": 298.755042,
+          "unitsPerSecond": 2570.667911941048,
+          "p50Ms": 23.46229100000005,
+          "p95Ms": 32.77058299999999,
+          "p99Ms": 32.77058299999999,
+          "maxMs": 32.77058299999999
+        },
+        "warmPointRead": {
+          "operations": 2000,
+          "wallMs": 10.107250000000022,
+          "unitsPerSecond": 197877.7610131337,
+          "p50Ms": 0.0037919999999758147,
+          "p95Ms": 0.005666999999903055,
+          "p99Ms": 0.010915999999951964,
+          "maxMs": 0.06700000000000728
+        },
+        "tableScan": {
+          "operations": 8,
+          "wallMs": 20.083916000000045,
+          "unitsPerSecond": 796657.3849442492,
+          "p50Ms": 2.433292000000165,
+          "p95Ms": 3.2041249999999764,
+          "p99Ms": 3.2041249999999764,
+          "maxMs": 3.2041249999999764
+        },
+        "indexRead": {
+          "operations": 32,
+          "wallMs": 38.57212500000014,
+          "unitsPerSecond": 829.6146504762152,
+          "p50Ms": 1.155708999999888,
+          "p95Ms": 1.455417000000125,
+          "p99Ms": 1.916541000000052,
+          "maxMs": 1.916541000000052
+        },
+        "cacheDisabledPointRead": {
+          "operations": 300,
+          "wallMs": 17.662915999999996,
+          "unitsPerSecond": 16984.737967388854,
+          "p50Ms": 0.053166000000146596,
+          "p95Ms": 0.09054199999991397,
+          "p99Ms": 0.12449999999989814,
+          "maxMs": 0.2620830000000751
+        },
+        "churn": {
+          "operations": 200,
+          "wallMs": 850.697584,
+          "unitsPerSecond": 235.10117315673486,
+          "p50Ms": 4.012750000000324,
+          "p95Ms": 5.078875000000153,
+          "p99Ms": 6.988042000000405,
+          "maxMs": 10.67049999999972
+        }
+      },
+      "reopenMs": 8.653291999999965,
+      "baseline": {
+        "wallMs": 470.88712499999974,
+        "gcMs": 0,
+        "reads": {
+          "operations": 100,
+          "wallMs": 470.88712499999974,
+          "unitsPerSecond": 212.36511828604372,
+          "p50Ms": 0.010458000000198808,
+          "p95Ms": 0.04604199999994307,
+          "p99Ms": 0.1578340000000935,
+          "maxMs": 0.27120800000011513
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 470.88712499999974,
+          "unitsPerSecond": 212.36511828604372,
+          "p50Ms": 4.821875000000091,
+          "p95Ms": 5.879249999999956,
+          "p99Ms": 7.929125000000113,
+          "maxMs": 10.938166000000365
+        },
+        "readsStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "writesStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 2.091007
+      },
+      "withGc": {
+        "wallMs": 521.0242909999997,
+        "gcMs": 41.5603329999999,
+        "gcReport": {
+          "commitsCollected": 559,
+          "recordsCopied": 143,
+          "bytesBefore": 85741843,
+          "bytesAfter": 1092178,
+          "bytesReclaimed": 84649665
+        },
+        "reads": {
+          "operations": 100,
+          "wallMs": 521.0242909999997,
+          "unitsPerSecond": 191.92963116569945,
+          "p50Ms": 0.004457999999885942,
+          "p95Ms": 0.014916999999968539,
+          "p99Ms": 0.04758399999991525,
+          "maxMs": 41.62245900000016
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 521.0242909999997,
+          "unitsPerSecond": 191.92963116569945,
+          "p50Ms": 4.887166999999863,
+          "p95Ms": 6.042832999999973,
+          "p99Ms": 9.024374999999964,
+          "maxMs": 45.62695799999983
+        },
+        "readsStartedDuringGc": {
+          "operations": 1,
+          "wallMs": 41.5603329999999,
+          "unitsPerSecond": 24.061404897790457,
+          "p50Ms": 41.62245900000016,
+          "p95Ms": 41.62245900000016,
+          "p99Ms": 41.62245900000016,
+          "maxMs": 41.62245900000016
+        },
+        "writesStartedDuringGc": {
+          "operations": 1,
+          "wallMs": 41.5603329999999,
+          "unitsPerSecond": 24.061404897790457,
+          "p50Ms": 45.62695799999983,
+          "p95Ms": 45.62695799999983,
+          "p99Ms": 45.62695799999983,
+          "maxMs": 45.62695799999983
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 2.289663
+      },
+      "cleanupMs": 18.918500000000222,
+      "cleanupReport": {
+        "commitsCollected": 100,
+        "recordsCopied": 142,
+        "bytesBefore": 3586610,
+        "bytesAfter": 1090266,
+        "bytesReclaimed": 2496344
+      },
+      "diskBeforeGc": {
+        "logicalBytes": 85758003,
+        "allocatedBytes": 101490688
+      },
+      "diskAfterTrafficGc": {
+        "logicalBytes": 3602770,
+        "allocatedBytes": 3604480
+      },
+      "diskAfterCleanup": {
+        "logicalBytes": 1106426,
+        "allocatedBytes": 1110016
+      },
+      "diskAfterReuseWrites": {
+        "logicalBytes": 3600658,
+        "allocatedBytes": 3604480
+      },
+      "memory": {
+        "peakSampledHeapBytes": 99349144,
+        "peakSampledRssBytes": 322322432,
+        "maxRssBytes": 322338816
+      },
+      "verifiedRows": 2000
+    },
+    {
+      "round": 2,
+      "engine": "lmdb",
+      "size": "large",
+      "config": {
+        "rows": 256,
+        "payloadBytes": 16384,
+        "writes": 100,
+        "batchRows": 16,
+        "batches": 12,
+        "points": 500,
+        "uncachedPoints": 150,
+        "scans": 8,
+        "churn": 100
+      },
+      "phases": {
+        "seed": {
+          "operations": 4,
+          "wallMs": 638.9830830000001,
+          "unitsPerSecond": 400.6365846151829,
+          "p50Ms": 160.7883750000001,
+          "p95Ms": 183.36512500000003,
+          "p99Ms": 183.36512500000003,
+          "maxMs": 183.36512500000003
+        },
+        "singleWrite": {
+          "operations": 100,
+          "wallMs": 560.9095420000001,
+          "unitsPerSecond": 178.28186634771134,
+          "p50Ms": 5.069957999999815,
+          "p95Ms": 7.149375000000077,
+          "p99Ms": 8.062125000000151,
+          "maxMs": 8.108041000000071
+        },
+        "batchWrite": {
+          "operations": 12,
+          "wallMs": 398.89520800000014,
+          "unitsPerSecond": 481.3294222376317,
+          "p50Ms": 29.553290999999945,
+          "p95Ms": 60.347332999999935,
+          "p99Ms": 60.347332999999935,
+          "maxMs": 60.347332999999935
+        },
+        "warmPointRead": {
+          "operations": 500,
+          "wallMs": 6.054874999999811,
+          "unitsPerSecond": 82578.08790437716,
+          "p50Ms": 0.009583000000020547,
+          "p95Ms": 0.018209000000069864,
+          "p99Ms": 0.03241600000001199,
+          "maxMs": 0.06508400000006986
+        },
+        "tableScan": {
+          "operations": 8,
+          "wallMs": 16.542999999999893,
+          "unitsPerSecond": 123798.58550444376,
+          "p50Ms": 1.953125,
+          "p95Ms": 2.707208000000037,
+          "p99Ms": 2.707208000000037,
+          "maxMs": 2.707208000000037
+        },
+        "indexRead": {
+          "operations": 32,
+          "wallMs": 8.727916999999934,
+          "unitsPerSecond": 3666.396002620126,
+          "p50Ms": 0.2405830000000151,
+          "p95Ms": 0.4571250000001328,
+          "p99Ms": 0.7259999999998854,
+          "maxMs": 0.7259999999998854
+        },
+        "cacheDisabledPointRead": {
+          "operations": 150,
+          "wallMs": 141.19587500000011,
+          "unitsPerSecond": 1062.3539816584575,
+          "p50Ms": 0.7483749999998963,
+          "p95Ms": 1.4464580000001206,
+          "p99Ms": 2.8379580000000715,
+          "maxMs": 3.0262500000001182
+        },
+        "churn": {
+          "operations": 100,
+          "wallMs": 557.1816249999999,
+          "unitsPerSecond": 179.474691039928,
+          "p50Ms": 5.051124999999956,
+          "p95Ms": 7.058332999999948,
+          "p99Ms": 8.095792000000074,
+          "maxMs": 8.098958999999923
+        }
+      },
+      "reopenMs": 2.346708000000035,
+      "baseline": {
+        "wallMs": 530.2965839999997,
+        "gcMs": 0,
+        "reads": {
+          "operations": 100,
+          "wallMs": 530.2965839999997,
+          "unitsPerSecond": 188.57372085202806,
+          "p50Ms": 0.03150000000005093,
+          "p95Ms": 0.08916700000008859,
+          "p99Ms": 0.8202080000000933,
+          "maxMs": 0.9042500000000473
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 530.2965839999997,
+          "unitsPerSecond": 188.57372085202806,
+          "p50Ms": 5.013167000000067,
+          "p95Ms": 6.927000000000135,
+          "p99Ms": 7.96066699999983,
+          "maxMs": 12.057291999999961
+        },
+        "readsStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "writesStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 2.582527
+      },
+      "withGc": {
+        "wallMs": 842.226459,
+        "gcMs": 470.4850839999999,
+        "gcReport": {
+          "commitsCollected": 331,
+          "recordsCopied": 0,
+          "pagesCollected": 3966,
+          "historyEntriesCollected": 331,
+          "bytesBefore": 676537246,
+          "bytesAfter": 8622385,
+          "bytesReclaimed": 667914861,
+          "accounting": "logical-page-and-commit-payloads"
+        },
+        "reads": {
+          "operations": 100,
+          "wallMs": 842.226459,
+          "unitsPerSecond": 118.73291195189108,
+          "p50Ms": 0.032207999999627646,
+          "p95Ms": 0.08958399999983158,
+          "p99Ms": 1.0722089999999298,
+          "maxMs": 1.463292000000365
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 842.226459,
+          "unitsPerSecond": 118.73291195189108,
+          "p50Ms": 6.030166000000008,
+          "p95Ms": 14.973958000000039,
+          "p99Ms": 16.536957999999686,
+          "maxMs": 21.197999999999865
+        },
+        "readsStartedDuringGc": {
+          "operations": 100,
+          "wallMs": 470.4850839999999,
+          "unitsPerSecond": 212.54658946849847,
+          "p50Ms": 0.032207999999627646,
+          "p95Ms": 0.08958399999983158,
+          "p99Ms": 1.0722089999999298,
+          "maxMs": 1.463292000000365
+        },
+        "writesStartedDuringGc": {
+          "operations": 36,
+          "wallMs": 470.4850839999999,
+          "unitsPerSecond": 76.51677220865945,
+          "p50Ms": 12.952708000000257,
+          "p95Ms": 16.536957999999686,
+          "p99Ms": 21.197999999999865,
+          "maxMs": 21.197999999999865
+        },
+        "readsCompletedDuringGc": 100,
+        "writesCompletedDuringGc": 35,
+        "eventLoopMaxMs": 9.830399
+      },
+      "cleanupMs": 42.259457999999995,
+      "cleanupReport": {
+        "commitsCollected": 100,
+        "recordsCopied": 0,
+        "pagesCollected": 608,
+        "historyEntriesCollected": 100,
+        "bytesBefore": 82700546,
+        "bytesAfter": 8618728,
+        "bytesReclaimed": 74081818,
+        "accounting": "logical-page-and-commit-payloads"
+      },
+      "diskBeforeGc": {
+        "logicalBytes": 686170120,
+        "allocatedBytes": 686354432
+      },
+      "diskAfterTrafficGc": {
+        "logicalBytes": 688398344,
+        "allocatedBytes": 703131648
+      },
+      "diskAfterCleanup": {
+        "logicalBytes": 688398344,
+        "allocatedBytes": 703131648
+      },
+      "diskAfterReuseWrites": {
+        "logicalBytes": 688398344,
+        "allocatedBytes": 703131648
+      },
+      "memory": {
+        "peakSampledHeapBytes": 157599688,
+        "peakSampledRssBytes": 1400930304,
+        "maxRssBytes": 1401716736
+      },
+      "verifiedRows": 256
+    },
+    {
+      "round": 2,
+      "engine": "file",
+      "size": "large",
+      "config": {
+        "rows": 256,
+        "payloadBytes": 16384,
+        "writes": 100,
+        "batchRows": 16,
+        "batches": 12,
+        "points": 500,
+        "uncachedPoints": 150,
+        "scans": 8,
+        "churn": 100
+      },
+      "phases": {
+        "seed": {
+          "operations": 4,
+          "wallMs": 694.444958,
+          "unitsPerSecond": 368.6397273835488,
+          "p50Ms": 174.836542,
+          "p95Ms": 189.631458,
+          "p99Ms": 189.631458,
+          "maxMs": 189.631458
+        },
+        "singleWrite": {
+          "operations": 100,
+          "wallMs": 613.8855830000001,
+          "unitsPerSecond": 162.89680482690204,
+          "p50Ms": 5.957625000000007,
+          "p95Ms": 7.98566599999981,
+          "p99Ms": 9.1099999999999,
+          "maxMs": 10.281624999999963
+        },
+        "batchWrite": {
+          "operations": 12,
+          "wallMs": 441.36529199999995,
+          "unitsPerSecond": 435.01381617474357,
+          "p50Ms": 35.90691599999991,
+          "p95Ms": 43.87799999999993,
+          "p99Ms": 43.87799999999993,
+          "maxMs": 43.87799999999993
+        },
+        "warmPointRead": {
+          "operations": 500,
+          "wallMs": 5.690332999999782,
+          "unitsPerSecond": 87868.31983295514,
+          "p50Ms": 0.009542000000010376,
+          "p95Ms": 0.0126669999999649,
+          "p99Ms": 0.021875000000136424,
+          "maxMs": 0.07487500000002001
+        },
+        "tableScan": {
+          "operations": 8,
+          "wallMs": 17.259874999999965,
+          "unitsPerSecond": 118656.71101326076,
+          "p50Ms": 2.0711659999999483,
+          "p95Ms": 2.661209000000099,
+          "p99Ms": 2.661209000000099,
+          "maxMs": 2.661209000000099
+        },
+        "indexRead": {
+          "operations": 32,
+          "wallMs": 9.23870799999986,
+          "unitsPerSecond": 3463.6877797199004,
+          "p50Ms": 0.24479199999996126,
+          "p95Ms": 0.40437500000007276,
+          "p99Ms": 1.267708999999968,
+          "maxMs": 1.267708999999968
+        },
+        "cacheDisabledPointRead": {
+          "operations": 150,
+          "wallMs": 175.29995799999983,
+          "unitsPerSecond": 855.6761890382206,
+          "p50Ms": 0.918999999999869,
+          "p95Ms": 1.9605000000001382,
+          "p99Ms": 2.5750419999999394,
+          "maxMs": 2.7792920000001686
+        },
+        "churn": {
+          "operations": 100,
+          "wallMs": 596.6968750000001,
+          "unitsPerSecond": 167.58928057064148,
+          "p50Ms": 5.785207999999784,
+          "p95Ms": 7.940292000000227,
+          "p99Ms": 9.00525000000016,
+          "maxMs": 9.930875000000015
+        }
+      },
+      "reopenMs": 8.711166000000048,
+      "baseline": {
+        "wallMs": 539.789041,
+        "gcMs": 0,
+        "reads": {
+          "operations": 100,
+          "wallMs": 539.789041,
+          "unitsPerSecond": 185.25755879508492,
+          "p50Ms": 0.012709000000086235,
+          "p95Ms": 0.06183400000008987,
+          "p99Ms": 0.9936659999998483,
+          "maxMs": 1.2417499999996835
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 539.789041,
+          "unitsPerSecond": 185.25755879508492,
+          "p50Ms": 5.033041000000139,
+          "p95Ms": 6.032208000000082,
+          "p99Ms": 8.057458000000224,
+          "maxMs": 8.426790999999866
+        },
+        "readsStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "writesStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 2.715647
+      },
+      "withGc": {
+        "wallMs": 619.586041,
+        "gcMs": 48.788125000000036,
+        "gcReport": {
+          "commitsCollected": 331,
+          "recordsCopied": 44,
+          "bytesBefore": 676755807,
+          "bytesAfter": 8624453,
+          "bytesReclaimed": 668131354
+        },
+        "reads": {
+          "operations": 100,
+          "wallMs": 619.586041,
+          "unitsPerSecond": 161.39808417665756,
+          "p50Ms": 0.01133399999980611,
+          "p95Ms": 0.02341599999999744,
+          "p99Ms": 0.9357500000000982,
+          "maxMs": 50.0316670000002
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 619.586041,
+          "unitsPerSecond": 161.39808417665756,
+          "p50Ms": 5.857500000000073,
+          "p95Ms": 7.968916999999692,
+          "p99Ms": 9.955666999999721,
+          "maxMs": 55.852499999999964
+        },
+        "readsStartedDuringGc": {
+          "operations": 1,
+          "wallMs": 48.788125000000036,
+          "unitsPerSecond": 20.496790971163563,
+          "p50Ms": 50.0316670000002,
+          "p95Ms": 50.0316670000002,
+          "p99Ms": 50.0316670000002,
+          "maxMs": 50.0316670000002
+        },
+        "writesStartedDuringGc": {
+          "operations": 1,
+          "wallMs": 48.788125000000036,
+          "unitsPerSecond": 20.496790971163563,
+          "p50Ms": 55.852499999999964,
+          "p95Ms": 55.852499999999964,
+          "p99Ms": 55.852499999999964,
+          "maxMs": 55.852499999999964
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 2.936831
+      },
+      "cleanupMs": 25.98454099999981,
+      "cleanupReport": {
+        "commitsCollected": 100,
+        "recordsCopied": 45,
+        "bytesBefore": 82742729,
+        "bytesAfter": 8620837,
+        "bytesReclaimed": 74121892
+      },
+      "diskBeforeGc": {
+        "logicalBytes": 676764557,
+        "allocatedBytes": 682643456
+      },
+      "diskAfterTrafficGc": {
+        "logicalBytes": 82751479,
+        "allocatedBytes": 82755584
+      },
+      "diskAfterCleanup": {
+        "logicalBytes": 8629587,
+        "allocatedBytes": 8634368
+      },
+      "diskAfterReuseWrites": {
+        "logicalBytes": 82719158,
+        "allocatedBytes": 82722816
+      },
+      "memory": {
+        "peakSampledHeapBytes": 133144840,
+        "peakSampledRssBytes": 395739136,
+        "maxRssBytes": 397148160
+      },
+      "verifiedRows": 256
+    },
+    {
+      "round": 3,
+      "engine": "file",
+      "size": "small",
+      "config": {
+        "rows": 2000,
+        "payloadBytes": 256,
+        "writes": 200,
+        "batchRows": 64,
+        "batches": 12,
+        "points": 2000,
+        "uncachedPoints": 300,
+        "scans": 8,
+        "churn": 200
+      },
+      "phases": {
+        "seed": {
+          "operations": 32,
+          "wallMs": 618.198292,
+          "unitsPerSecond": 3235.2079031625663,
+          "p50Ms": 19.090250000000026,
+          "p95Ms": 24.16537500000001,
+          "p99Ms": 26.886999999999972,
+          "maxMs": 26.886999999999972
+        },
+        "singleWrite": {
+          "operations": 200,
+          "wallMs": 842.1035830000001,
+          "unitsPerSecond": 237.50047385797666,
+          "p50Ms": 4.014874999999847,
+          "p95Ms": 5.017790999999988,
+          "p99Ms": 5.996916000000056,
+          "maxMs": 9.095874999999978
+        },
+        "batchWrite": {
+          "operations": 12,
+          "wallMs": 279.773584,
+          "unitsPerSecond": 2745.076890461538,
+          "p50Ms": 22.973083000000088,
+          "p95Ms": 28.814375000000155,
+          "p99Ms": 28.814375000000155,
+          "maxMs": 28.814375000000155
+        },
+        "warmPointRead": {
+          "operations": 2000,
+          "wallMs": 9.491792000000032,
+          "unitsPerSecond": 210708.3678192688,
+          "p50Ms": 0.003624999999829015,
+          "p95Ms": 0.005334000000175365,
+          "p99Ms": 0.009250000000065484,
+          "maxMs": 0.06570800000008603
+        },
+        "tableScan": {
+          "operations": 8,
+          "wallMs": 18.963625000000093,
+          "unitsPerSecond": 843720.543936084,
+          "p50Ms": 2.1545830000000024,
+          "p95Ms": 3.2449159999998756,
+          "p99Ms": 3.2449159999998756,
+          "maxMs": 3.2449159999998756
+        },
+        "indexRead": {
+          "operations": 32,
+          "wallMs": 37.111875000000055,
+          "unitsPerSecond": 862.2577005338575,
+          "p50Ms": 1.0883750000000418,
+          "p95Ms": 1.4893750000001091,
+          "p99Ms": 1.8684579999999187,
+          "maxMs": 1.8684579999999187
+        },
+        "cacheDisabledPointRead": {
+          "operations": 300,
+          "wallMs": 16.28749999999991,
+          "unitsPerSecond": 18419.033000767562,
+          "p50Ms": 0.04599999999982174,
+          "p95Ms": 0.08145899999999529,
+          "p99Ms": 0.1304160000001957,
+          "maxMs": 0.2516249999998763
+        },
+        "churn": {
+          "operations": 200,
+          "wallMs": 830.8303749999998,
+          "unitsPerSecond": 240.72302363764692,
+          "p50Ms": 4.009207999999944,
+          "p95Ms": 5.063458000000082,
+          "p99Ms": 6.99225000000024,
+          "maxMs": 8.972708000000239
+        }
+      },
+      "reopenMs": 8.90795799999978,
+      "baseline": {
+        "wallMs": 425.921292,
+        "gcMs": 0,
+        "reads": {
+          "operations": 100,
+          "wallMs": 425.921292,
+          "unitsPerSecond": 234.78516307656204,
+          "p50Ms": 0.0047090000002754095,
+          "p95Ms": 0.015459000000191736,
+          "p99Ms": 0.03833299999996598,
+          "maxMs": 0.09987500000033833
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 425.921292,
+          "unitsPerSecond": 234.78516307656204,
+          "p50Ms": 4.017667000000074,
+          "p95Ms": 5.845166999999947,
+          "p99Ms": 6.024374999999964,
+          "maxMs": 8.020207999999911
+        },
+        "readsStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "writesStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 2.146303
+      },
+      "withGc": {
+        "wallMs": 472.10745799999995,
+        "gcMs": 38.29945799999996,
+        "gcReport": {
+          "commitsCollected": 559,
+          "recordsCopied": 143,
+          "bytesBefore": 85741843,
+          "bytesAfter": 1092178,
+          "bytesReclaimed": 84649665
+        },
+        "reads": {
+          "operations": 100,
+          "wallMs": 472.10745799999995,
+          "unitsPerSecond": 211.81618359437147,
+          "p50Ms": 0.004040999999688211,
+          "p95Ms": 0.015249999999923602,
+          "p99Ms": 0.045292000000245025,
+          "maxMs": 38.36904199999981
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 472.10745799999995,
+          "unitsPerSecond": 211.81618359437147,
+          "p50Ms": 4.019999999999982,
+          "p95Ms": 5.026707999999871,
+          "p99Ms": 8.217415999999957,
+          "maxMs": 42.22191699999985
+        },
+        "readsStartedDuringGc": {
+          "operations": 1,
+          "wallMs": 38.29945799999996,
+          "unitsPerSecond": 26.110030068832856,
+          "p50Ms": 38.36904199999981,
+          "p95Ms": 38.36904199999981,
+          "p99Ms": 38.36904199999981,
+          "maxMs": 38.36904199999981
+        },
+        "writesStartedDuringGc": {
+          "operations": 1,
+          "wallMs": 38.29945799999996,
+          "unitsPerSecond": 26.110030068832856,
+          "p50Ms": 42.22191699999985,
+          "p95Ms": 42.22191699999985,
+          "p99Ms": 42.22191699999985,
+          "maxMs": 42.22191699999985
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 2.220031
+      },
+      "cleanupMs": 15.721874999999727,
+      "cleanupReport": {
+        "commitsCollected": 100,
+        "recordsCopied": 142,
+        "bytesBefore": 3586610,
+        "bytesAfter": 1090266,
+        "bytesReclaimed": 2496344
+      },
+      "diskBeforeGc": {
+        "logicalBytes": 85758003,
+        "allocatedBytes": 101621760
+      },
+      "diskAfterTrafficGc": {
+        "logicalBytes": 3602770,
+        "allocatedBytes": 3604480
+      },
+      "diskAfterCleanup": {
+        "logicalBytes": 1106426,
+        "allocatedBytes": 1110016
+      },
+      "diskAfterReuseWrites": {
+        "logicalBytes": 3600658,
+        "allocatedBytes": 3604480
+      },
+      "memory": {
+        "peakSampledHeapBytes": 100513504,
+        "peakSampledRssBytes": 317947904,
+        "maxRssBytes": 317964288
+      },
+      "verifiedRows": 2000
+    },
+    {
+      "round": 3,
+      "engine": "lmdb",
+      "size": "small",
+      "config": {
+        "rows": 2000,
+        "payloadBytes": 256,
+        "writes": 200,
+        "batchRows": 64,
+        "batches": 12,
+        "points": 2000,
+        "uncachedPoints": 300,
+        "scans": 8,
+        "churn": 200
+      },
+      "phases": {
+        "seed": {
+          "operations": 32,
+          "wallMs": 329.698083,
+          "unitsPerSecond": 6066.15598671831,
+          "p50Ms": 10.032582999999988,
+          "p95Ms": 13.035374999999988,
+          "p99Ms": 13.242291999999992,
+          "maxMs": 13.242291999999992
+        },
+        "singleWrite": {
+          "operations": 200,
+          "wallMs": 858.994083,
+          "unitsPerSecond": 232.8304745726636,
+          "p50Ms": 4.03445899999997,
+          "p95Ms": 5.8471250000000055,
+          "p99Ms": 6.032332999999994,
+          "maxMs": 6.087625000000003
+        },
+        "batchWrite": {
+          "operations": 12,
+          "wallMs": 138.87916700000005,
+          "unitsPerSecond": 5529.9870858240365,
+          "p50Ms": 11.028707999999824,
+          "p95Ms": 14.14045800000008,
+          "p99Ms": 14.14045800000008,
+          "maxMs": 14.14045800000008
+        },
+        "warmPointRead": {
+          "operations": 2000,
+          "wallMs": 9.875957999999855,
+          "unitsPerSecond": 202511.999342244,
+          "p50Ms": 0.0037910000000920263,
+          "p95Ms": 0.005332999999836829,
+          "p99Ms": 0.009041000000024724,
+          "maxMs": 0.08254200000010314
+        },
+        "tableScan": {
+          "operations": 8,
+          "wallMs": 17.44995800000015,
+          "unitsPerSecond": 916907.6510098111,
+          "p50Ms": 2.034832999999935,
+          "p95Ms": 2.6096670000001723,
+          "p99Ms": 2.6096670000001723,
+          "maxMs": 2.6096670000001723
+        },
+        "indexRead": {
+          "operations": 32,
+          "wallMs": 39.72916700000019,
+          "unitsPerSecond": 805.4535852714921,
+          "p50Ms": 1.1803749999999127,
+          "p95Ms": 1.7666249999999764,
+          "p99Ms": 1.77737500000012,
+          "maxMs": 1.77737500000012
+        },
+        "cacheDisabledPointRead": {
+          "operations": 300,
+          "wallMs": 9.054458000000068,
+          "unitsPerSecond": 33132.85013857237,
+          "p50Ms": 0.02645799999982046,
+          "p95Ms": 0.03487500000005639,
+          "p99Ms": 0.08341699999982666,
+          "maxMs": 0.24808299999995143
+        },
+        "churn": {
+          "operations": 200,
+          "wallMs": 855.0709169999998,
+          "unitsPerSecond": 233.89872819168758,
+          "p50Ms": 4.034249999999929,
+          "p95Ms": 5.119083000000046,
+          "p99Ms": 7.070165999999972,
+          "maxMs": 8.735750000000053
+        }
+      },
+      "reopenMs": 2.0870840000000044,
+      "baseline": {
+        "wallMs": 429.9632080000001,
+        "gcMs": 0,
+        "reads": {
+          "operations": 100,
+          "wallMs": 429.9632080000001,
+          "unitsPerSecond": 232.5780395610035,
+          "p50Ms": 0.023707999999714957,
+          "p95Ms": 0.07020799999963856,
+          "p99Ms": 0.09029099999997925,
+          "maxMs": 0.2095830000002934
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 429.9632080000001,
+          "unitsPerSecond": 232.5780395610035,
+          "p50Ms": 4.027000000000044,
+          "p95Ms": 5.176500000000033,
+          "p99Ms": 5.858999999999924,
+          "maxMs": 6.845499999999902
+        },
+        "readsStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "writesStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 2.566143
+      },
+      "withGc": {
+        "wallMs": 1112.3022500000002,
+        "gcMs": 1112.2607080000002,
+        "gcReport": {
+          "commitsCollected": 559,
+          "recordsCopied": 0,
+          "pagesCollected": 15673,
+          "historyEntriesCollected": 559,
+          "bytesBefore": 84087600,
+          "bytesAfter": 1089166,
+          "bytesReclaimed": 82998434,
+          "accounting": "logical-page-and-commit-payloads"
+        },
+        "reads": {
+          "operations": 100,
+          "wallMs": 1112.3022500000002,
+          "unitsPerSecond": 89.90362107062175,
+          "p50Ms": 0.02608300000019881,
+          "p95Ms": 0.0496250000001055,
+          "p99Ms": 0.1064579999997477,
+          "maxMs": 0.45337500000005093
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 1112.3022500000002,
+          "unitsPerSecond": 89.90362107062175,
+          "p50Ms": 9.065041999999721,
+          "p95Ms": 11.364708999999948,
+          "p99Ms": 12.337750000000142,
+          "maxMs": 14.824292000000241
+        },
+        "readsStartedDuringGc": {
+          "operations": 100,
+          "wallMs": 1112.2607080000002,
+          "unitsPerSecond": 89.9069788950955,
+          "p50Ms": 0.02608300000019881,
+          "p95Ms": 0.0496250000001055,
+          "p99Ms": 0.1064579999997477,
+          "maxMs": 0.45337500000005093
+        },
+        "writesStartedDuringGc": {
+          "operations": 100,
+          "wallMs": 1112.2607080000002,
+          "unitsPerSecond": 89.9069788950955,
+          "p50Ms": 9.065041999999721,
+          "p95Ms": 11.364708999999948,
+          "p99Ms": 12.337750000000142,
+          "maxMs": 14.824292000000241
+        },
+        "readsCompletedDuringGc": 100,
+        "writesCompletedDuringGc": 100,
+        "eventLoopMaxMs": 4.714495
+      },
+      "cleanupMs": 35.576832999999624,
+      "cleanupReport": {
+        "commitsCollected": 100,
+        "recordsCopied": 0,
+        "pagesCollected": 601,
+        "historyEntriesCollected": 100,
+        "bytesBefore": 3530738,
+        "bytesAfter": 1085303,
+        "bytesReclaimed": 2445435,
+        "accounting": "logical-page-and-commit-payloads"
+      },
+      "diskBeforeGc": {
+        "logicalBytes": 110583816,
+        "allocatedBytes": 111226880
+      },
+      "diskAfterTrafficGc": {
+        "logicalBytes": 110698504,
+        "allocatedBytes": 111226880
+      },
+      "diskAfterCleanup": {
+        "logicalBytes": 110698504,
+        "allocatedBytes": 111226880
+      },
+      "diskAfterReuseWrites": {
+        "logicalBytes": 110698504,
+        "allocatedBytes": 111226880
+      },
+      "memory": {
+        "peakSampledHeapBytes": 90446488,
+        "peakSampledRssBytes": 505987072,
+        "maxRssBytes": 505987072
+      },
+      "verifiedRows": 2000
+    },
+    {
+      "round": 3,
+      "engine": "file",
+      "size": "large",
+      "config": {
+        "rows": 256,
+        "payloadBytes": 16384,
+        "writes": 100,
+        "batchRows": 16,
+        "batches": 12,
+        "points": 500,
+        "uncachedPoints": 150,
+        "scans": 8,
+        "churn": 100
+      },
+      "phases": {
+        "seed": {
+          "operations": 4,
+          "wallMs": 660.708208,
+          "unitsPerSecond": 387.46302361662197,
+          "p50Ms": 174.279083,
+          "p95Ms": 182.94375000000002,
+          "p99Ms": 182.94375000000002,
+          "maxMs": 182.94375000000002
+        },
+        "singleWrite": {
+          "operations": 100,
+          "wallMs": 619.0707080000001,
+          "unitsPerSecond": 161.53243677618806,
+          "p50Ms": 5.95150000000001,
+          "p95Ms": 9.022833999999875,
+          "p99Ms": 10.028250000000071,
+          "maxMs": 11.92208400000004
+        },
+        "batchWrite": {
+          "operations": 12,
+          "wallMs": 425.439083,
+          "unitsPerSecond": 451.29845299144745,
+          "p50Ms": 35.66075000000001,
+          "p95Ms": 37.101875000000064,
+          "p99Ms": 37.101875000000064,
+          "maxMs": 37.101875000000064
+        },
+        "warmPointRead": {
+          "operations": 500,
+          "wallMs": 5.486166000000139,
+          "unitsPerSecond": 91138.3286615803,
+          "p50Ms": 0.009374999999863576,
+          "p95Ms": 0.012582999999949607,
+          "p99Ms": 0.020833999999922526,
+          "maxMs": 0.06683299999986048
+        },
+        "tableScan": {
+          "operations": 8,
+          "wallMs": 18.749459000000115,
+          "unitsPerSecond": 109229.81831102366,
+          "p50Ms": 2.0815000000000055,
+          "p95Ms": 3.3430000000000746,
+          "p99Ms": 3.3430000000000746,
+          "maxMs": 3.3430000000000746
+        },
+        "indexRead": {
+          "operations": 32,
+          "wallMs": 8.044833000000153,
+          "unitsPerSecond": 3977.7084247739376,
+          "p50Ms": 0.23849999999993088,
+          "p95Ms": 0.3755419999999958,
+          "p99Ms": 0.48575000000005275,
+          "maxMs": 0.48575000000005275
+        },
+        "cacheDisabledPointRead": {
+          "operations": 150,
+          "wallMs": 176.76383299999998,
+          "unitsPerSecond": 848.5898809401809,
+          "p50Ms": 0.9348750000001473,
+          "p95Ms": 1.7644580000001042,
+          "p99Ms": 2.9693749999999,
+          "maxMs": 3.4798330000000988
+        },
+        "churn": {
+          "operations": 100,
+          "wallMs": 594.7223330000002,
+          "unitsPerSecond": 168.1456949759443,
+          "p50Ms": 5.134333000000424,
+          "p95Ms": 7.894624999999905,
+          "p99Ms": 8.998250000000098,
+          "maxMs": 12.057332999999744
+        }
+      },
+      "reopenMs": 8.55862500000012,
+      "baseline": {
+        "wallMs": 530.4698749999998,
+        "gcMs": 0,
+        "reads": {
+          "operations": 100,
+          "wallMs": 530.4698749999998,
+          "unitsPerSecond": 188.5121186193656,
+          "p50Ms": 0.012707999999747699,
+          "p95Ms": 0.03125,
+          "p99Ms": 1.0020829999998568,
+          "maxMs": 1.0319170000002487
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 530.4698749999998,
+          "unitsPerSecond": 188.5121186193656,
+          "p50Ms": 5.008583999999701,
+          "p95Ms": 6.073040999999648,
+          "p99Ms": 7.992959000000155,
+          "maxMs": 8.019624999999905
+        },
+        "readsStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "writesStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 3.063807
+      },
+      "withGc": {
+        "wallMs": 601.4853750000002,
+        "gcMs": 48.960625000000164,
+        "gcReport": {
+          "commitsCollected": 331,
+          "recordsCopied": 44,
+          "bytesBefore": 676755807,
+          "bytesAfter": 8624453,
+          "bytesReclaimed": 668131354
+        },
+        "reads": {
+          "operations": 100,
+          "wallMs": 601.4853750000002,
+          "unitsPerSecond": 166.25508143069973,
+          "p50Ms": 0.012958999999682419,
+          "p95Ms": 0.048708999999689695,
+          "p99Ms": 1.0197920000000522,
+          "maxMs": 50.14283300000034
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 601.4853750000002,
+          "unitsPerSecond": 166.25508143069973,
+          "p50Ms": 5.068333000000166,
+          "p95Ms": 6.389458999999988,
+          "p99Ms": 9.446500000000015,
+          "maxMs": 56.4739169999998
+        },
+        "readsStartedDuringGc": {
+          "operations": 1,
+          "wallMs": 48.960625000000164,
+          "unitsPerSecond": 20.424575870916613,
+          "p50Ms": 50.14283300000034,
+          "p95Ms": 50.14283300000034,
+          "p99Ms": 50.14283300000034,
+          "maxMs": 50.14283300000034
+        },
+        "writesStartedDuringGc": {
+          "operations": 1,
+          "wallMs": 48.960625000000164,
+          "unitsPerSecond": 20.424575870916613,
+          "p50Ms": 56.4739169999998,
+          "p95Ms": 56.4739169999998,
+          "p99Ms": 56.4739169999998,
+          "maxMs": 56.4739169999998
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 3.184639
+      },
+      "cleanupMs": 26.11008300000003,
+      "cleanupReport": {
+        "commitsCollected": 100,
+        "recordsCopied": 45,
+        "bytesBefore": 82742729,
+        "bytesAfter": 8620837,
+        "bytesReclaimed": 74121892
+      },
+      "diskBeforeGc": {
+        "logicalBytes": 676764557,
+        "allocatedBytes": 676831232
+      },
+      "diskAfterTrafficGc": {
+        "logicalBytes": 82751479,
+        "allocatedBytes": 82755584
+      },
+      "diskAfterCleanup": {
+        "logicalBytes": 8629587,
+        "allocatedBytes": 8634368
+      },
+      "diskAfterReuseWrites": {
+        "logicalBytes": 82719158,
+        "allocatedBytes": 82722816
+      },
+      "memory": {
+        "peakSampledHeapBytes": 124512184,
+        "peakSampledRssBytes": 405078016,
+        "maxRssBytes": 406487040
+      },
+      "verifiedRows": 256
+    },
+    {
+      "round": 3,
+      "engine": "lmdb",
+      "size": "large",
+      "config": {
+        "rows": 256,
+        "payloadBytes": 16384,
+        "writes": 100,
+        "batchRows": 16,
+        "batches": 12,
+        "points": 500,
+        "uncachedPoints": 150,
+        "scans": 8,
+        "churn": 100
+      },
+      "phases": {
+        "seed": {
+          "operations": 4,
+          "wallMs": 616.051083,
+          "unitsPerSecond": 415.5499552948599,
+          "p50Ms": 159.08979099999993,
+          "p95Ms": 167.335334,
+          "p99Ms": 167.335334,
+          "maxMs": 167.335334
+        },
+        "singleWrite": {
+          "operations": 100,
+          "wallMs": 540.037334,
+          "unitsPerSecond": 185.17238291528935,
+          "p50Ms": 5.040541999999959,
+          "p95Ms": 6.615042000000017,
+          "p99Ms": 7.084708999999975,
+          "maxMs": 7.559167000000116
+        },
+        "batchWrite": {
+          "operations": 12,
+          "wallMs": 348.4313749999999,
+          "unitsPerSecond": 551.0410765965036,
+          "p50Ms": 28.12804200000005,
+          "p95Ms": 31.170749999999998,
+          "p99Ms": 31.170749999999998,
+          "maxMs": 31.170749999999998
+        },
+        "warmPointRead": {
+          "operations": 500,
+          "wallMs": 5.877042000000074,
+          "unitsPerSecond": 85076.81245088833,
+          "p50Ms": 0.00941699999998491,
+          "p95Ms": 0.013040999999930136,
+          "p99Ms": 0.04450000000019827,
+          "maxMs": 0.09379100000001017
+        },
+        "tableScan": {
+          "operations": 8,
+          "wallMs": 16.4242499999998,
+          "unitsPerSecond": 124693.6694217407,
+          "p50Ms": 2.0013750000000528,
+          "p95Ms": 2.5620830000000296,
+          "p99Ms": 2.5620830000000296,
+          "maxMs": 2.5620830000000296
+        },
+        "indexRead": {
+          "operations": 32,
+          "wallMs": 8.897042000000056,
+          "unitsPerSecond": 3596.701015910659,
+          "p50Ms": 0.23929199999997763,
+          "p95Ms": 0.4644590000000335,
+          "p99Ms": 0.9801250000000437,
+          "maxMs": 0.9801250000000437
+        },
+        "cacheDisabledPointRead": {
+          "operations": 150,
+          "wallMs": 139.19858299999987,
+          "unitsPerSecond": 1077.5971764022925,
+          "p50Ms": 0.7285830000000715,
+          "p95Ms": 1.5372500000000855,
+          "p99Ms": 2.592582999999877,
+          "maxMs": 2.61587499999996
+        },
+        "churn": {
+          "operations": 100,
+          "wallMs": 547.1076249999999,
+          "unitsPerSecond": 182.77939372532055,
+          "p50Ms": 5.035249999999905,
+          "p95Ms": 6.945833000000221,
+          "p99Ms": 7.957167000000027,
+          "maxMs": 10.045415999999932
+        }
+      },
+      "reopenMs": 2.3026669999999285,
+      "baseline": {
+        "wallMs": 515.4175829999999,
+        "gcMs": 0,
+        "reads": {
+          "operations": 100,
+          "wallMs": 515.4175829999999,
+          "unitsPerSecond": 194.0174400297865,
+          "p50Ms": 0.03025000000025102,
+          "p95Ms": 0.09400000000005093,
+          "p99Ms": 0.8106660000003103,
+          "maxMs": 0.8837910000002012
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 515.4175829999999,
+          "unitsPerSecond": 194.0174400297865,
+          "p50Ms": 5.002875000000131,
+          "p95Ms": 6.103292000000238,
+          "p99Ms": 6.905874999999924,
+          "maxMs": 6.955707999999959
+        },
+        "readsStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "writesStartedDuringGc": {
+          "operations": 0,
+          "wallMs": 0,
+          "unitsPerSecond": null,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0,
+          "maxMs": 0
+        },
+        "readsCompletedDuringGc": 0,
+        "writesCompletedDuringGc": 0,
+        "eventLoopMaxMs": 2.914303
+      },
+      "withGc": {
+        "wallMs": 808.5485839999997,
+        "gcMs": 473.6212499999997,
+        "gcReport": {
+          "commitsCollected": 331,
+          "recordsCopied": 0,
+          "pagesCollected": 3966,
+          "historyEntriesCollected": 331,
+          "bytesBefore": 676537246,
+          "bytesAfter": 8622385,
+          "bytesReclaimed": 667914861,
+          "accounting": "logical-page-and-commit-payloads"
+        },
+        "reads": {
+          "operations": 100,
+          "wallMs": 808.5485839999997,
+          "unitsPerSecond": 123.67840594721768,
+          "p50Ms": 0.03095900000016627,
+          "p95Ms": 0.05949999999984357,
+          "p99Ms": 0.786750000000211,
+          "maxMs": 1.362666999999874
+        },
+        "writes": {
+          "operations": 100,
+          "wallMs": 808.5485839999997,
+          "unitsPerSecond": 123.67840594721768,
+          "p50Ms": 5.072374999999738,
+          "p95Ms": 14.898625000000266,
+          "p99Ms": 20.284458000000086,
+          "maxMs": 21.800500000000284
+        },
+        "readsStartedDuringGc": {
+          "operations": 100,
+          "wallMs": 473.6212499999997,
+          "unitsPerSecond": 211.1391750264585,
+          "p50Ms": 0.03095900000016627,
+          "p95Ms": 0.05949999999984357,
+          "p99Ms": 0.786750000000211,
+          "maxMs": 1.362666999999874
+        },
+        "writesStartedDuringGc": {
+          "operations": 36,
+          "wallMs": 473.6212499999997,
+          "unitsPerSecond": 76.01010300952507,
+          "p50Ms": 12.828791999999794,
+          "p95Ms": 20.284458000000086,
+          "p99Ms": 21.800500000000284,
+          "maxMs": 21.800500000000284
+        },
+        "readsCompletedDuringGc": 100,
+        "writesCompletedDuringGc": 35,
+        "eventLoopMaxMs": 9.789439
+      },
+      "cleanupMs": 37.458000000000084,
+      "cleanupReport": {
+        "commitsCollected": 100,
+        "recordsCopied": 0,
+        "pagesCollected": 608,
+        "historyEntriesCollected": 100,
+        "bytesBefore": 82700546,
+        "bytesAfter": 8618728,
+        "bytesReclaimed": 74081818,
+        "accounting": "logical-page-and-commit-payloads"
+      },
+      "diskBeforeGc": {
+        "logicalBytes": 686170120,
+        "allocatedBytes": 693776384
+      },
+      "diskAfterTrafficGc": {
+        "logicalBytes": 687726600,
+        "allocatedBytes": 693776384
+      },
+      "diskAfterCleanup": {
+        "logicalBytes": 687726600,
+        "allocatedBytes": 693776384
+      },
+      "diskAfterReuseWrites": {
+        "logicalBytes": 687726600,
+        "allocatedBytes": 693776384
+      },
+      "memory": {
+        "peakSampledHeapBytes": 157846632,
+        "peakSampledRssBytes": 1383825408,
+        "maxRssBytes": 1387413504
+      },
+      "verifiedRows": 256
+    }
+  ],
+  "storageCommit": "ac2e91f69be0983fd8932b43057b332646da97b4"
+}
