@@ -9,6 +9,7 @@ import type {
   MainRemoteCapabilities,
   RemoteProvider,
 } from "../../remote-capabilities.js";
+import { listCdpTargets } from "./cdp.js";
 import { BrowserPresentations } from "./presentations.js";
 import { createTabView, disposeTabView, tabState } from "./tab.js";
 import type { BrowserMainConfig, Tab } from "./types.js";
@@ -114,6 +115,7 @@ export function createBrowserHost(
 
   const provider: RemoteProvider<typeof browserCapability> = {
     execute,
+    inspectCdp: (endpoint) => listCdpTargets(endpoint),
     present(presentation) {
       presentations.present(presentation);
     },

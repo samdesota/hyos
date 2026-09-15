@@ -43,6 +43,23 @@ export type BrowserState = Readonly<{
   tabs: readonly BrowserTabState[];
 }>;
 
+/**
+ * A Chrome DevTools Protocol endpoint to discover targets on, e.g. a Chrome
+ * launched with `--remote-debugging-port=9333` or HyOS itself via
+ * `HYOS_DEVTOOLS_PORT`.
+ */
+export type CdpEndpoint = Readonly<{ host: string; port: number }>;
+
+/** One discoverable target from `GET /json/list` on a CDP endpoint. */
+export type CdpTarget = Readonly<{
+  id: string;
+  type: string;
+  title: string;
+  url: string;
+  devtoolsFrontendUrl: string | null;
+  webSocketDebuggerUrl: string | null;
+}>;
+
 export type BrowserPresentation = Readonly<{
   presentationId: PresentationId;
   tabId: TabId;
@@ -52,9 +69,13 @@ export type BrowserPresentation = Readonly<{
 
 export const browserCapability = defineRemoteCapability({
   id: "browser",
-  version: 3,
+  version: 4,
   methods: {
     execute: remoteMethod<readonly [command: BrowserCommand], BrowserState>(),
+    inspectCdp: remoteMethod<
+      readonly [endpoint: CdpEndpoint],
+      readonly CdpTarget[]
+    >(),
     present: remoteMethod<readonly [presentation: BrowserPresentation], void>(),
     release: remoteMethod<readonly [presentationId: PresentationId], void>(),
     setOverlayRegions: remoteMethod<
