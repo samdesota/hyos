@@ -103,6 +103,33 @@ export function timelineEntries(
       } else {
         entries.push({ type: "tools", messages: [message] });
       }
+    } else if (message.activity?.type === "commentary") {
+      const last = entries.at(-1);
+      if (
+        last?.type === "message" &&
+        last.message.activity?.type === "commentary"
+      ) {
+        // The backend streams one thinking run as separate commentary
+        // messages; merge consecutive ones so the run renders as a single
+        // capped block: joined text, the newest fragment's streaming status,
+        // and the earliest fragment's createdAt (kept from the merged entry)
+        // for timeline ordering.
+        entries[entries.length - 1] = {
+          type: "message",
+          message: {
+            ...last.message,
+            id: message.id,
+            status: message.status,
+            activity: {
+              type: "commentary",
+              text: `${last.message.activity.text}\n\n${message.activity.text}`,
+            },
+            updatedAt: message.updatedAt,
+          },
+        };
+      } else {
+        entries.push({ type: "message", message });
+      }
     } else {
       entries.push({ type: "message", message });
     }

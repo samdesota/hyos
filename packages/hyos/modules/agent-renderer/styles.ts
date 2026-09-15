@@ -454,7 +454,7 @@ export const agentStyles = String.raw`
     display: flex; flex-direction: column; justify-content: flex-end;
   }
   .commentary-capped.expanded { max-height: none; }
-  .commentary-capped-inner { min-height: 0; }
+  .commentary-capped-inner { flex-shrink: 0; }
   .commentary-fade {
     position: absolute; top: 0; left: 0; right: 0; height: 64px;
     background: linear-gradient(to bottom, #171816, rgba(23, 24, 22, 0));

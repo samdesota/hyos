@@ -297,6 +297,44 @@ test("live message arrival order cannot place thinking after the final response"
   ]);
 });
 
+test("consecutive commentary messages merge into a single timeline entry", () => {
+  const base = {
+    sessionId: "session-1",
+    role: "assistant" as const,
+    lastError: null,
+    usage: null,
+  };
+  const first: AgentMessage = {
+    ...base,
+    id: "thinking-1",
+    status: "complete",
+    content: "Reading the renderer",
+    activity: { type: "commentary", text: "Reading the renderer" },
+    createdAt: new Date("2026-09-03T12:00:00.000Z"),
+    updatedAt: new Date("2026-09-03T12:00:01.000Z"),
+  };
+  const second: AgentMessage = {
+    ...base,
+    id: "thinking-2",
+    status: "streaming",
+    content: "Now editing the styles",
+    activity: { type: "commentary", text: "Now editing the styles" },
+    createdAt: new Date("2026-09-03T12:00:02.000Z"),
+    updatedAt: new Date("2026-09-03T12:00:03.000Z"),
+  };
+
+  const [merged] = timelineEntries([first, second]);
+  assert.equal(merged.type, "message");
+  if (merged.type !== "message") return;
+  assert.equal(merged.message.id, "thinking-2");
+  assert.equal(merged.message.status, "streaming");
+  assert.equal(merged.message.createdAt, first.createdAt);
+  assert.deepEqual(merged.message.activity, {
+    type: "commentary",
+    text: "Reading the renderer\n\nNow editing the styles",
+  });
+});
+
 test("finished runs collapse thinking into a work pane before the final response", () => {
   const thinking: AgentMessage = {
     id: "thinking-1",
