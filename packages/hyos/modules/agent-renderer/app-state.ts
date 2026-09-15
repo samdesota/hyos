@@ -395,7 +395,6 @@ export function createAppState({
   const partitioned = createMemo(() => partitionSessions(sessions()));
   const activeSessions = () => partitioned().active;
   const archivedSessions = () => partitioned().archived;
-  const [archivedOpen, setArchivedOpen] = createSignal(false);
   const selectedProvider = createMemo(() =>
     providers().find(({ id }) => id === providerId()),
   );
@@ -1413,8 +1412,6 @@ export function createAppState({
     setFolderMenuOpen,
     createOpen,
     setCreateOpen,
-    archivedOpen,
-    setArchivedOpen,
     selectedProvider,
     selectedModel,
     timeline,

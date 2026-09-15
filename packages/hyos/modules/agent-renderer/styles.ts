@@ -118,7 +118,18 @@ export const agentStyles = String.raw`
     letter-spacing: .09em; text-transform: uppercase;
   }
   .session-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 18px; }
-  .sidebar-footer { flex: none; border-top: 1px solid #30312d; padding: 8px 10px; }
+  .sidebar-footer { display: flex; align-items: center; gap: 6px; flex: none; border-top: 1px solid #30312d; padding: 8px 10px; }
+  .archive-open {
+    position: relative;
+    display: grid; place-items: center;
+    width: 28px; height: 28px; margin: 0; padding: 0;
+    border: 0; border-radius: 8px;
+    color: #ffffff; background: transparent; cursor: pointer;
+    transition: background .12s, color .12s;
+  }
+  .archive-open:hover { background: #3b3d37; }
+  .archive-open.active { color: #b2cb8c; }
+  .archive-open:focus-visible { outline: 2px solid #b2cb8c; }
   .sound-toggle {
     position: relative;
     display: grid; place-items: center;
@@ -186,12 +197,6 @@ export const agentStyles = String.raw`
   .session-archive:focus-visible { outline: 2px solid #b2cb8c; }
   .session-row.archived .session-open { opacity: .62; }
   .session-row.archived:hover .session-open { opacity: .85; }
-  .archived-toggle {
-    display: flex; align-items: center; gap: 6px; width: 100%; padding: 10px;
-    border: 0; background: transparent; cursor: pointer; text-align: left;
-  }
-  .archived-toggle:hover { color: #b5b7ac; }
-  .archived-chevron { font-style: normal; font-size: 16px; line-height: 1; }
   .session-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 16px; }
   /* Same box and type as .session-title so entering inline rename does not
      shift the row; the underline comes from a shadow, keeping height fixed. */
@@ -228,6 +233,18 @@ export const agentStyles = String.raw`
   .global-browser { display: flex; width: 100%; height: 100%; min-height: 0; }
   .welcome { display: grid; place-items: center; width: 100%; height: 100%; padding: 38px; overflow-y: auto; }
   .welcome-card { width: min(760px, 100%); }
+  .archive-page { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; padding: 22px 26px; overflow-y: auto; }
+  .archive-header { display: flex; align-items: center; gap: 10px; padding-bottom: 14px; }
+  .archive-back {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; padding: 0; border: 1px solid #3b3d37; border-radius: 8px;
+    color: #b5b7ac; background: #292a27; cursor: pointer; font-size: 14px; line-height: 1;
+  }
+  .archive-back:hover { color: #eceae5; border-color: #55584e; background: #30312d; }
+  .archive-back:focus-visible { outline: 2px solid #b2cb8c; }
+  .archive-title { margin: 0; font-size: 15px; font-weight: 600; color: #eceae5; }
+  .archive-body { display: flex; flex-direction: column; min-height: 0; }
+  .archive-empty { padding: 26px 0; color: #777a71; font-size: 12px; }
   .starter { padding: 18px; border: 1px solid #343630; border-radius: 16px; background: #20211e; }
   .prompt {
     width: 100%; min-height: 126px; resize: vertical; padding: 2px; border: 0; outline: 0;

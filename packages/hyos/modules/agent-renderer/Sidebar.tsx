@@ -1,3 +1,4 @@
+import { useLocation, useNavigate } from "@solidjs/router";
 import {
   For,
   Show,
@@ -13,6 +14,7 @@ import type { AgentSessionSummary } from "../../capabilities/agent.js";
 import type { AppState } from "./app-state.js";
 import { globalTabDescriptors, globalTabLabel } from "./global-tabs.js";
 import { Modal } from "./Modal.js";
+import { ROUTE_PATHS } from "./session-route.js";
 import {
   groupSessionsByFolder,
   orderedFolderGroups,
@@ -467,15 +469,14 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
   props,
 ) => {
   const { sound } = props;
+  const navigate = useNavigate();
+  const location = useLocation();
   // Mirror of the sound module's enabled state; the module owns the truth and
   // persists it, the signal only keeps the switch rendering in step.
   const [soundEnabled, setSoundEnabled] = createSignal(sound.isEnabled());
   const {
     activeId,
     activeSessions,
-    archivedOpen,
-    setArchivedOpen,
-    archivedSessions,
     browserState,
     globalTabs,
     focusGlobalTab,
@@ -952,62 +953,34 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
             </Show>
           )}
         </SessionFolderList>
-        <Show when={archivedSessions().length > 0}>
-          <button
-            type="button"
-            class="session-label archived-label archived-toggle"
-            aria-expanded={archivedOpen()}
-            onClick={() => setArchivedOpen(!archivedOpen())}
-          >
-            <span>Archived ({archivedSessions().length})</span>
-            <i class="archived-chevron">{archivedOpen() ? "▾" : "▸"}</i>
-          </button>
-          <Show when={archivedOpen()}>
-            <SessionFolderList
-              sessions={archivedSessions()}
-              savedFolderOrder={props.app.folderOrder()}
-              collapsedFolders={props.app.collapsedFolders()}
-              onToggleCollapse={props.app.setFolderCollapsed}
-              onReorderFolders={(order) => props.app.persistFolderOrder(order)}
-            >
-              {(session) => (
-                <Show when={session()}>
-                  {(s) => (
-                    <div
-                      class="session-row archived"
-                      classList={{ active: activeId() === s().id }}
-                    >
-                      <button
-                        type="button"
-                        class="session-open"
-                        onClick={() => void selectSession(s().id)}
-                      >
-                        <SessionTitle
-                          session={s()}
-                          onRename={(title) =>
-                            void renameSession(s().id, title)
-                          }
-                        />
-                        <SessionMeta session={s()} />
-                      </button>
-                      <button
-                        type="button"
-                        class="session-archive"
-                        aria-label={`Unarchive "${s().title}"`}
-                        title="Unarchive session"
-                        onClick={() => void setSessionArchived(s().id, false)}
-                      >
-                        ↩
-                      </button>
-                    </div>
-                  )}
-                </Show>
-              )}
-            </SessionFolderList>
-          </Show>
-        </Show>
       </div>
       <div class="sidebar-footer">
+        <button
+          type="button"
+          class="archive-open"
+          classList={{ active: location.pathname === ROUTE_PATHS.archive }}
+          aria-label="Archived sessions"
+          onClick={() => navigate(ROUTE_PATHS.archive)}
+        >
+          <span class="sound-toggle-tip" aria-hidden="true">
+            Archived sessions
+          </span>
+          <svg
+            class="sound-toggle-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            {/* lucide archive */}
+            <rect width="18" height="4" x="3" y="4" rx="1" />
+            <path d="M5 8v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
+            <path d="M10 12h4" />
+          </svg>
+        </button>
         <button
           type="button"
           class="sound-toggle"
