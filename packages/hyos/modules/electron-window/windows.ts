@@ -40,7 +40,10 @@ export function createElectronWindows(
     height: config.height,
     minWidth: 720,
     minHeight: 520,
-    frame: false,
+    // Frameless with native traffic lights; they draw over the sidebar's
+    // top-left corner, where the brand mark used to sit.
+    titleBarStyle: "hidden",
+    trafficLightPosition: { x: 16, y: 22 },
     title: config.title,
     // Theme-colored (not cream) so regions where the transparent UI shows
     // through to the window still read as the app background.
