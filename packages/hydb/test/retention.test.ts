@@ -20,7 +20,7 @@ const tasks = hydb.table("retention_tasks", {
 });
 const schema = hydb.schema({ tasks });
 
-test("node storage persists its retention policy and rejects accidental changes", async () => {
+test("node storage persists its retention policy across reopen", async () => {
   const directory = await mkdtemp(join(tmpdir(), "hydb-retention-policy-"));
   const retention = {
     mode: "window" as const,
@@ -32,17 +32,72 @@ test("node storage persists its retention policy and rejects accidental changes"
     const storage = await openNodeStorage({ directory, schema, retention });
     await storage.close();
 
+    // Reopening without a policy keeps the stored policy untouched.
     const reopened = await openNodeStorage({ directory, schema });
     await reopened.close();
 
-    await assert.rejects(
-      openNodeStorage({
-        directory,
-        schema,
-        retention: { mode: "forever" },
-      }),
-      /retention policy does not match/i,
-    );
+    // An explicitly requested different policy migrates instead of failing.
+    await openNodeStorage({
+      directory,
+      schema,
+      retention: { mode: "forever" },
+    }).then((migrated) => migrated.close());
+
+    const final = await openNodeStorage({ directory, schema });
+    await final.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("opening an existing forever storage with a window policy migrates and collects", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hydb-retention-migrate-"));
+
+  try {
+    const storage = await openNodeStorage({ directory, schema });
+    const initial = await storage.snapshot();
+    let head = initial.commit;
+    await initial.close();
+    for (let index = 0; index < 6; index += 1) {
+      const commit = await storage.commit({
+        expectedHead: head,
+        mutations: [
+          index === 0
+            ? storageMutation.insert(tasks, {
+                id: "task-1",
+                title: `Version ${index}`,
+              })
+            : storageMutation.update(tasks, ["task-1"], {
+                id: "task-1",
+                title: `Version ${index}`,
+              }),
+        ],
+      });
+      head = commit.commit;
+    }
+    await storage.close();
+
+    // Reopen with a bounded policy: the existing storage migrates, and a later
+    // collection reclaims the history the new policy no longer retains.
+    const migrated = await openNodeStorage({
+      directory,
+      schema,
+      retention: { mode: "window", keepAtLeast: 1 },
+    });
+    const report = await migrated.collectGarbage();
+    assert.ok(report.commitsCollected >= 4);
+    assert.ok(report.bytesAfter < report.bytesBefore);
+    const current = await migrated.snapshot();
+    assert.equal((await current.get(tasks, ["task-1"]))?.title, "Version 5");
+    await current.close();
+    await migrated.close();
+
+    // The migrated policy persists across restarts.
+    const reopened = await openNodeStorage({ directory, schema });
+    const historical = await reopened.snapshot({ commit: head });
+    assert.equal((await historical.get(tasks, ["task-1"]))?.title, "Version 5");
+    await historical.close();
+    await reopened.close();
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

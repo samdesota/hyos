@@ -1026,7 +1026,12 @@ export class NodeStorageDatabase implements StorageDatabase {
       this.requestedRetention !== undefined &&
       !sameRetention(this.requestedRetention, this.#retention)
     ) {
-      throw new TypeError("Configured retention policy does not match storage");
+      // Migrate an existing storage to the requested policy: append new
+      // metadata so the change survives restarts. No data is rewritten —
+      // reclamation happens on a later collection.
+      this.#retention = this.requestedRetention;
+      await this.writeMetadata();
+      await this.store.sync();
     }
     // Validate every branch before writing anything. A crash can leave some branches
     // migrated; rerunning safely completes only the remaining old-schema heads.
