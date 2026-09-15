@@ -140,7 +140,7 @@ export const agentStyles = String.raw`
   }
   .sound-toggle:hover .sound-toggle-tip,
   .sound-toggle:focus-visible .sound-toggle-tip { display: block; }
-  .session-folder-group + .session-folder-group { margin-top: 10px; }
+  .session-folder-group + .session-folder-group { margin-top: 6px; }
   .session-folder-heading { display: flex; align-items: center; gap: 4px; margin: 0; padding: 8px 10px 4px; color: #b5b7ac; font-size: 12px; font-weight: 600; cursor: grab; user-select: none; }
   .session-folder-heading.dragging { cursor: grabbing; opacity: 0; user-select: none; }
   .session-folder-heading.drag-ghost {
