@@ -109,6 +109,8 @@ export interface AgentClient {
     count?: number,
   ): Promise<AgentMessagePage>;
   readFile(sessionId: string, path: string): Promise<AgentFileContent>;
+  /** Loadable file URL for a persisted media file (bare file name). */
+  mediaUrl(file: string): Promise<string>;
   sessionTabs(sessionId: string): Promise<AgentSessionTabs | null>;
   saveSessionTabs(
     sessionId: string,
@@ -197,6 +199,7 @@ export function createAgentClient(
     loadOlder: (sessionId, before, count = 200) =>
       agent.call("loadOlder", sessionId, before, count),
     readFile: (sessionId, path) => agent.call("readFile", sessionId, path),
+    mediaUrl: (file) => agent.call("mediaUrl", file),
     sessionTabs: (sessionId) => agent.call("sessionTabs", sessionId),
     saveSessionTabs: (sessionId, tabs) =>
       agent.call("saveSessionTabs", sessionId, tabs),

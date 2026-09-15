@@ -164,6 +164,18 @@ export function createAppState({
   const [followupMenuOpen, setFollowupMenuOpen] = createSignal(false);
   const [folderMenuOpen, setFolderMenuOpen] = createSignal(false);
 
+  // Loadable file URLs for persisted message images, cached per file name so
+  // re-renders and feed replays never re-request the same one.
+  const mediaUrls = new Map<string, Promise<string>>();
+  const mediaUrl = (file: string): Promise<string> => {
+    let url = mediaUrls.get(file);
+    if (!url) {
+      url = client.mediaUrl(file);
+      mediaUrls.set(file, url);
+    }
+    return url;
+  };
+
   // Create-modal open state lives app-wide so app-level accelerators can
   // drive it, not just the sidebar button. Register Cmd/Ctrl+T once; the
   // keybinding.main module intercepts the keystroke (even inside browser
@@ -444,20 +456,9 @@ export function createAppState({
   const selectedModel = createMemo(() =>
     selectedProvider()?.models.find(({ id }) => id === modelId()),
   );
-  const timeline = createMemo(() => {
-    const entries = collapseWorkRuns(timelineEntries(messages()));
-    renderLog(
-      `timeline msgCount=${messages().length} entries=[${entries
-        .map((entry) => {
-          if (entry.type === "work")
-            return `work(${entry.entries.length} items)`;
-          if (entry.type === "tools") return `tools(${entry.messages.length})`;
-          return `msg role=${entry.message.role} status=${entry.message.status} act=${describeActivity(entry.message.activity)}`;
-        })
-        .join(" | ")}]`,
-    );
-    return entries;
-  });
+  const timeline = createMemo(() =>
+    collapseWorkRuns(timelineEntries(messages())),
+  );
   const patches = createMemo(() => patchEntries(messages()));
   const sideActive = createMemo(() =>
     activeSideTab(sideTabs(), activeSideTabId()),
@@ -755,30 +756,6 @@ export function createAppState({
   let sendStartedAt = 0;
 
   const applyMessageChange = (change: AgentMessageChange): void => {
-    // [agent-render] diagnostic: log every backend-driven change that can
-    // re-render the timeline.
-    if (change.type === "message-created") {
-      const { message } = change;
-      renderLog(
-        `created id=${message.id.slice(-6)} role=${message.role} status=${message.status} ` +
-          `activity=${describeActivity(message.activity)} contentLen=${message.content.length} ` +
-          `createdAt=${message.createdAt.toISOString()}`,
-      );
-    } else if (change.type === "message-replaced") {
-      const { message } = change;
-      renderLog(
-        `replaced id=${message.id.slice(-6)} role=${message.role} status=${message.status} ` +
-          `activity=${describeActivity(message.activity)} contentLen=${message.content.length}`,
-      );
-    } else if (change.type === "content-appended") {
-      renderLog(
-        `content-appended id=${change.messageId.slice(-6)} +${change.content.length}ch`,
-      );
-    } else {
-      renderLog(
-        `status id=${change.messageId.slice(-6)} status=${change.status} lastError=${change.lastError}`,
-      );
-    }
     setMessages((current) => {
       if (change.type === "message-created") {
         if (current.some(({ id }) => id === change.message.id)) return current;
@@ -1559,6 +1536,7 @@ export function createAppState({
     chooseFolder,
     startSession,
     sendMessage,
+    mediaUrl,
     implementNext,
     setSessionArchived,
     renameSession,

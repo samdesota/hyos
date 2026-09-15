@@ -1,4 +1,5 @@
 import { readFile, realpath, stat } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import path from "node:path";
 
 import { dialog, type BrowserWindow } from "electron";
@@ -945,6 +946,7 @@ export function createAgentHost(options: {
       store.pageMessages(sessionId, before, Math.min(200, Math.max(1, count))),
     readFile: (sessionId, requestedPath) =>
       readSessionFile(store, sessionId, requestedPath),
+    mediaUrl: (file) => pathToFileURL(media.pathFor(file)).href,
     closeFeed,
     sessionTabs: (sessionId) => store.loadSessionTabs(sessionId),
     saveSessionTabs: (sessionId, tabs) =>

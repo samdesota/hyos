@@ -3,6 +3,7 @@ import {
   Show,
   createEffect,
   createMemo,
+  createResource,
   createSignal,
   onCleanup,
   onMount,
@@ -12,6 +13,7 @@ import {
 
 import type {
   AgentMessage,
+  AgentMessageImage,
   AgentPlan,
   AgentPlanTask,
   AgentProviderSummary,
@@ -348,7 +350,19 @@ const TimelineEntryView: Component<{
     <article class={`message ${entry.message.role}`}>
       <Show
         when={entry.message.role === "assistant"}
-        fallback={<pre class="message-body">{entry.message.content}</pre>}
+        fallback={
+          <>
+            <Show
+              when={entry.message.images && entry.message.images.length > 0}
+            >
+              <MessageImages
+                images={entry.message.images ?? []}
+                mediaUrl={app.mediaUrl}
+              />
+            </Show>
+            <pre class="message-body">{entry.message.content}</pre>
+          </>
+        }
       >
         <MarkdownBody content={entry.message.content} app={app} />
       </Show>
@@ -356,6 +370,27 @@ const TimelineEntryView: Component<{
         <div class="message-error">{entry.message.lastError}</div>
       </Show>
     </article>
+  );
+};
+
+/**
+ * A user message's attached images: each persisted media file resolves to a
+ * loadable file URL through the agent capability, rendered above the text.
+ */
+const MessageImages: Component<{
+  images: readonly AgentMessageImage[];
+  mediaUrl: (file: string) => Promise<string>;
+}> = (props) => {
+  const [urls] = createResource(
+    () => props.images.map(({ file }) => file),
+    (files) => Promise.all(files.map((file) => props.mediaUrl(file))),
+  );
+  return (
+    <div class="message-images">
+      <For each={urls() ?? []}>
+        {(url) => <img src={url} alt="Attached image" />}
+      </For>
+    </div>
   );
 };
 

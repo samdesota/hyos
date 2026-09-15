@@ -1025,6 +1025,7 @@ export function createAgentStore(database: Database): AgentStore {
   function messageValue(
     row: StoredAgentMessage,
     chunks: StoredAgentMessageChunk[],
+    images: readonly StoredImage[] = [],
   ): AgentMessage {
     const storedContent = chunks.map((chunk) => chunk.content).join("");
     const content = storedContent.startsWith(commentaryPrefix)
@@ -1042,6 +1043,7 @@ export function createAgentStore(database: Database): AgentStore {
       ...row,
       content,
       activity: decodeActivity(content),
+      ...(images.length > 0 ? { images } : {}),
       usage:
         row.promptTokens !== null && row.contextWindow !== null
           ? {
@@ -1409,8 +1411,31 @@ export function createAgentStore(database: Database): AgentStore {
       const selected = rows.slice(start, start + Math.max(1, count));
       selected.reverse();
       const chunksByMessage = await fetchSessionChunks(sessionId);
+      // Image references ride on user messages; one query per page covers
+      // every message on it.
+      const imageRows = await database.fetch(
+        hydb
+          .query(agentMessageImages)
+          .where((image) => image.sessionId.eq(sessionId))
+          .many(),
+      );
+      const imagesByMessage = new Map<string, StoredImage[]>();
+      for (const image of imageRows) {
+        const existing = imagesByMessage.get(image.messageId);
+        const entry = {
+          id: image.id,
+          file: image.file,
+          mimeType: image.mimeType,
+        };
+        if (existing) existing.push(entry);
+        else imagesByMessage.set(image.messageId, [entry]);
+      }
       const assembled = selected.map((row) =>
-        messageValue(row, chunksByMessage.get(row.id) ?? []),
+        messageValue(
+          row,
+          chunksByMessage.get(row.id) ?? [],
+          imagesByMessage.get(row.id) ?? [],
+        ),
       );
       const maxPageBytes = 512 * 1024;
       let bytes = 0;

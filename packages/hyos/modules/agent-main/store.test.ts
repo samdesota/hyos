@@ -836,3 +836,44 @@ test("folder order and collapse state persist and publish", async () => {
     await database.close();
   }
 });
+
+test("pageMessages attaches persisted image references to the user message", async () => {
+  const storage = await memoryStorage({ schema: agentSchema });
+  const database = await hydb.database({ schema: agentSchema, storage });
+  const store = createAgentStore(database);
+
+  try {
+    const turn = await store.createSession({
+      prompt: "What is in this screenshot?",
+      folder: "/tmp/project",
+      providerId: "codex",
+      modelId: "gpt-5.6-sol",
+      images: [
+        { id: "img-1", file: "img-1.png", mimeType: "image/png" },
+        { id: "img-2", file: "img-2.jpg", mimeType: "image/jpeg" },
+      ],
+    });
+    await store.startTurn(turn.sessionId, "And this one?", undefined, null, [
+      { id: "img-3", file: "img-3.png", mimeType: "image/png" },
+    ]);
+
+    const page = await store.pageMessages(turn.sessionId, null, 50);
+    const users = page.messages.filter((message) => message.role === "user");
+    assert.deepEqual(
+      users.map((message) => message.images?.map(({ file }) => file)),
+      [["img-1.png", "img-2.jpg"], ["img-3.png"]],
+    );
+    assert.deepEqual(
+      users.map((message) => message.images?.[0]?.mimeType),
+      ["image/png", "image/png"],
+    );
+    // Assistant messages carry no image references.
+    assert.ok(
+      page.messages
+        .filter((message) => message.role === "assistant")
+        .every((message) => message.images === undefined),
+    );
+  } finally {
+    await database.close();
+  }
+});

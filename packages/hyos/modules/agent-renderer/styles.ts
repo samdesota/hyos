@@ -637,6 +637,8 @@ export const agentStyles = String.raw`
   .attachment-chip img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .attachment-remove { position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%; background: rgba(0,0,0,.65); color: #f2f0ea; font-size: 11px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .attachment-remove:hover { background: rgba(0,0,0,.85); }
+  .message-images { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .message-images img { max-width: 240px; max-height: 180px; border: 1px solid #3a3c35; border-radius: 8px; background: #171816; object-fit: cover; display: block; }
   .composer-bar { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-top: 1px solid #33342f; }
   .composer-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
   .composer .model-picker { flex: none; }

@@ -135,6 +135,17 @@ export type AgentSessionSummary = Readonly<{
   updatedAt: Date;
 }>;
 
+/**
+ * One image attached to a user message: a reference to a file persisted under
+ * the agent media directory (`file` is the bare file name). The renderer
+ * resolves it to a loadable URL through the `mediaUrl` method.
+ */
+export type AgentMessageImage = Readonly<{
+  id: string;
+  file: string;
+  mimeType: string;
+}>;
+
 export type AgentMessage = Readonly<{
   id: AgentMessageId;
   sessionId: AgentSessionId;
@@ -142,6 +153,8 @@ export type AgentMessage = Readonly<{
   status: AgentMessageStatus;
   content: string;
   activity: AgentActivity | null;
+  /** Images attached in the composer, present on user messages only. */
+  images?: readonly AgentMessageImage[];
   lastError: string | null;
   usage: Readonly<{
     promptTokens: number;
@@ -300,7 +313,7 @@ export type AgentCommandResult =
 
 export const agentCapability = defineRemoteCapability({
   id: "agent",
-  version: 15,
+  version: 16,
   methods: {
     execute: remoteMethod<
       readonly [command: AgentCommand],
@@ -324,6 +337,8 @@ export const agentCapability = defineRemoteCapability({
       readonly [sessionId: AgentSessionId, path: string],
       AgentFileContent
     >(),
+    /** Loadable file URL for a persisted media file (bare file name). */
+    mediaUrl: remoteMethod<readonly [file: string], string>(),
     closeFeed: remoteMethod<readonly [feedId: AgentFeedId], void>(),
     sessionTabs: remoteMethod<
       readonly [sessionId: AgentSessionId],
