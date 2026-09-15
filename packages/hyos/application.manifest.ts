@@ -97,7 +97,7 @@ export const applicationManifest = defineApplicationManifest({
       host: "main",
       reload: "hot",
       config: {
-        initialUrl: "https://example.com/",
+        initialUrl: "https://www.google.com/",
       },
     },
     {
