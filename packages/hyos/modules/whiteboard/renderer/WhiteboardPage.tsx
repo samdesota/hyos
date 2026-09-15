@@ -58,6 +58,11 @@ export function createWhiteboardPage(
     );
     const [editingId, setEditingId] = createSignal<string | null>(null);
     const [draggingId, setDraggingId] = createSignal<string | null>(null);
+    // The board title: null until the board loads or is renamed, rendered as
+    // the rename bar's placeholder ("Whiteboard").
+    const [title, setTitle] = createSignal<string | null>(null);
+    // The rename bar's live input text while focused, so Escape can revert.
+    const [titleDraft, setTitleDraft] = createSignal<string | null>(null);
 
     // --- Persistence -------------------------------------------------------
     // The board loads once on mount; every card mutation calls scheduleSave,
@@ -97,6 +102,18 @@ export function createWhiteboardPage(
       saveTimer = setTimeout(() => void flushSave(), saveDebounceMs);
     };
 
+    // Committing the rename bar writes the trimmed title; an empty title
+    // clears it back to untitled. Escape (handled in the input) reverts.
+    const commitTitle = (value: string): void => {
+      setTitleDraft(null);
+      const next = value.trim();
+      if (next === (title() ?? "")) return;
+      setTitle(next === "" ? null : next);
+      void client
+        .renameBoard(props.boardId, next)
+        .catch((error) => console.error("Whiteboard rename failed", error));
+    };
+
     onMount(() => {
       void client
         .board(props.boardId)
@@ -113,6 +130,7 @@ export function createWhiteboardPage(
           );
           setCards(restored);
           setMedia({ ...board.media });
+          setTitle(board.title);
         })
         .catch((error) => console.error("Whiteboard load failed", error));
     });
@@ -404,6 +422,32 @@ export function createWhiteboardPage(
 
     return (
       <section class="whiteboard-page" aria-label="Whiteboard">
+        <div class="whiteboard-title-bar">
+          <input
+            class="whiteboard-title-input"
+            type="text"
+            value={titleDraft() ?? title() ?? ""}
+            placeholder="Whiteboard"
+            aria-label="Board title"
+            spellcheck={false}
+            onInput={(event) => setTitleDraft(event.currentTarget.value)}
+            onFocus={(event) => setTitleDraft(event.currentTarget.value)}
+            onBlur={(event) => commitTitle(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.currentTarget.blur();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                // Revert to the stored title; blur then commits the restored
+                // value, which the equality guard turns into a no-op.
+                event.currentTarget.value = title() ?? "";
+                setTitleDraft(null);
+                event.currentTarget.blur();
+              }
+            }}
+          />
+        </div>
         <div
           ref={canvas}
           class="whiteboard-canvas"

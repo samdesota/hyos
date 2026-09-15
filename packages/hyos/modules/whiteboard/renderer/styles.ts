@@ -29,6 +29,18 @@ export const whiteboardStyles = String.raw`
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     margin: 0; color: #6f716a; font-size: 13px; user-select: none; pointer-events: none;
   }
+  .whiteboard-title-bar {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    max-width: min(60%, 420px); z-index: 1;
+  }
+  .whiteboard-title-input {
+    display: block; width: 100%; padding: 3px 12px; text-align: center;
+    border: 1px solid #343630; border-radius: 999px; background: #20211ecc;
+    color: #f2f0ea; font-size: 12px; line-height: 16px;
+    text-overflow: ellipsis; outline: none; user-select: text;
+  }
+  .whiteboard-title-input:focus { border-color: #b2cb8c; }
+  .whiteboard-title-input::placeholder { color: #6f716a; }
   .whiteboard-zoom {
     position: absolute; right: 12px; bottom: 12px; padding: 3px 9px;
     border: 1px solid #343630; border-radius: 999px; background: #20211ecc;
