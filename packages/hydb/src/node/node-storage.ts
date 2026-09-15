@@ -1072,9 +1072,16 @@ export class NodeStorageDatabase implements StorageDatabase {
     }
   }
 
-  /** Determines which migration step a branch head must resume at. */
+  /**
+   * Determines which migration step a branch head must resume at. The
+   * progress marker is only trusted when it agrees with the head schema
+   * fingerprint: markers written by an earlier migration step list (for
+   * example the deprecated inline group options) do not index the supplied
+   * steps, so a stale index must never skip or repeat work.
+   */
   private resumeStepIndex(manifest: DatabaseManifest): number {
     const steps = this.migrationSteps;
+    const schema = manifest.schema;
     const marker = manifest.migration;
     if (marker !== undefined) {
       if (
@@ -1087,9 +1094,15 @@ export class NodeStorageDatabase implements StorageDatabase {
           "Storage migration progress marker does not match the supplied migrations",
         );
       }
-      return marker.step;
+      const next = steps[marker.step];
+      const nextFrom =
+        next === undefined
+          ? this.migrationFinal
+          : next.kind === "data"
+            ? next.fingerprint
+            : next.from;
+      if (schema === nextFrom) return marker.step;
     }
-    const schema = manifest.schema;
     if (schema === this.migrationFinal) return steps.length;
     if (schema === this.migrationBase) return 0;
     // Commits written before per-step markers existed sit at an intermediate

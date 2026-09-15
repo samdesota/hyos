@@ -10,6 +10,7 @@ import { browserCapability } from "../../capabilities/browser.js";
 import type { MainRemoteCapabilities } from "../../remote-capabilities.js";
 import { defineModule } from "../../runtime.js";
 import { createAgentHost } from "./host.js";
+import { agentMigrations } from "./migrations/index.js";
 import { agentSchema } from "./model.js";
 import { createAgentProviders } from "./providers/index.js";
 import { createAgentStore } from "./store.js";
@@ -60,29 +61,7 @@ export = defineModule<AgentMainConfig>({
     const storage = await openNodeStorage({
       directory: path.resolve(root, config.storagePath),
       schema: agentSchema,
-      addedTableMigrations: [
-        [
-          "hyos_agent_boards",
-          "hyos_agent_board_cards",
-          "hyos_agent_board_media",
-        ],
-        ["hyos_agent_global_tabs"],
-      ],
-      nullableColumnMigrations: [
-        { hyos_agent_sessions: ["archivedAt"] },
-        {
-          hyos_agent_messages: [
-            "promptTokens",
-            "completionTokens",
-            "contextWindow",
-          ],
-        },
-        { hyos_agent_sessions: ["plan"] },
-        { hyos_agent_sessions: ["tabs"] },
-        { hyos_agent_sessions: ["statusDetail"] },
-        { hyos_agent_sessions: ["order"] },
-        { hyos_agent_sessions: ["seenStatusDetail"] },
-      ],
+      migrations: agentMigrations,
     });
     bootTrace("storage:open:done");
     bootTrace("database:init:start");

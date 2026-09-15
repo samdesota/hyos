@@ -261,3 +261,50 @@ test("migration list cannot be combined with legacy options", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("migration list resumes a legacy-group storage through a stale progress marker", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "hydb-migration-marker-"));
+  try {
+    // A storage written by the deprecated inline options carries progress
+    // markers indexed against the grouped step list, which does not align
+    // with the declarative per-op steps of an equivalent migration list.
+    let storage = await openNodeStorage({
+      directory,
+      schema: originalSchema,
+    });
+    const head = await storage.head();
+    await storage.commit({
+      branch: "main",
+      expectedHead: head,
+      mutations: [
+        storageMutation.insert(originalRows, { id: "a", title: "Keep" }),
+      ],
+    });
+    await storage.close();
+    storage = await openNodeStorage({
+      directory,
+      schema: latestSchema,
+      addNullableColumns: { mopen_rows: ["archivedAt", "promptTokens"] },
+    });
+    await storage.close();
+    // The declarative list produces one step per column (two steps) while the
+    // inline options committed both columns as one step: the stored marker
+    // index is stale, so resume must fall back to the schema fingerprint.
+    const reopened = await openNodeStorage({
+      directory,
+      schema: latestSchema,
+      migrations: columnMigrations,
+    });
+    const snapshot = await reopened.snapshot();
+    assert.deepEqual(await snapshot.get(latestRows, ["a"]), {
+      id: "a",
+      title: "Keep",
+      archivedAt: null,
+      promptTokens: null,
+    });
+    await snapshot.close();
+    await reopened.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
