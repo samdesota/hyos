@@ -78,6 +78,22 @@ const isActivityEntry = (entry: TimelineEntry): boolean =>
   (entry.type === "message" && entry.message.activity?.type === "commentary");
 
 /**
+ * A thinking (commentary) block capped at 60vh with overflow hidden — never
+ * scrollable. The content is anchored to the bottom of the cap so the newest
+ * streamed thinking stays visible while older text is clipped above.
+ */
+const CommentaryBody: Component<{
+  content: string;
+  app: AppState;
+}> = (props) => (
+  <div class="commentary-capped">
+    <div class="commentary-capped-inner">
+      <MarkdownBody content={props.content} app={props.app} />
+    </div>
+  </div>
+);
+
+/**
  * A run of live agent activity (thinking commentary + tool commands) capped at
  * 80vh with internal scroll, so the previous prompt stays visible while the
  * agent works. The region stays pinned to its newest content while streaming
@@ -311,7 +327,7 @@ const TimelineEntryView: Component<{
     </details>
   ) : entry.message.activity?.type === "commentary" ? (
     <article class="message commentary">
-      <MarkdownBody content={entry.message.activity.text} app={app} />
+      <CommentaryBody content={entry.message.activity.text} app={app} />
       <Show when={entry.message.status === "streaming"}>
         <span class="streaming-caret" />
       </Show>

@@ -425,6 +425,14 @@ export const agentStyles = String.raw`
   .message.assistant .message-body { color: #dddcd6; }
   .message.commentary { margin-bottom: 16px; color: #c9c8c1; }
   .message.commentary .message-body { line-height: 1.55; }
+  /* A thinking (commentary) block caps at 60vh with overflow hidden (never
+     scrollable); its content is anchored to the bottom so the newest streamed
+     text stays visible while older text is clipped above the cap. */
+  .commentary-capped {
+    max-height: 60vh; overflow: hidden;
+    display: flex; flex-direction: column; justify-content: flex-end;
+  }
+  .commentary-capped-inner { min-height: 0; }
   /* A run of agent activity (thinking + commands) is capped so the previous
      prompt stays visible while the agent works; it scrolls internally and
      stays pinned to its newest content. */
