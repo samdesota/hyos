@@ -337,9 +337,22 @@ export const agentStyles = String.raw`
   .message.user .message-body { padding: 13px 15px; border-radius: 13px; background: #292b26; }
   .message.assistant .message-body { color: #dddcd6; }
   .message.commentary { margin-bottom: 16px; color: #c9c8c1; }
-  .message.commentary .message-body {
-    max-height: 80vh; overflow-y: auto; overscroll-behavior: contain; line-height: 1.55;
+  .message.commentary .message-body { line-height: 1.55; }
+  .commentary-capped { position: relative; }
+  .commentary-capped.capped .message-body {
+    max-height: 80vh; overflow-y: auto; overscroll-behavior: contain;
   }
+  .commentary-capped.capped::before {
+    content: ""; position: absolute; inset: auto 0 0; height: 64px; z-index: 1;
+    background: linear-gradient(transparent, #161714f0); pointer-events: none;
+  }
+  .commentary-show-all {
+    position: absolute; bottom: 10px; left: 0; z-index: 2;
+    padding: 3px 10px; border: 1px solid #3b3d37; border-radius: 7px;
+    color: #b5b7ac; background: #20221eee; font-size: 11px; font-weight: 600;
+    cursor: pointer;
+  }
+  .commentary-show-all:hover { color: #eceae5; border-color: #55584f; }
   .message-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.62; }
   .markdown { white-space: normal; }
   .markdown > :first-child { margin-top: 0; }

@@ -5,6 +5,7 @@ import {
   createMemo,
   createSignal,
   onCleanup,
+  onMount,
   type Component,
   type JSX,
 } from "solid-js";
@@ -44,7 +45,11 @@ export type SessionPageProps = Readonly<{
   BrowserView: BrowserViewModule["BrowserView"];
 }>;
 
-const MarkdownBody: Component<{ content: string; app: AppState }> = (props) => {
+const MarkdownBody: Component<{
+  content: string;
+  app: AppState;
+  bodyRef?: (element: HTMLDivElement) => void;
+}> = (props) => {
   let element!: HTMLDivElement;
   // Links in agent replies open as browser tabs in the session's side panel
   // instead of navigating the agent renderer itself.
@@ -61,7 +66,73 @@ const MarkdownBody: Component<{ content: string; app: AppState }> = (props) => {
     onCleanup(dispose);
   });
   return (
-    <div class="message-body markdown" ref={element} onClick={handleClick} />
+    <div
+      class="message-body markdown"
+      ref={(el) => {
+        element = el;
+        props.bodyRef?.(el);
+      }}
+      onClick={handleClick}
+    />
+  );
+};
+
+/**
+ * Thinking (commentary) content capped at 80vh with internal scroll. While the
+ * cap is active, the block fades out at the bottom and a "Show all thinking"
+ * button sits above the fade to expand it in place.
+ */
+const CommentaryBody: Component<{ content: string; app: AppState }> = (
+  props,
+) => {
+  let body!: HTMLDivElement;
+  const [capped, setCapped] = createSignal(false);
+  const [expanded, setExpanded] = createSignal(false);
+  const measure = (): void => {
+    setCapped(body.scrollHeight > body.clientHeight + 1);
+  };
+  createEffect(() => {
+    const dispose = mountMarkdown(body, stripPlanBlocks(props.content));
+    onCleanup(dispose);
+  });
+  onMount(() => {
+    measure();
+    const resizeObserver = new ResizeObserver(measure);
+    resizeObserver.observe(body);
+    // Markdown updates don't always resize the capped body, so watch the
+    // content itself for streaming growth.
+    const mutationObserver = new MutationObserver(measure);
+    mutationObserver.observe(body, { childList: true, subtree: true });
+    const onResize = (): void => measure();
+    window.addEventListener("resize", onResize);
+    onCleanup(() => {
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      window.removeEventListener("resize", onResize);
+    });
+  });
+  return (
+    <div
+      class="commentary-capped"
+      classList={{ capped: capped() && !expanded() }}
+    >
+      <MarkdownBody
+        content={props.content}
+        app={props.app}
+        bodyRef={(el) => {
+          body = el;
+        }}
+      />
+      <Show when={capped() && !expanded()}>
+        <button
+          class="commentary-show-all"
+          type="button"
+          onClick={() => setExpanded(true)}
+        >
+          Show all thinking
+        </button>
+      </Show>
+    </div>
   );
 };
 
@@ -217,7 +288,7 @@ const TimelineEntryView: Component<{
     </details>
   ) : entry.message.activity?.type === "commentary" ? (
     <article class="message commentary">
-      <MarkdownBody content={entry.message.activity.text} app={app} />
+      <CommentaryBody content={entry.message.activity.text} app={app} />
       <Show when={entry.message.status === "streaming"}>
         <span class="streaming-caret" />
       </Show>
