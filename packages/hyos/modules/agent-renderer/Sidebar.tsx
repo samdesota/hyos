@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from "@solidjs/router";
+import { useLocation, useMatch, useNavigate } from "@solidjs/router";
 import {
   For,
   Show,
@@ -471,11 +471,18 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
   const { sound } = props;
   const navigate = useNavigate();
   const location = useLocation();
+  // The highlighted session follows the URL, not internal state: only the
+  // `/session/:id` route names an open session, so tab, archive, and
+  // new-session routes highlight nothing.
+  const sessionMatch = useMatch(() => ROUTE_PATHS.session);
+  const routedSessionId = createMemo(() => {
+    const id = sessionMatch()?.params.id;
+    return id ? decodeURIComponent(id) : null;
+  });
   // Mirror of the sound module's enabled state; the module owns the truth and
   // persists it, the signal only keeps the switch rendering in step.
   const [soundEnabled, setSoundEnabled] = createSignal(sound.isEnabled());
   const {
-    activeId,
     activeSessions,
     browserState,
     globalTabs,
@@ -907,7 +914,7 @@ export const Sidebar: Component<{ app: AppState; sound: AgentSound }> = (
                 <div
                   class="session-row"
                   classList={{
-                    active: activeId() === s().id,
+                    active: routedSessionId() === s().id,
                     // The lifted row leaves an invisible gap marking where
                     // the item will land.
                     dragging: dragSessionId() === s().id,
