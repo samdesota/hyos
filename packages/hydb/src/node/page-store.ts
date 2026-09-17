@@ -94,7 +94,10 @@ export class AppendOnlyPageStore implements TreePageStore {
   #end = 0;
   #closed = false;
 
-  private constructor(private readonly file: FileHandle) {}
+  private constructor(
+    private readonly file: FileHandle,
+    private readonly readOnly = false,
+  ) {}
 
   static async open(
     path: string,
@@ -103,6 +106,18 @@ export class AppendOnlyPageStore implements TreePageStore {
     const store = new AppendOnlyPageStore(await open(path, "a+"));
     try {
       await store.recover(recoveredOffset);
+      return store;
+    } catch (error) {
+      await store.close();
+      throw error;
+    }
+  }
+
+  /** Strict read-only reader: never recovers/truncates a damaged source. */
+  static async openReadOnly(path: string): Promise<AppendOnlyPageStore> {
+    const store = new AppendOnlyPageStore(await open(path, "r"), true);
+    try {
+      store.#end = (await store.file.stat()).size;
       return store;
     } catch (error) {
       await store.close();
@@ -124,6 +139,7 @@ export class AppendOnlyPageStore implements TreePageStore {
 
   async append(type: RecordType, payload: Uint8Array): Promise<RecordId> {
     this.assertOpen();
+    if (this.readOnly) throw new Error("Page store is read-only");
     if (payload.byteLength > 0xffff_ffff) {
       throw new RangeError("Storage record exceeds 4 GiB");
     }
@@ -161,7 +177,8 @@ export class AppendOnlyPageStore implements TreePageStore {
     let position = start;
     while (position < this.#end) {
       const header = await this.readHeader(position, this.#end);
-      if (header === undefined) break;
+      if (header === undefined)
+        throw new Error(`Corrupt storage header at ${position}`);
       if (types === undefined || types.has(header.type)) {
         const record = await this.readRecord(position);
         if (record === undefined)

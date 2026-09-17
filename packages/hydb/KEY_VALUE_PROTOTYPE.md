@@ -85,8 +85,8 @@ size measurement. Concurrent inserts can affect the observed totals.
 
 ## Prototype boundaries
 
-- No migration from file databases and no schema migration support yet. Reopening
-  requires the same schema.
+- [Offline file import](FILE_IMPORT.md) preserves published data and verifies
+  queries. Schema migrations remain unsupported; reopening requires the same schema.
 - LMDB can reuse deleted pages once readers release them; this does not imply
   immediate filesystem shrinkage. Disk shrinkage is a separate concern.
 - A write stages its reachable new pages in memory and publishes one transaction.

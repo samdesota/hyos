@@ -57,3 +57,5 @@ export {
 export type { KeyValueStorageOptions } from "./key-value-storage.js";
 
 export type { KeyValueGarbageCollectionReport } from "./key-value-gc.js";
+
+export { importFileStorage, type FileImportReport } from "./file-import.js";

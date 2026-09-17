@@ -1,0 +1,410 @@
+{
+  "sourceBytes": 146259080,
+  "pages": 8585,
+  "pageBytes": 145112004,
+  "commits": 201,
+  "branches": 1,
+  "historicalSchemaCommits": 1,
+  "queries": [
+    {
+      "branch": "main",
+      "results": [
+        {
+          "query": "hyos_agent_sessions:all",
+          "rows": 90,
+          "sha256": "eee1ae364877d7a27df9ecc94ef50d2007a3a4ef5f4dd9415c67dba97352ac8f"
+        },
+        {
+          "query": "hyos_agent_sessions:reverse-limit",
+          "rows": 17,
+          "sha256": "bf7897d3826ea631bb3f7629d710676520c272267140a8f6417ce2cc9273db8b"
+        },
+        {
+          "query": "hyos_agent_sessions:point:0",
+          "rows": 1,
+          "sha256": "84b509067ba7ea6021d337f071e1621ae718d47a1edef798c8654ed4780c8ce0"
+        },
+        {
+          "query": "hyos_agent_sessions:range:0",
+          "rows": 11,
+          "sha256": "ef8220d2ef46050e18a2fe788cf12009327a57a7b3aecbc07f553d0a8c74d7f1"
+        },
+        {
+          "query": "hyos_agent_sessions:point:1",
+          "rows": 1,
+          "sha256": "1328461b801a104066eacaa1562b4eb13292f7e24515312bc377e5e8b36e6b3c"
+        },
+        {
+          "query": "hyos_agent_sessions:range:1",
+          "rows": 11,
+          "sha256": "62cbed0374d6121197b43f2897dc3dbc538e17aec4fed05df9217176ec06b376"
+        },
+        {
+          "query": "hyos_agent_sessions:point:2",
+          "rows": 1,
+          "sha256": "c712b977f282c0e1dcdec7e3269812a79c9a61b883e5490c91de7e84485e8928"
+        },
+        {
+          "query": "hyos_agent_sessions:range:2",
+          "rows": 11,
+          "sha256": "3e1cc3ebffa98f021cee963c70ff6e675ff9c360e6bd81d3340df11e79623e16"
+        },
+        {
+          "query": "hyos_agent_sessions:hyos_agent_sessions_updated_idx:all",
+          "rows": 90,
+          "sha256": "81e3c922674412774882bf424529ae49f4a1abef556626be51d8ec041395b9b9"
+        },
+        {
+          "query": "hyos_agent_sessions:hyos_agent_sessions_updated_idx:prefix:0",
+          "rows": 1,
+          "sha256": "256de7c391af67c1efa21519444f3ffe278374658de9aef7f8599726adea90e3"
+        },
+        {
+          "query": "hyos_agent_sessions:hyos_agent_sessions_updated_idx:prefix:1",
+          "rows": 1,
+          "sha256": "fea4d644a756e9039a069ba77076b351c046f3e86d42767628c10f0addc32b27"
+        },
+        {
+          "query": "hyos_agent_sessions:hyos_agent_sessions_updated_idx:prefix:2",
+          "rows": 1,
+          "sha256": "ef45304a64d2e25aad76c7a46b895fab2230eb6f95b1ae62541cf8f9f02fcf68"
+        },
+        {
+          "query": "hyos_agent_messages:all",
+          "rows": 16709,
+          "sha256": "e6894025f6acadec5532f57c10339fa00a9ab3030788362cd5c2bb644e141d96"
+        },
+        {
+          "query": "hyos_agent_messages:reverse-limit",
+          "rows": 17,
+          "sha256": "fda35ec796e8de05bc8ce80ce305e9ecbdeaf13eee8dc2549d99abb8ff4e94c2"
+        },
+        {
+          "query": "hyos_agent_messages:point:0",
+          "rows": 1,
+          "sha256": "2e9f71febf4823a6a0dc5bfa0a643e5c5d7f9d6119dfb57148916964494940fb"
+        },
+        {
+          "query": "hyos_agent_messages:range:0",
+          "rows": 11,
+          "sha256": "1143cad7a0fac308ce084b5ee6ee293f39e478dba2a79418944a205a1e56fbab"
+        },
+        {
+          "query": "hyos_agent_messages:point:1",
+          "rows": 1,
+          "sha256": "df013b94c6bb33efb85d2437319c664a89fab5cac66d1e71bc73f88efa904d2b"
+        },
+        {
+          "query": "hyos_agent_messages:range:1",
+          "rows": 11,
+          "sha256": "ee25080866a06625e0148950a31d5a6768a2bbf9a25caeb320a4ace948e7b25e"
+        },
+        {
+          "query": "hyos_agent_messages:point:2",
+          "rows": 1,
+          "sha256": "fde62a63bbd29fe26a4f9d942962780a023cba767dc11f5cee6b74fbc55a4c8a"
+        },
+        {
+          "query": "hyos_agent_messages:range:2",
+          "rows": 11,
+          "sha256": "1a5174ffe4582e66cc0208c98c77198fd9839f95c3522b2b53f5916f1b4ec951"
+        },
+        {
+          "query": "hyos_agent_messages:hyos_agent_messages_session_created_idx:all",
+          "rows": 16709,
+          "sha256": "caa6a06ff3b9404cd73db2f75d633570ae903e1cb9ef632fba08225197634538"
+        },
+        {
+          "query": "hyos_agent_messages:hyos_agent_messages_session_created_idx:prefix:0",
+          "rows": 512,
+          "sha256": "c4b141f8e56468fd206a5deda2f4d0a93c4b1798f6ad957586787fd959328f99"
+        },
+        {
+          "query": "hyos_agent_messages:hyos_agent_messages_session_created_idx:prefix:1",
+          "rows": 278,
+          "sha256": "545d0df44589db059a089e96b9c7ae9f94274e63ec27dd8190a5ffb1abdb78d7"
+        },
+        {
+          "query": "hyos_agent_messages:hyos_agent_messages_session_created_idx:prefix:2",
+          "rows": 351,
+          "sha256": "27c35491c47ee34e31be387be3f128b709eafa40307802ba1518a5aa147a612d"
+        },
+        {
+          "query": "hyos_agent_message_chunks:all",
+          "rows": 63135,
+          "sha256": "5914d3cb75d9984bdcf15f190c01877d28aafa36a1941bd8dbc3b85d24656ae7"
+        },
+        {
+          "query": "hyos_agent_message_chunks:reverse-limit",
+          "rows": 17,
+          "sha256": "5312d3e4f7bbf748c116cc36f3fc1d28b63170b28b0c67c9e886a552f5621f9b"
+        },
+        {
+          "query": "hyos_agent_message_chunks:point:0",
+          "rows": 1,
+          "sha256": "4cab74be0e1591c20e5da557d5917543dfbb3563725ffa12ba444d7f0b46acf1"
+        },
+        {
+          "query": "hyos_agent_message_chunks:range:0",
+          "rows": 11,
+          "sha256": "125b17ce7bac9568093e8ebe4bd3798e2d3154f0cc7eeb06bb3915fe32fe95ac"
+        },
+        {
+          "query": "hyos_agent_message_chunks:point:1",
+          "rows": 1,
+          "sha256": "b715353e24a0fe8b8623160a89f1e44d6a3f148326f4c03230888a0dd20e44fc"
+        },
+        {
+          "query": "hyos_agent_message_chunks:range:1",
+          "rows": 11,
+          "sha256": "bc93a3527eb91cc4b5340c9637336e6294d4f4dce298ebf7368eb5e7f5679467"
+        },
+        {
+          "query": "hyos_agent_message_chunks:point:2",
+          "rows": 1,
+          "sha256": "009d3e9c316254b411d3fd654ce334af01fa02d05a250b585cf84115e8cecda4"
+        },
+        {
+          "query": "hyos_agent_message_chunks:range:2",
+          "rows": 11,
+          "sha256": "e1e39160281cf4e9f431348b0a7c1f714711ced2a94575a7aa505ce5bf090e88"
+        },
+        {
+          "query": "hyos_agent_message_chunks:hyos_agent_chunks_message_index_idx:all",
+          "rows": 63135,
+          "sha256": "1ec0c766725d0bad39a4881ead40b8d32fb4cbd72e3202dbd5aefc058e05ff96"
+        },
+        {
+          "query": "hyos_agent_message_chunks:hyos_agent_chunks_message_index_idx:prefix:0",
+          "rows": 8,
+          "sha256": "a0b52b43c300989e2ad6c9302a9582245b5d3d1d7dd7df2696a83fdcdedd05fc"
+        },
+        {
+          "query": "hyos_agent_message_chunks:hyos_agent_chunks_message_index_idx:prefix:1",
+          "rows": 1,
+          "sha256": "fa7c7267e25b129904c9ecc76ca46be9e49aa72687ce934ab6fc046ca6d8510d"
+        },
+        {
+          "query": "hyos_agent_message_chunks:hyos_agent_chunks_message_index_idx:prefix:2",
+          "rows": 1,
+          "sha256": "ce1bb7895f9511a692d5aa4169f7e37e9dde87e18fbb1e8266b24d834d70a6ce"
+        },
+        {
+          "query": "hyos_agent_message_chunks:hyos_agent_chunks_session_created_idx:all",
+          "rows": 63135,
+          "sha256": "5748d0ff8b0399d3dea33a2b039efa049edf8e82adf26db722ea35f8b78a73d9"
+        },
+        {
+          "query": "hyos_agent_message_chunks:hyos_agent_chunks_session_created_idx:prefix:0",
+          "rows": 2567,
+          "sha256": "90eaceca1f464d222c5642cbee6c3dc73d6e5d909ccefbd279bd84788ceff821"
+        },
+        {
+          "query": "hyos_agent_message_chunks:hyos_agent_chunks_session_created_idx:prefix:1",
+          "rows": 4492,
+          "sha256": "ced3e3e4b7d740cd9fe9df3cc4dba7441032ff9a9cf004ec4b4852787044c4aa"
+        },
+        {
+          "query": "hyos_agent_message_chunks:hyos_agent_chunks_session_created_idx:prefix:2",
+          "rows": 876,
+          "sha256": "77eac0b3709d274dc88b9ada604fd212804abeb5530386ca2df68db80365cd2e"
+        },
+        {
+          "query": "hyos_agent_message_images:all",
+          "rows": 1,
+          "sha256": "30e29bbf24f6c381d1e109e119969e80d4a5d0c49770b1c6299d83bb37790242"
+        },
+        {
+          "query": "hyos_agent_message_images:reverse-limit",
+          "rows": 1,
+          "sha256": "30e29bbf24f6c381d1e109e119969e80d4a5d0c49770b1c6299d83bb37790242"
+        },
+        {
+          "query": "hyos_agent_message_images:point:0",
+          "rows": 1,
+          "sha256": "28aa3897cf956c78ded467eae1bba8d7f9cf27685143f4668bb4315ae5a71d10"
+        },
+        {
+          "query": "hyos_agent_message_images:range:0",
+          "rows": 1,
+          "sha256": "30e29bbf24f6c381d1e109e119969e80d4a5d0c49770b1c6299d83bb37790242"
+        },
+        {
+          "query": "hyos_agent_message_images:hyos_agent_message_images_message_idx:all",
+          "rows": 1,
+          "sha256": "30e29bbf24f6c381d1e109e119969e80d4a5d0c49770b1c6299d83bb37790242"
+        },
+        {
+          "query": "hyos_agent_message_images:hyos_agent_message_images_message_idx:prefix:0",
+          "rows": 1,
+          "sha256": "30e29bbf24f6c381d1e109e119969e80d4a5d0c49770b1c6299d83bb37790242"
+        },
+        {
+          "query": "hyos_agent_boards:all",
+          "rows": 2,
+          "sha256": "fbc6f7b1e080060da1dd4191a017c1bccb1fa7bb2769a911c501a6b53432a330"
+        },
+        {
+          "query": "hyos_agent_boards:reverse-limit",
+          "rows": 2,
+          "sha256": "d6283d4446a2edfac89a35cc2fd9d7fe0563a8544dd0508b2b14f9562a47a1aa"
+        },
+        {
+          "query": "hyos_agent_boards:point:0",
+          "rows": 1,
+          "sha256": "fbfba8cf6b63aa7a75c0bcb2f9aee9bb635e0ba28d118b98aff2870611d8bd48"
+        },
+        {
+          "query": "hyos_agent_boards:range:0",
+          "rows": 2,
+          "sha256": "fbc6f7b1e080060da1dd4191a017c1bccb1fa7bb2769a911c501a6b53432a330"
+        },
+        {
+          "query": "hyos_agent_boards:point:1",
+          "rows": 1,
+          "sha256": "fee058fbb15de99ebe75e54e8d2bea24ca895a72bb3320b10cfbe7332e28f485"
+        },
+        {
+          "query": "hyos_agent_boards:range:1",
+          "rows": 1,
+          "sha256": "1b0a4219e9d063d4d0b5ae6a798da50a2553a1604d3b79b030950c4dd92282ea"
+        },
+        {
+          "query": "hyos_agent_boards:hyos_agent_boards_updated_idx:all",
+          "rows": 2,
+          "sha256": "d6283d4446a2edfac89a35cc2fd9d7fe0563a8544dd0508b2b14f9562a47a1aa"
+        },
+        {
+          "query": "hyos_agent_boards:hyos_agent_boards_updated_idx:prefix:0",
+          "rows": 1,
+          "sha256": "6def4f6eace11aa3ffec2fd6580fa4fe4dd8587e7c1818add8c23e70ab481a45"
+        },
+        {
+          "query": "hyos_agent_boards:hyos_agent_boards_updated_idx:prefix:1",
+          "rows": 1,
+          "sha256": "1b0a4219e9d063d4d0b5ae6a798da50a2553a1604d3b79b030950c4dd92282ea"
+        },
+        {
+          "query": "hyos_agent_board_cards:all",
+          "rows": 3,
+          "sha256": "63294d9ac5b9e085737223063d0f043c574dd6ef1245ed7fff20f7f431c30580"
+        },
+        {
+          "query": "hyos_agent_board_cards:reverse-limit",
+          "rows": 3,
+          "sha256": "410e8615d107e72b0d42af179a55dc92a9362c28754de7620c113f188fa64300"
+        },
+        {
+          "query": "hyos_agent_board_cards:point:0",
+          "rows": 1,
+          "sha256": "fae6a5a95a5660f27309d57c79757f1409fbbcbe6f8c43acf54645b4e082cd8f"
+        },
+        {
+          "query": "hyos_agent_board_cards:range:0",
+          "rows": 3,
+          "sha256": "63294d9ac5b9e085737223063d0f043c574dd6ef1245ed7fff20f7f431c30580"
+        },
+        {
+          "query": "hyos_agent_board_cards:point:1",
+          "rows": 1,
+          "sha256": "4e17784f4172e49ede287a66fd2f58ce23b76c547efa700f334cb5067bccad04"
+        },
+        {
+          "query": "hyos_agent_board_cards:range:1",
+          "rows": 2,
+          "sha256": "1a2232940caece14c25fa0abe9a98e3df03e2c0d8c68e949a9b665a4b43dfccd"
+        },
+        {
+          "query": "hyos_agent_board_cards:point:2",
+          "rows": 1,
+          "sha256": "5e5504ec8b2f8cdbd8a11f3f5de8be74edf8a8771f1d57b5d89052e4e8f1ae6a"
+        },
+        {
+          "query": "hyos_agent_board_cards:range:2",
+          "rows": 1,
+          "sha256": "d75a0b172ea57814a2c86473a0fe79ca742af4a8908ced536c1290fabcdee6eb"
+        },
+        {
+          "query": "hyos_agent_board_cards:hyos_agent_board_cards_board_idx:all",
+          "rows": 3,
+          "sha256": "73b2ce2b6988bfdd2fe2612b54fcc8677c33d904265fc06f828225c68de8752a"
+        },
+        {
+          "query": "hyos_agent_board_cards:hyos_agent_board_cards_board_idx:prefix:0",
+          "rows": 2,
+          "sha256": "46b862b3b4859aedab2465f44b9ad605517e011eda316301d637b21447e29c4e"
+        },
+        {
+          "query": "hyos_agent_board_cards:hyos_agent_board_cards_board_idx:prefix:1",
+          "rows": 1,
+          "sha256": "bb9740b49ae56d889653cd864c250afc6aafa072781cd149c6044e616623aac9"
+        },
+        {
+          "query": "hyos_agent_board_cards:hyos_agent_board_cards_board_idx:prefix:2",
+          "rows": 2,
+          "sha256": "46b862b3b4859aedab2465f44b9ad605517e011eda316301d637b21447e29c4e"
+        },
+        {
+          "query": "hyos_agent_board_media:all",
+          "rows": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "query": "hyos_agent_board_media:reverse-limit",
+          "rows": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "query": "hyos_agent_board_media:hyos_agent_board_media_board_idx:all",
+          "rows": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "query": "hyos_agent_global_tabs:all",
+          "rows": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "query": "hyos_agent_global_tabs:reverse-limit",
+          "rows": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "query": "hyos_agent_global_tabs:hyos_agent_global_tabs_position_idx:all",
+          "rows": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "query": "hyos_agent_folder_state:all",
+          "rows": 2,
+          "sha256": "325ded0f6265b95ceafabb2e141fc691462fb810bcaf62885bf18422a6020eb2"
+        },
+        {
+          "query": "hyos_agent_folder_state:reverse-limit",
+          "rows": 2,
+          "sha256": "ba2e95083784072c940afffc3085267b9307cfef674b81411dd7be56a54d3e61"
+        },
+        {
+          "query": "hyos_agent_folder_state:point:0",
+          "rows": 1,
+          "sha256": "8103fb350d20632489f74083a48b32d13dd68918bac24f17351a70603fb8337c"
+        },
+        {
+          "query": "hyos_agent_folder_state:range:0",
+          "rows": 2,
+          "sha256": "325ded0f6265b95ceafabb2e141fc691462fb810bcaf62885bf18422a6020eb2"
+        },
+        {
+          "query": "hyos_agent_folder_state:point:1",
+          "rows": 1,
+          "sha256": "86ea81725542b167f19172081ea97fbfd42550994bf16f9b1b696554827ab6d7"
+        },
+        {
+          "query": "hyos_agent_folder_state:range:1",
+          "rows": 1,
+          "sha256": "c7c0e52ae3c173e8b2bb843a9b2097e114112880c9211eab33e151201bbfbf94"
+        }
+      ]
+    }
+  ]
+}

@@ -66,8 +66,8 @@ export type KeyValueStorageOptions = Readonly<{
  * Opt-in prototype: immutable HyDB trees backed by a replaceable KV store.
  * Directory opens use LMDB. An injected store is owned and closed by this engine.
  * One active writer per database; a metadata condition rejects stale publication
- * from another instance. Existing file databases and schema migrations are not
- * imported. GC reader protection is local to this instance.
+ * from another instance. File databases can be imported offline with
+ * importFileStorage; schema migrations are not supported. GC reader protection is local to this instance.
  */
 export class KeyValueStorageDatabase implements StorageDatabase {
   private readonly branches = new Map<string, Branch>();
