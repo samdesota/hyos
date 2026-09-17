@@ -7,7 +7,8 @@ npm run build --workspace @hyos/hydb
 ```
 
 Stop the app before importing its database. The importer does not acquire a
-cross-process writer lock; source identity/size/modification-time checks detect
+cross-process writer lock; source identity/size/modification-time and streaming
+SHA-256 content checks detect
 changes but are not a replacement for a quiescent source.
 
 Use a **new destination directory**:

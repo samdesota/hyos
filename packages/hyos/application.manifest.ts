@@ -39,6 +39,7 @@ export const applicationManifest = defineApplicationManifest({
       reload: "hot",
       config: {
         storagePath: ".data/agent",
+        storageBackend: "lmdb",
         providers: ["glm", "codex", "claude"],
         glm: {
           apiKeyEnvironment: "AI_GATEWAY_API_KEY",

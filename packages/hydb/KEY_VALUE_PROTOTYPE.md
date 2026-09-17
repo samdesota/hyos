@@ -2,7 +2,7 @@
 
 The opt-in engine uses HyDB's existing immutable B+ trees, row/index mutation
 logic and snapshot reader. The default persistent backend is LMDB (`lmdb@3.5.6`).
-The existing app and `openNodeStorage` continue using the file engine.
+The HyOS agent module now selects LMDB; `openNodeStorage` remains the file engine.
 
 ```ts
 import { openKeyValueStorage, memoryKeyValueStore } from "@hyos/hydb/node";
@@ -91,7 +91,7 @@ size measurement. Concurrent inserts can affect the observed totals.
   immediate filesystem shrinkage. Disk shrinkage is a separate concern.
 - A write stages its reachable new pages in memory and publishes one transaction.
   Arbitrarily large transactions and synchronous cold LMDB reads remain unbounded.
-- No default-app switch or performance claim is part of this step.
+- The app selection and rollback procedure are documented in the HyOS README.
 
 ## Verification
 

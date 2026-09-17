@@ -10,13 +10,15 @@ import type { LogSink } from "../log-main/sink.js";
 const execFileAsync = promisify(execFile);
 
 export type StorageMaintenanceOptions = Readonly<{
-  /** Opened hydb node storage whose dead history should be reclaimed. */
+  /** Opened HyDB storage whose dead history should be reclaimed. */
   storage: StorageDatabase;
-  /** Storage directory containing the hydb.data append-only file. */
+  /** Directory for file-backend backups; unused when backup is none. */
   directory: string;
   sink: LogSink;
   source: string;
   dataFileName?: string;
+  /** File backup is only valid for the append-only backend, never a live LMDB directory. */
+  backup?: "file" | "none";
   /** How often collection runs. Defaults to 10 minutes. */
   intervalMs?: number;
   /** Delay before the first collection after startup. Defaults to 15s. */
@@ -28,12 +30,13 @@ export const defaultMaintenanceIntervalMs = 10 * 60 * 1000;
 export const defaultMaintenanceInitialDelayMs = 15 * 1000;
 
 /**
- * Schedules periodic garbage collection for a hydb node storage.
+ * Schedules periodic garbage collection for a HyDB storage.
  *
  * Before the first collection ever runs against a storage file, the file is
  * backed up next to itself (`<data>.pre-gc-backup`) so the one-time compaction
  * of an unbounded (pre-retention) file is reversible. Subsequent collections
- * reuse the same backup and skip copying.
+ * reuse the same backup and skip copying. KV callers select backup: "none";
+ * their offline import source provides the initial rollback copy.
  *
  * Returns a disposer that cancels the timers; collection never throws into the
  * caller — failures are logged through the sink.
@@ -82,7 +85,8 @@ export function scheduleStorageCollection(
     if (running || disposed) return;
     running = true;
     try {
-      const mode = await backupDataFile();
+      const mode =
+        options.backup === "none" ? "existing" : await backupDataFile();
       if (mode !== "existing") {
         log("info", `storage pre-GC backup created (${mode}): ${backupPath}`);
       }

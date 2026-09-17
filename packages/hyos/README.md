@@ -100,3 +100,29 @@ whole application.
 Expand **module state** to see the independent host revisions and capability sets.
 
 The embedded page requires network access. Only HTTP and HTTPS navigation is accepted.
+
+## Agent database backend
+
+The manifest selects `agent.main.config.storageBackend: "lmdb"`.
+The database lives at `.data/agent/lmdb/`; media and finish-sound preferences
+remain in `.data/agent/`. Whiteboard storage keeps its existing backend.
+
+Existing file databases must first pass the
+[offline importer](../hydb/FILE_IMPORT.md). Startup refuses to silently create
+an empty session database when `hydb.data` exists without an imported LMDB
+database. Fresh installations initialize LMDB normally.
+
+Retention keeps at least 200 commits per branch plus commits younger than 24
+hours, with branch bases, named retains and active readers protected.
+Collection uses incremental key deletion every ten minutes, first running 15
+seconds after startup. It does not copy the live LMDB file for backup.
+
+For rollback, stop the app and set `storageBackend: "file"` in the manifest.
+This reopens the original `hydb.data`; writes made after switching to LMDB are
+not copied back. Preserve both stores until testing is complete. Schema
+migrations are still supported only by the file backend.
+
+Run the focused storage/lifecycle smoke check with
+`npm run smoke --workspace @hyos/hyos -- --smoke-storage`. It verifies session
+IDs survive main and renderer reloads without requiring display capture.
+The full smoke test also checks presentation and screen capture.

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { AnySchema } from "../schema.js";
@@ -27,6 +29,7 @@ import type { KeyValueStore } from "./key-value-store.js";
 
 export type FileImportReport = {
   sourceBytes: number;
+  sourceSha256: string;
   pages: number;
   pageBytes: number;
   commits: number;
@@ -51,10 +54,16 @@ export async function importFileStorage(options: {
   const destination = resolve(options.destinationDirectory);
   const identity = async () => {
     const s = await stat(sourcePath, { bigint: true });
-    return [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs].map(String).join(":");
+    return [s.dev, s.ino, s.size, s.mtimeNs].map(String).join(":");
+  };
+  const digestSource = async () => {
+    const hash = createHash("sha256");
+    for await (const bytes of createReadStream(sourcePath)) hash.update(bytes);
+    return hash.digest("hex");
   };
   const schema = schemaMetadata(options.schema);
   const original = await identity();
+  const sourceSha256 = await digestSource();
   const source = await AppendOnlyPageStore.openReadOnly(sourcePath);
   const sourceTree = new ImmutableBPlusTree(source, {
     cacheBytes: 16 * 1024 * 1024,
@@ -87,6 +96,7 @@ export async function importFileStorage(options: {
     await target.batch([put("import/incomplete", true)]);
     const report: FileImportReport = {
       sourceBytes: source.endOffset,
+      sourceSha256,
       pages: 0,
       pageBytes: 0,
       commits: 0,
@@ -219,7 +229,10 @@ export async function importFileStorage(options: {
         await after.close();
       }
     }
-    if ((await identity()) !== original)
+    // ctime also changes for permission/xattr updates. Compare actual bytes
+    // instead, while still rejecting replacement, resizing or content writes.
+    const finalSha256 = await digestSource();
+    if ((await identity()) !== original || finalSha256 !== sourceSha256)
       throw new Error(
         "Source changed during import; stop its writer and retry",
       );

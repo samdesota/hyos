@@ -245,6 +245,31 @@ async function runSmokeTest() {
   if (providerIds !== "claude,codex,glm") {
     throw new Error(`agent providers unavailable: ${providerIds}`);
   }
+  if (process.argv.includes("--smoke-storage")) {
+    const sessionsAfter = await contents.executeJavaScript(
+      'window.hyosRemote.invoke("agent", "sessions", [])',
+    );
+    const sessionIds = (state) => state.sessions.map(({ id }) => id).sort();
+    if (
+      JSON.stringify(sessionIds(sessionsBefore)) !==
+      JSON.stringify(sessionIds(sessionsAfter))
+    )
+      throw new Error("Persisted sessions changed across storage reload");
+    const mainReload =
+      JSON.stringify(mainBefore) !== JSON.stringify(mainAfter) &&
+      providersBefore.length === providersAfter.length;
+    if (!mainReload || rendererBefore === rendererAfter)
+      throw new Error("Storage smoke did not reload both module hosts");
+    console.log(
+      `storage-smoke: persistedSessions=${sessionsAfter.sessions.length} mainReload=${mainReload} rendererReload=true contractRejected=${contractRejected}`,
+    );
+    await contents.executeJavaScript(
+      'window.dispatchEvent(new Event("beforeunload"))',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    app.quit();
+    return;
+  }
   const welcomeReady = await contents.executeJavaScript(
     `Boolean(document.querySelector("#agent-start-prompt") && document.querySelector("#agent-session-list") && document.querySelector("#agent-model-picker"))`,
   );
@@ -261,9 +286,9 @@ async function runSmokeTest() {
     })()`,
   );
   if (
-    modelPickerState.height !== "32px" ||
+    modelPickerState.height !== "38px" ||
     !modelPickerState.menuVisible ||
-    modelPickerState.reasoningOptions !== 4
+    modelPickerState.reasoningOptions !== 5
   ) {
     throw new Error(
       `compact model picker is unavailable: ${JSON.stringify(modelPickerState)}`,
@@ -515,7 +540,11 @@ async function start() {
     "module-loader:done",
     JSON.stringify(mainHost.snapshot().modules.map(({ id }) => id)),
   );
-  if (process.argv.includes("--smoke-test")) await runSmokeTest();
+  if (
+    process.argv.includes("--smoke-test") ||
+    process.argv.includes("--smoke-storage")
+  )
+    await runSmokeTest();
 }
 
 app

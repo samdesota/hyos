@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, chmodSync, writeFileSync, utimesSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -94,7 +94,11 @@ test("file import preserves history/branches and verifies data-derived session q
       sourceFile: file,
       destinationDirectory: destination,
       schema,
+      onProgress(phase) {
+        if (phase === "verified-queries") chmodSync(file, 0o600);
+      },
     });
+    assert.equal(report.sourceSha256, before);
     assert.equal(digest(await readFile(file)), before);
     assert.equal(report.branches, 2);
     assert.ok(
@@ -210,6 +214,25 @@ test("corrupt input stays unchanged and failed imports cannot open", async () =>
       openKeyValueStorage({ directory: join(root, "bad"), schema }),
       /nonempty/,
     );
+    const saved = await readFile(file);
+    const fixedTime = new Date(1_700_000_000_000);
+    utimesSync(file, fixedTime, fixedTime);
+    await assert.rejects(
+      importFileStorage({
+        sourceFile: file,
+        destinationDirectory: join(root, "same-size-change"),
+        schema,
+        onProgress(phase) {
+          if (phase !== "verified-queries") return;
+          const changed = Buffer.from(saved);
+          changed[0] ^= 1;
+          writeFileSync(file, changed);
+          utimesSync(file, fixedTime, fixedTime);
+        },
+      }),
+      /Source changed during import/,
+    );
+    writeFileSync(file, saved);
     await assert.rejects(
       importFileStorage({
         sourceFile: file,

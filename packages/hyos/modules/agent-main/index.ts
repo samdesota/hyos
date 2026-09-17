@@ -1,7 +1,6 @@
 import path from "node:path";
 
 import { hydb } from "@hyos/hydb";
-import { openNodeStorage } from "@hyos/hydb/node";
 import type { BrowserWindow } from "electron";
 
 import { agentCapability } from "../../capabilities/agent.js";
@@ -10,7 +9,7 @@ import { browserCapability } from "../../capabilities/browser.js";
 import type { MainRemoteCapabilities } from "../../remote-capabilities.js";
 import { defineModule } from "../../runtime.js";
 import { createAgentHost } from "./host.js";
-import { agentMigrations } from "./migrations/index.js";
+import { openAgentStorage, type AgentStorageBackend } from "./storage.js";
 import { agentSchema } from "./model.js";
 import { createAgentProviders } from "./providers/index.js";
 import { createAgentStore } from "./store.js";
@@ -21,6 +20,7 @@ import type { LogSink } from "../log-main/sink.js";
 
 type AgentMainConfig = Readonly<{
   storagePath: string;
+  storageBackend?: AgentStorageBackend;
   providers: readonly string[];
   codex?: Readonly<{
     authDirectory?: string;
@@ -62,21 +62,19 @@ export = defineModule<AgentMainConfig>({
     const sink = ctx.get<LogSink>("log.sink");
     const storageDirectory = path.resolve(root, config.storagePath);
     bootTrace("storage:open:start");
-    const storage = await openNodeStorage({
-      directory: storageDirectory,
-      schema: agentSchema,
-      migrations: agentMigrations,
-      // Bound the append-only log; existing storages migrate to this policy
-      // and dead history is reclaimed by the periodic collection below.
-      retention: {
-        mode: "window",
-        keepAtLeast: 200,
-        keepYoungerThanMs: 86_400_000,
-      },
-    });
+    const backend = config.storageBackend ?? "file";
+    const storage = await openAgentStorage(storageDirectory, backend);
+    // Register disposal immediately, including when later initialization fails.
+    ctx.effect(() => () => storage.close());
+    sink.log(
+      "info",
+      "agent.main",
+      `storage opened backend=${backend} directory=${storageDirectory}`,
+    );
     bootTrace("storage:open:done");
     bootTrace("database:init:start");
     const database = await hydb.database({ schema: agentSchema, storage });
+    ctx.effect(() => () => database.close());
     bootTrace("database:init:done");
     const store = createAgentStore(database);
     // Composer images persist as files under <storage>/media/, referenced by
@@ -105,16 +103,15 @@ export = defineModule<AgentMainConfig>({
     });
 
     ctx.provide("agent.sessions", host.provider);
-    ctx.effect(() => () => database.close());
     ctx.effect(() => remote.provide(agentCapability, host.provider));
     ctx.effect(() => () => host.dispose());
 
-    // Periodically reclaim dead history from the append-only storage file,
-    // backing the file up before the first collection ever runs.
+    // LMDB reclaims keys incrementally; only the file backend uses file backups.
     ctx.effect(() =>
       scheduleStorageCollection({
         storage,
         directory: storageDirectory,
+        backup: backend === "file" ? "file" : "none",
         sink,
         source: "agent.main",
       }),
