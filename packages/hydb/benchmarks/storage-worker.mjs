@@ -63,27 +63,10 @@ const options = {
   cacheBytes: 16 * 1024 * 1024,
   maxEntries: 64,
 };
-const diagnosticStore =
-  process.env.HYDB_MEMORY_KEYS_ONLY_SWEEP === "1"
-    ? (await import("./memory-variants.mjs")).keysOnlySweepStore
-    : undefined;
-if (diagnosticStore && !profile)
-  throw new Error(
-    "Keys-only sweep is a profiling-only experiment; set HYDB_MEMORY_PROFILE",
-  );
 const openStorage = (cacheBytes = options.cacheBytes) =>
   engine === "file"
     ? openNodeStorage({ ...options, cacheBytes })
-    : diagnosticStore
-      ? openKeyValueStorage({
-          schema,
-          retention: options.retention,
-          maxEntries: options.maxEntries,
-          cacheBytes,
-          gcBatchSize: 128,
-          store: diagnosticStore(directory),
-        })
-      : openKeyValueStorage({ ...options, cacheBytes, gcBatchSize: 128 });
+    : openKeyValueStorage({ ...options, cacheBytes, gcBatchSize: 128 });
 let storage;
 let version = 0;
 let random = 0x51eed;
@@ -356,9 +339,7 @@ try {
   await verify();
   sampleMemory();
   const result = {
-    ...(profile
-      ? { diagnostic: true, keysOnlySweep: Boolean(diagnosticStore) }
-      : {}),
+    ...(profile ? { diagnostic: true } : {}),
     engine,
     size,
     config,

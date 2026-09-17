@@ -198,13 +198,26 @@ for (const phase of ["mark", "sweep"])
       commitScans = 0;
     const store: KeyValueStore = {
       ...backend,
+      async *scanKeys(prefix, range) {
+        if (
+          collecting &&
+          phase === "sweep" &&
+          prefix === "page/" &&
+          range?.after === undefined
+        ) {
+          paused.release();
+          await resume.promise;
+        }
+        yield* backend.scanKeys(prefix, range);
+      },
       async *scan(prefix, range) {
         // End of pruning/start of marking: replay from the beginning of commit keys.
         if (
           collecting &&
           range?.after === undefined &&
-          ((phase === "mark" && prefix === "commit/" && ++commitScans === 2) ||
-            (phase === "sweep" && prefix === "page/"))
+          phase === "mark" &&
+          prefix === "commit/" &&
+          ++commitScans === 2
         ) {
           paused.release();
           await resume.promise;
@@ -341,7 +354,7 @@ for (const phase of ["commit/", "page/"]) {
   });
 }
 
-test("forever and age/count policies keep history while removing intermediate pages", async () => {
+test("forever and age/count policies keep history without publishing intermediate pages", async () => {
   for (const policy of [
     { mode: "forever" } as const,
     { mode: "window", keepAtLeast: 1, keepYoungerThanMs: 60_000 } as const,
@@ -363,7 +376,11 @@ test("forever and age/count policies keep history while removing intermediate pa
       await write(db, "3");
       const report = await db.collectGarbage();
       assert.equal(report.commitsCollected, 0);
-      assert.ok(report.pagesCollected > 0);
+      assert.equal(
+        report.pagesCollected,
+        0,
+        "superseded intermediate pages were never published",
+      );
       const snapshot = await db.snapshot({ commit: commit.commit });
       assert.deepEqual(await snapshot.get(rows, ["one"]), row("2"));
       await snapshot.close();
@@ -444,6 +461,48 @@ test("a snapshot admitted during pruning is included in the next root check", as
     );
   } finally {
     resume.release();
+    await db.close();
+  }
+});
+
+test("sweep avoids page payload scans and reports legacy size gaps", async () => {
+  const backend = memoryKeyValueStore();
+  const store: KeyValueStore = {
+    ...backend,
+    async *scan(prefix, range) {
+      assert.notEqual(
+        prefix,
+        "page/",
+        "sweep must not materialize dead payloads",
+      );
+      yield* backend.scan(prefix, range);
+    },
+    async getMany(keys) {
+      assert.ok(keys.every((key) => !key.startsWith("page/")));
+      return backend.getMany(keys);
+    },
+  };
+  const db = await openKeyValueStorage({ ...options, store });
+  try {
+    await write(db, "old", true);
+    await write(db, "new");
+    const report = await db.collectGarbage();
+    assert.equal(report.accountingComplete, true);
+    assert.ok(report.bytesReclaimed > 0);
+    assert.equal(
+      await count(backend, "page/"),
+      await count(backend, "page-size/"),
+    );
+    await write(db, "newest");
+    const deletes = [];
+    for await (const key of backend.scanKeys("page-size/"))
+      deletes.push({ type: "delete" as const, key });
+    await backend.batch(deletes);
+    const legacy = await db.collectGarbage();
+    assert.equal(legacy.accountingComplete, false);
+    assert.ok(legacy.pagesWithoutSize > 0);
+    assert.ok(legacy.pagesCollected > 0);
+  } finally {
     await db.close();
   }
 });

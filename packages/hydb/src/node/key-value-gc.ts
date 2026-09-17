@@ -10,6 +10,7 @@ import {
   type Subscriber,
 } from "./key-value-layout.js";
 import type { KeyValueOperation, KeyValueStore } from "./key-value-store.js";
+import { pageSizeKey } from "./key-value-pages.js";
 import type { StoredCommit } from "./tree-storage-model.js";
 
 type Entry = Readonly<{ key: string; value: Uint8Array }>;
@@ -17,6 +18,10 @@ type Entry = Readonly<{ key: string; value: Uint8Array }>;
 export type KeyValueGarbageCollectionReport = GarbageCollectionReport &
   Readonly<{
     pagesCollected: number;
+    /** Older databases may lack sidecar sizes. Their payloads are never loaded
+     * just for accounting; byte totals are lower bounds in that case. */
+    accountingComplete: boolean;
+    pagesWithoutSize: number;
     historyEntriesCollected: number;
     /** Byte fields count observed page/commit payloads, not LMDB file size. */
     accounting: "logical-page-and-commit-payloads";
@@ -59,6 +64,8 @@ export async function collectKeyValueGarbage(
     commitsCollected: 0,
     recordsCopied: 0,
     pagesCollected: 0,
+    accountingComplete: true,
+    pagesWithoutSize: 0,
     historyEntriesCollected: 0,
     bytesBefore: 0,
     bytesAfter: 0,
@@ -186,31 +193,59 @@ export async function collectKeyValueGarbage(
     }
   }
 
-  for await (const entries of batches("page/")) {
-    const candidates = entries.filter(
-      (entry) => Number(entry.key.slice("page/".length)) < start.nextPageId,
+  let after: string | undefined;
+  while (true) {
+    host.checkpoint();
+    const keys: string[] = [];
+    for await (const key of host.store.scanKeys("page/", {
+      after,
+      limit: host.batchSize,
+    }))
+      keys.push(key);
+    if (!keys.length) break;
+    after = keys.at(-1)!;
+    const candidates = keys.filter(
+      (key) => Number(key.slice("page/".length)) < start.nextPageId,
     );
-    report.bytesBefore += candidates.reduce(
-      (total, entry) => total + entry.value.byteLength,
-      0,
-    );
-    const removed = candidates.filter(
-      (entry) => !marked.has(Number(entry.key.slice("page/".length))),
-    );
-    if (removed.length) {
-      await host.enqueue(() =>
-        host.publish(
-          removed.map((entry) => ({ type: "delete", key: entry.key })),
-        ),
-      );
-      report.pagesCollected += removed.length;
-      report.bytesReclaimed += removed.reduce(
-        (total, entry) => total + entry.value.byteLength,
-        0,
-      );
+    const sizes = await host.store.getMany(candidates.map(pageSizeKey));
+    const operations: KeyValueOperation[] = [];
+    let reclaimed = 0,
+      collected = 0;
+    for (let i = 0; i < candidates.length; i++) {
+      const key = candidates[i]!;
+      const bytes = sizes[i];
+      let size = 0;
+      if (bytes === undefined) {
+        report.accountingComplete = false;
+        report.pagesWithoutSize++;
+      } else {
+        if (bytes.byteLength !== 8)
+          throw new Error(`Invalid page size for ${key}`);
+        size = new DataView(
+          bytes.buffer,
+          bytes.byteOffset,
+          bytes.byteLength,
+        ).getFloat64(0);
+        if (!Number.isSafeInteger(size) || size < 0)
+          throw new Error(`Invalid page size for ${key}`);
+      }
+      report.bytesBefore += size;
+      if (!marked.has(Number(key.slice("page/".length)))) {
+        operations.push(
+          { type: "delete", key },
+          { type: "delete", key: pageSizeKey(key) },
+        );
+        reclaimed += size;
+        collected++;
+      }
     }
-    // Page IDs are ordered; don't chase pages written during the collection.
-    if (candidates.length < entries.length) break;
+    if (operations.length) {
+      await host.enqueue(() => host.publish(operations));
+      report.pagesCollected += collected;
+      report.bytesReclaimed += reclaimed;
+    }
+    if (candidates.length < keys.length) break;
+    await yieldSlice();
   }
   report.bytesAfter = report.bytesBefore - report.bytesReclaimed;
   return report;

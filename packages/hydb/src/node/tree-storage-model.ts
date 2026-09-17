@@ -232,6 +232,7 @@ export async function applyTreeMutations(
   tables: ReadonlyMap<string, TableMetadata>,
   manifest: DatabaseManifest,
   mutations: readonly StorageMutation[],
+  afterMutation?: () => void,
 ): Promise<StoredChange[]> {
   const changes: StoredChange[] = [];
   for (const mutation of mutations) {
@@ -317,6 +318,7 @@ export async function applyTreeMutations(
       ...(before === undefined ? {} : { before }),
       ...(after === undefined ? {} : { after }),
     });
+    afterMutation?.();
   }
 
   return changes;

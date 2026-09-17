@@ -18,5 +18,12 @@ export type PageId = number;
  */
 export interface TreePageStore {
   readPage(id: PageId): Promise<Uint8Array>;
-  writePage(payload: Uint8Array): Promise<PageId>;
+  /** children lists every referenced page; omit only for a leaf payload. */
+  writePage(payload: Uint8Array, children?: readonly PageId[]): Promise<PageId>;
+  /** Optional ownership transfer: caller must never reuse/mutate payload after
+   * calling. children describes references in the immutable payload. */
+  writePageOwned?(
+    payload: Uint8Array,
+    children: readonly PageId[],
+  ): Promise<PageId>;
 }

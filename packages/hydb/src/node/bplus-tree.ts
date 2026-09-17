@@ -466,7 +466,11 @@ export class ImmutableBPlusTree {
   }
 
   private async writePage(page: Page): Promise<PageId> {
-    return this.store.writePage(Buffer.from(JSON.stringify(page)));
+    const payload = Buffer.from(JSON.stringify(page));
+    const children = page.kind === "internal" ? page.children : [];
+    return this.store.writePageOwned
+      ? this.store.writePageOwned(payload, children)
+      : this.store.writePage(payload, children);
   }
 
   private decodePage(payload: Uint8Array): Page {

@@ -7,6 +7,12 @@ import {
   type KeyValueStore,
 } from "./key-value-store.js";
 
+// lmdb's safe binary get/getMany/getRange return owned buffers (never use
+// getBinaryFast/getSharedBinary here). A view preserves that ownership without
+// a second payload copy, including when the buffer has a nonzero byte offset.
+const ownedBytes = (value: Uint8Array): Uint8Array =>
+  new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+
 /** Native LMDB adapter. All publication batches await durable flushing. */
 export function openLmdbKeyValueStore(directory: string): KeyValueStore {
   const db = open<Buffer, Buffer>({
@@ -31,13 +37,13 @@ export function openLmdbKeyValueStore(directory: string): KeyValueStore {
     async get(key) {
       assertOpen();
       const value = db.get(keyBytes(key));
-      return value === undefined ? undefined : Uint8Array.from(value);
+      return value === undefined ? undefined : ownedBytes(value);
     },
     async getMany(keys) {
       assertOpen();
       const values = await db.getMany(keys.map((key) => keyBytes(key)));
       return values.map((value) =>
-        value === undefined ? undefined : Uint8Array.from(value),
+        value === undefined ? undefined : ownedBytes(value),
       );
     },
     async *scan(prefix = "", options = {}) {
@@ -49,7 +55,19 @@ export function openLmdbKeyValueStore(directory: string): KeyValueStore {
         if (!key.subarray(0, bounds.prefix.length).equals(bounds.prefix)) break;
         if (bounds.after && Buffer.compare(key, bounds.after) <= 0) continue;
         assertOpen();
-        yield { key: key.toString("utf8"), value: Uint8Array.from(value) };
+        yield { key: key.toString("utf8"), value: ownedBytes(value) };
+        if (++count >= bounds.limit) break;
+      }
+    },
+    async *scanKeys(prefix = "", options = {}) {
+      assertOpen();
+      const bounds = scanBounds(prefix, options);
+      let count = 0;
+      for (const key of db.getKeys({ start: bounds.start, snapshot: true })) {
+        if (!key.subarray(0, bounds.prefix.length).equals(bounds.prefix)) break;
+        if (bounds.after && Buffer.compare(key, bounds.after) <= 0) continue;
+        assertOpen();
+        yield key.toString("utf8");
         if (++count >= bounds.limit) break;
       }
     },
@@ -68,7 +86,14 @@ export function openLmdbKeyValueStore(directory: string): KeyValueStore {
             checkValue(condition, db.get(keyBytes(condition.key)));
           for (const op of prepared.operations) {
             if (op.type === "put")
-              db.putSync(keyBytes(op.key), Buffer.from(op.value));
+              db.putSync(
+                keyBytes(op.key),
+                Buffer.from(
+                  op.value.buffer,
+                  op.value.byteOffset,
+                  op.value.byteLength,
+                ),
+              );
             else db.removeSync(keyBytes(op.key));
           }
         });

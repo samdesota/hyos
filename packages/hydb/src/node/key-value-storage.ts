@@ -283,6 +283,13 @@ export class KeyValueStorageDatabase implements StorageDatabase {
           this.tables,
           manifest,
           request.mutations,
+          () =>
+            this.pages.retainRoots(
+              Object.values(manifest.tables).flatMap((table) => [
+                table.primary,
+                ...Object.values(table.indexes),
+              ]),
+            ),
         );
         const stored: StoredCommit = {
           id: newCommitId(),

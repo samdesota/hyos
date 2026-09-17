@@ -26,7 +26,7 @@ await testStorage.close();
 
 ## Backend contract
 
-`KeyValueStore` exposes `get`, `getMany`, prefix `scan`, conditional atomic
+`KeyValueStore` exposes `get`, `getMany`, prefix `scan` and `scanKeys`, conditional atomic
 `batch`, and `close`. Values are owned byte arrays; keys are UTF-8 strings up to
 480 bytes. Scans have snapshot semantics and support an exclusive `after` cursor
 and a `limit`; finish or return iterators promptly.
@@ -76,7 +76,7 @@ This is **incremental scheduling**, not a constant-work collector: each cycle
 still scans commits/pages and keeps an in-memory set of live page IDs. The batch
 limit bounds record counts, not strict milliseconds or bytes; unusually large
 records can still take longer. The memory adapter sorts its map for bounded
-scans; LMDB seeks directly. Step 4 must measure latency, throughput and heap use.
+scans; LMDB seeks directly. See the benchmark results for measured costs.
 
 The report's `pagesCollected` and `commitsCollected` count deleted records.
 `recordsCopied` is zero. Byte fields count observed logical page/commit payloads
@@ -89,8 +89,8 @@ size measurement. Concurrent inserts can affect the observed totals.
   requires the same schema.
 - LMDB can reuse deleted pages once readers release them; this does not imply
   immediate filesystem shrinkage. Disk shrinkage is a separate concern.
-- A write stages all new pages in memory and publishes one transaction. Large
-  transactions and synchronous cold LMDB reads need measurement in step 4.
+- A write stages its reachable new pages in memory and publishes one transaction.
+  Arbitrarily large transactions and synchronous cold LMDB reads remain unbounded.
 - No default-app switch or performance claim is part of this step.
 
 ## Verification
@@ -110,3 +110,19 @@ ELECTRON_RUN_AS_NODE=1 node_modules/.bin/electron --test packages/hydb/dist/test
 
 The process-exit test verifies acknowledgement without graceful close; it does
 not simulate a machine power failure.
+
+## Memory amplification controls
+
+After each complete row mutation, staging traces the current primary/index
+roots and drops superseded unpublished pages. Shared children remain live;
+published pages and snapshot roots are immutable and unaffected. Publication
+still commits the entire transaction atomically. Tree serialization transfers
+ownership internally, while public writes copy their inputs and reads return
+independent buffers.
+
+Each new page has an eight-byte `page-size/<id>` sidecar, published and deleted
+atomically with its page. GC sweeps keys and reads these tiny size values,
+avoiding dead page payloads. Legacy databases without sidecars remain readable
+and collectable: reports set `accountingComplete: false`, count
+`pagesWithoutSize`, and report byte totals as lower bounds. Logical byte totals
+exclude sidecars, history entries, metadata, key bytes, and LMDB overhead.

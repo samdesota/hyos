@@ -79,11 +79,13 @@ per repetition; their tail percentiles have few samples. Fresh worker processes
 reduce cross-engine heap/JIT contamination but do not evict OS caches. No power
 loss, cloud latency, distributed readers, or production-sized database is tested.
 
-[September 15 results](results/storage-2026-09-15.md)
+[September 15 baseline](results/storage-2026-09-15.md) ·
+[September 17 memory fixes](results/storage-2026-09-17.md)
 
 ## Memory attribution probes
 
-[Memory investigation and raw measurements](results/memory-2026-09-15.md).
+[Original memory investigation](results/memory-2026-09-15.md) ·
+[Memory fixes and measurements](results/memory-2026-09-17.md).
 Run from the repository root after building HyDB:
 
 ```sh
@@ -91,7 +93,6 @@ HYDB_MEMORY_PROFILE=/tmp/hydb-memory-lmdb node --expose-gc packages/hydb/benchma
 HYDB_MEMORY_PROFILE=/tmp/hydb-memory-file node --expose-gc packages/hydb/benchmarks/storage-worker.mjs file large
 node --expose-gc packages/hydb/benchmarks/memory-seed.mjs 64 /tmp/hydb-memory-seed64
 node --expose-gc packages/hydb/benchmarks/memory-seed.mjs 8 /tmp/hydb-memory-seed8
-HYDB_MEMORY_KEYS_ONLY_SWEEP=1 HYDB_MEMORY_PROFILE=/tmp/hydb-memory-keys node --expose-gc packages/hydb/benchmarks/storage-worker.mjs lmdb large
 ```
 
 These run on disposable databases and inspect only their own process. On macOS,
@@ -99,8 +100,6 @@ These run on disposable databases and inspect only their own process. On macOS,
 Node counters only. Sampling/checkpoints perturb execution and explicit JS GC is
 used at diagnostic checkpoints, so don't treat these as normal latency runs.
 
-The keys-only sweep adapter is a deliberately incomplete diagnostic substitute:
-its placeholder page values invalidate the GC byte report. It is confined to the
-benchmark folder, requires memory profiling to be enabled, and is never imported
-by production code. Normal benchmark behavior is unchanged when these environment
-variables are absent.
+Keys-only sweeping is now implemented in the storage engine, with separate
+page-size metadata for accurate byte accounting. The historical diagnostic
+adapter is available in commit ac97f49.

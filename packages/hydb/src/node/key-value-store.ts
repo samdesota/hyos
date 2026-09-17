@@ -28,6 +28,11 @@ export interface KeyValueStore {
     prefix?: string,
     options?: Readonly<{ after?: string; limit?: number }>,
   ): AsyncIterable<Readonly<{ key: string; value: Uint8Array }>>;
+  /** Same snapshot/order/cursor semantics as scan, without reading values. */
+  scanKeys(
+    prefix?: string,
+    options?: Readonly<{ after?: string; limit?: number }>,
+  ): AsyncIterable<string>;
   batch(
     operations: readonly KeyValueOperation[],
     conditions?: readonly KeyValueCondition[],

@@ -106,6 +106,32 @@ for (const backend of ["memory", "lmdb"] as const) {
       );
       assert.ok(await store.get("a/1"));
       await assert.rejects(store.get("\ud800"), /UTF-8/);
+      const keys = store.scanKeys("a/")[Symbol.asyncIterator]();
+      assert.equal((await keys.next()).value, "a/1");
+      await store.batch([{ type: "delete", key: "a/2" }]);
+      assert.equal((await keys.next()).value, "a/2");
+      assert.equal((await keys.next()).done, true);
+      assert.deepEqual(
+        await collect(store.scanKeys("", { after: "empty", limit: 1 })),
+        ["z"],
+      );
+      await assert.rejects(
+        collect(store.scanKeys("", { limit: 0 })),
+        /positive safe integer/,
+      );
+      for (const length of [32, 65536]) {
+        const source = new Uint8Array(length + 8)
+          .fill(7)
+          .subarray(4, length + 4);
+        await store.batch([{ type: "put", key: "buffer", value: source }]);
+        const one = (await store.get("buffer"))!;
+        const [two] = await store.getMany(["buffer"]);
+        const [entry] = await collect(store.scan("buffer"));
+        one.fill(1);
+        two!.fill(2);
+        entry!.value.fill(3);
+        assert.deepEqual(await store.get("buffer"), source);
+      }
       const pending = store.batch([
         { type: "put", key: "last", value: Uint8Array.of(42) },
       ]);

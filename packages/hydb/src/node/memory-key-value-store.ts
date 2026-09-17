@@ -43,6 +43,23 @@ export function memoryKeyValueStore(): KeyValueStore {
         yield { key, value: value.slice() };
       }
     },
+    async *scanKeys(prefix = "", options = {}) {
+      assertOpen();
+      const bounds = scanBounds(prefix, options);
+      const keys = [...values.keys()]
+        .filter(
+          (key) =>
+            key.startsWith(prefix) &&
+            (!bounds.after ||
+              Buffer.compare(Buffer.from(key), bounds.after) > 0),
+        )
+        .sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
+        .slice(0, bounds.limit);
+      for (const key of keys) {
+        assertOpen();
+        yield key;
+      }
+    },
     async batch(operations, conditions = []) {
       assertOpen();
       const prepared = prepareBatch(operations, conditions);
